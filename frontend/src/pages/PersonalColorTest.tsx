@@ -867,63 +867,75 @@ const PersonalColorTest: React.FC = () => {
             })()}
 
             {/* 액션 버튼 */}
-            <div className="flex gap-3 justify-center flex-wrap">
-              <Button
-                size="large"
-                icon={<ReloadOutlined />}
-                onClick={handleRestart}
-                className="px-6"
-                style={{
-                  borderColor: '#d1d5db',
-                  color: '#6b7280',
-                  borderRadius: '10px',
-                }}
-              >
-                다시 테스트
-              </Button>
-              <Button
-                size="large"
-                onClick={handleGoToMyPage}
-                className="px-8"
-                style={{
-                  background:
-                    'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  border: 'none',
-                  borderRadius: '10px',
-                  color: 'white',
-                }}
-              >
-                마이페이지에서 결과 보기
-              </Button>
-              <Button
-                size="large"
-                icon={<MessageOutlined />}
-                onClick={() => navigate(RouterPaths.Chatbot)}
-                className="px-6"
-                style={{
-                  background:
-                    'linear-gradient(135deg, #20c997 0%, #17a2b8 100%)',
-                  border: 'none',
-                  borderRadius: '10px',
-                  color: 'white',
-                }}
-              >
-                AI 컨설턴트와 상담하기
-              </Button>
-              <Button
-                type="primary"
-                size="large"
-                onClick={handleGoToHome}
-                className="px-8"
-                style={{
-                  background:
-                    'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                  border: 'none',
-                  borderRadius: '10px',
-                }}
-              >
-                홈으로 가기
-              </Button>
+            <div className="space-y-4">
+              {/* 1행: 주요 기능 버튼들 (강조) */}
+              <div className="flex gap-3 justify-center flex-wrap">
+                <Button
+                  size="large"
+                  onClick={handleGoToMyPage}
+                  className="px-8 shadow-lg"
+                  style={{
+                    background:
+                      'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    border: 'none',
+                    borderRadius: '12px',
+                    color: 'white',
+                    fontWeight: '600',
+                    boxShadow: '0 8px 25px rgba(102, 126, 234, 0.4)',
+                  }}
+                >
+                  마이페이지에서 결과 보기
+                </Button>
+                <Button
+                  size="large"
+                  icon={<MessageOutlined />}
+                  onClick={() => navigate(RouterPaths.Chatbot)}
+                  className="px-6 shadow-lg"
+                  style={{
+                    background:
+                      'linear-gradient(135deg, #20c997 0%, #17a2b8 100%)',
+                    border: 'none',
+                    borderRadius: '12px',
+                    color: 'white',
+                    fontWeight: '600',
+                    boxShadow: '0 8px 25px rgba(32, 201, 151, 0.4)',
+                  }}
+                >
+                  AI 컨설턴트와 상담하기
+                </Button>
+              </div>
+
+              {/* 2행: 보조 기능 버튼들 */}
+              <div className="flex gap-3 justify-center flex-wrap">
+                <Button
+                  size="large"
+                  icon={<ReloadOutlined />}
+                  onClick={handleRestart}
+                  className="px-6"
+                  style={{
+                    borderColor: '#d1d5db',
+                    color: '#6b7280',
+                    borderRadius: '10px',
+                    background: 'white',
+                  }}
+                >
+                  다시 테스트
+                </Button>
+                <Button
+                  size="large"
+                  onClick={handleGoToHome}
+                  className="px-8"
+                  style={{
+                    background:
+                      'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                    border: 'none',
+                    borderRadius: '10px',
+                    color: 'white',
+                  }}
+                >
+                  홈으로 가기
+                </Button>
+              </div>
             </div>
           </Card>
         </div>

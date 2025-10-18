@@ -224,12 +224,14 @@ const MyPage: React.FC = () => {
                     </Avatar>
                   );
                 })()}
-                <Title level={3} className="mb-2 !text-gray-800 text-center">
-                  {user.nickname}
-                </Title>
-                <Text className="text-gray-500 text-lg text-center">
-                  {user.username}
-                </Text>
+                <div className="flex items-center gap-2">
+                  <Title level={3} className="!mb-2 !text-gray-800 text-center">
+                    @{user.nickname}
+                  </Title>
+                  <Text className="!text-gray-500 text-lg text-center">
+                    {user.username}
+                  </Text>
+                </div>
               </div>
 
               {/* 진단 기록, 저장된 결과 데이터 */}
