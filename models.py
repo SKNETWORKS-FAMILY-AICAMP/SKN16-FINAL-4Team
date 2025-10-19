@@ -33,12 +33,11 @@ class SurveyAnswer(Base):
     option_label = Column(String(255))
     result = relationship("SurveyResult", back_populates="answers")
 
-# === 챗봇 세션/대화, 피드백용 추가 ===
 class ChatHistory(Base):
     __tablename__ = "chat_history"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
-    started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     ended_at = Column(DateTime, nullable=True)
     user = relationship("User", backref="chat_histories")
     messages = relationship("ChatMessage", back_populates="history", cascade="all, delete-orphan")
@@ -48,7 +47,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_message"
     id = Column(Integer, primary_key=True, index=True)
     history_id = Column(Integer, ForeignKey("chat_history.id"), nullable=False)
-    role = Column(String(10))  # "user" or "ai"
+    role = Column(String(10))  # "user" / "ai"
     text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     history = relationship("ChatHistory", back_populates="messages")
@@ -72,7 +71,6 @@ class AIFeedback(Base):
     reliability = Column(Float)
     personalization = Column(Float)
     practicality = Column(Float)
-    
     total_score = Column(Float)
     vector_db_quality = Column(Float)
     detail_accuracy = Column(Text)
@@ -82,4 +80,3 @@ class AIFeedback(Base):
     detail_practicality = Column(Text)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     message = relationship("ChatMessage", back_populates="ai_feedback")
-
