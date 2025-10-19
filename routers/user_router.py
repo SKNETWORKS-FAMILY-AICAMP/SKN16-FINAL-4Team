@@ -166,11 +166,3 @@ async def get_user_stats(current_user: models.User = Depends(get_current_user), 
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="통계 정보 조회 중 오류가 발생했습니다."
         )
-
-@router.get("/me")
-def get_my_info(current_user: models.User = Depends(get_current_user)):
-    return {
-        "user_id": current_user.id,
-        "username": current_user.username,
-        "email": current_user.email
-    }
