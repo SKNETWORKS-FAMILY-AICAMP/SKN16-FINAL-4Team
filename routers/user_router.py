@@ -143,5 +143,3 @@ def get_my_info(current_user: models.User = Depends(get_current_user)):
         "username": current_user.username,
         "email": current_user.email
     }
-
-
