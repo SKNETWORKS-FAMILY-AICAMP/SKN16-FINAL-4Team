@@ -28,7 +28,11 @@ import {
   MessageOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { useCurrentUser, useDeleteCurrentUser } from '@/hooks/useUser';
+import {
+  useCurrentUser,
+  useDeleteCurrentUser,
+  useUserStats,
+} from '@/hooks/useUser';
 import { useSurveyResultsLive, useDeleteSurvey } from '@/hooks/useSurvey';
 import { getAvatarRenderInfo } from '@/utils/genderUtils';
 import RouterPaths from '@/routes/Router';
@@ -42,6 +46,7 @@ const { Title, Text } = Typography;
  */
 const MyPage: React.FC = () => {
   const { data: user, isLoading } = useCurrentUser();
+  const { data: userStats, isLoading: isLoadingStats } = useUserStats();
   const { data: surveyResults, isLoading: isLoadingSurveys } =
     useSurveyResultsLive();
   const navigate = useNavigate();
@@ -240,20 +245,26 @@ const MyPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* 진단 기록, 저장된 결과 데이터 */}
+              {/* 진단 기록, 저장된 결과, 채팅 세션 데이터 */}
               <div className="p-2">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-3">
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-blue-600 mb-1">
-                      {surveyResults?.length || 0}
+                    <div className="text-xl font-bold text-blue-600 mb-1">
+                      {isLoadingStats ? '-' : userStats?.total_surveys || 0}
                     </div>
-                    <Text className="text-gray-600">진단 기록</Text>
+                    <Text className="!text-gray-600 text-sm">진단 기록</Text>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-green-600 mb-1">
-                      {surveyResults?.length || 0}
+                    <div className="text-xl font-bold text-green-600 mb-1">
+                      {isLoadingStats ? '-' : userStats?.saved_results || 0}
                     </div>
-                    <Text className="text-gray-600">저장된 결과</Text>
+                    <Text className="!text-gray-600 text-sm">저장된 결과</Text>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-purple-600 mb-1">
+                      {isLoadingStats ? '-' : userStats?.chat_sessions || 0}
+                    </div>
+                    <Text className="!text-gray-600 text-sm">AI 상담</Text>
                   </div>
                 </div>
               </div>

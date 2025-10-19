@@ -22,6 +22,7 @@ class SurveyResult(Base):
     result_tone = Column(String(20))
     confidence = Column(Float)
     total_score = Column(Integer)
+    is_active = Column(Boolean, default=True)  # 소프트 딜리트를 위한 필드
     
     # OpenAI 분석 결과 상세 저장
     detailed_analysis = Column(Text, nullable=True)  # 상세 분석 텍스트

@@ -600,7 +600,8 @@ async def get_my_survey_results(
         )
 
     results = db.query(models.SurveyResult).filter(
-        models.SurveyResult.user_id == current_user.id
+        models.SurveyResult.user_id == current_user.id,
+        models.SurveyResult.is_active == True  # 활성화된 결과만
     ).order_by(models.SurveyResult.created_at.desc()).all()
     
     return results
@@ -622,7 +623,8 @@ async def get_survey_detail(
 
     result = db.query(models.SurveyResult).filter(
         models.SurveyResult.id == survey_id,
-        models.SurveyResult.user_id == current_user.id
+        models.SurveyResult.user_id == current_user.id,
+        models.SurveyResult.is_active == True  # 활성화된 결과만
     ).first()
     
     if not result:
@@ -640,7 +642,7 @@ async def delete_survey(
     current_user: models.User = Depends(get_current_user)
 ):
     """
-    설문 결과 삭제 (본인이 작성한 것만)
+    설문 결과 삭제 (본인이 작성한 것만) - 소프트 딜리트 방식
     """
     if not current_user or not current_user.is_active:
         raise HTTPException(
@@ -650,7 +652,8 @@ async def delete_survey(
 
     result = db.query(models.SurveyResult).filter(
         models.SurveyResult.id == survey_id,
-        models.SurveyResult.user_id == current_user.id
+        models.SurveyResult.user_id == current_user.id,
+        models.SurveyResult.is_active == True  # 이미 삭제된 것은 제외
     ).first()
     
     if not result:
@@ -659,7 +662,8 @@ async def delete_survey(
             detail="설문 결과를 찾을 수 없습니다."
         )
     
-    db.delete(result)
+    # 하드 딜리트 대신 소프트 딜리트
+    result.is_active = False
     db.commit()
     
     return {"message": "설문 결과가 삭제되었습니다."}

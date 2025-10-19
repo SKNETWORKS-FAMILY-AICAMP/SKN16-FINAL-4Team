@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { userApi, type User, type CreateUserRequest, type LoginRequest } from '../api/user';
+import { userApi, type User, type CreateUserRequest, type LoginRequest, type UserStats } from '../api/user';
 import { queryKeys } from '../lib/query-client';
 import { message } from 'antd';
 import { getErrorMessage } from '@/utils/handleApiError';
@@ -30,6 +30,21 @@ export const useCurrentUser = () => {
         enabled: !!localStorage.getItem('access_token'),
         retry: 1, // API 호출 실패시 1번 재시도
         staleTime: 5 * 60 * 1000, // 5분간 fresh로 간주
+    });
+};
+
+/**
+ * 사용자 통계 정보 조회 훅
+ * 진단 기록 수, 저장된 결과 수, 채팅 세션 수를 가져옵니다
+ */
+export const useUserStats = () => {
+    return useQuery({
+        queryKey: queryKeys.users.stats(),
+        queryFn: userApi.getUserStats,
+        // 토큰이 있을 때만 요청
+        enabled: !!localStorage.getItem('access_token'),
+        retry: 1,
+        staleTime: 1 * 60 * 1000, // 1분간 fresh로 간주
     });
 };
 

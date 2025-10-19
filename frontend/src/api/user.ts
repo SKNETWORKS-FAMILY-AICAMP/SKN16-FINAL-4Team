@@ -39,6 +39,12 @@ export interface LoginResponse {
     user: User;
 }
 
+export interface UserStats {
+    total_surveys: number;      // 총 진단 기록 수
+    saved_results: number;      // 저장된 결과 수
+    chat_sessions: number;      // 채팅 세션 수
+}
+
 /**
  * 사용자 관련 API 함수들
  */
@@ -73,6 +79,12 @@ export const userApi = {
     // 현재 사용자 정보 조회
     getCurrentUser: async (): Promise<User> => {
         const response = await apiClient.get<User>('/users/me');
+        return response.data;
+    },
+
+    // 사용자 통계 정보 조회
+    getUserStats: async (): Promise<UserStats> => {
+        const response = await apiClient.get<UserStats>('/users/me/stats');
         return response.data;
     },
 

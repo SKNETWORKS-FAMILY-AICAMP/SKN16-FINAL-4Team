@@ -123,6 +123,7 @@ export const useSurveyDetail = (surveyId: number) => {
 /**
  * 공통 캐시 무효화 로직
  * - 사용자별 정밀 캐시 무효화
+ * - 사용자 통계 캐시도 함께 무효화
  */
 const invalidateSurveyResultsCache = (
   queryClient: ReturnType<typeof useQueryClient>,
@@ -131,6 +132,10 @@ const invalidateSurveyResultsCache = (
   if (userId) {
     queryClient.invalidateQueries({
       queryKey: ['surveyResults', userId],
+    });
+    // 사용자 통계 캐시도 무효화
+    queryClient.invalidateQueries({
+      queryKey: ['users', 'stats'],
     });
   }
 };

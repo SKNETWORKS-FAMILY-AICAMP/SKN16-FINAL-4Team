@@ -136,6 +136,37 @@ async def delete_user_account(
 async def get_my_info(current_user: models.User = Depends(get_current_user)):
     return current_user
 
+@router.get("/me/stats")
+async def get_user_stats(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """사용자 통계 정보 조회 (진단 기록 수, 저장된 결과 수)"""
+    try:
+        # 총 진단 기록 수 (SurveyResult 테이블에서 해당 사용자의 모든 기록 - 삭제된 것 포함)
+        total_surveys = db.query(models.SurveyResult).filter(
+            models.SurveyResult.user_id == current_user.id
+        ).count()
+        
+        # 저장된 결과 수 (현재 활성화된 결과들만)
+        saved_results = db.query(models.SurveyResult).filter(
+            models.SurveyResult.user_id == current_user.id,
+            models.SurveyResult.is_active == True
+        ).count()
+        
+        # 채팅 세션 수 (ChatHistory 테이블에서 해당 사용자의 세션 수)
+        chat_sessions = db.query(models.ChatHistory).filter(
+            models.ChatHistory.user_id == current_user.id
+        ).count()
+        
+        return {
+            "total_surveys": total_surveys,      # 총 진단 기록 수 (삭제된 것 포함)
+            "saved_results": saved_results,      # 현재 저장된 결과 수 (활성화된 것만)
+            "chat_sessions": chat_sessions       # 채팅 세션 수
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="통계 정보 조회 중 오류가 발생했습니다."
+        )
+
 @router.get("/me")
 def get_my_info(current_user: models.User = Depends(get_current_user)):
     return {
