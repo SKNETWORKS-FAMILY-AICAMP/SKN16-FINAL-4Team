@@ -11,6 +11,7 @@ import {
   Space,
   Empty,
   Alert,
+  Modal,
 } from 'antd';
 import {
   SendOutlined,
@@ -18,8 +19,10 @@ import {
   UserOutlined,
   ArrowLeftOutlined,
   BulbOutlined,
+  LikeOutlined,
+  DislikeOutlined,
 } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useBeforeUnload, useBlocker } from 'react-router-dom';
 import { useCurrentUser } from '@/hooks/useUser';
 import { useSurveyResultsLive } from '@/hooks/useSurvey';
 import { chatbotApi } from '@/api/chatbot';
@@ -48,7 +51,32 @@ const ChatbotPage: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [isLeavingPage, setIsLeavingPage] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // 대화가 있는지 확인하는 함수
+  const hasConversation = () => messages.length > 1;
+
+  // 페이지 벗어나기 차단 (브라우저 새로고침, 닫기 등)
+  useBeforeUnload(
+    React.useCallback(
+      event => {
+        if (hasConversation() && !isLeavingPage) {
+          event.preventDefault();
+        }
+      },
+      [messages.length, isLeavingPage]
+    )
+  );
+
+  // React Router 네비게이션 차단
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      hasConversation() &&
+      !isLeavingPage &&
+      currentLocation.pathname !== nextLocation.pathname
+  );
 
   // 메시지 스크롤 자동 이동
   const scrollToBottom = () => {
@@ -58,6 +86,13 @@ const ChatbotPage: React.FC = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // React Router 네비게이션 차단 시 피드백 모달 표시
+  useEffect(() => {
+    if (blocker.state === 'blocked') {
+      setIsFeedbackModalOpen(true);
+    }
+  }, [blocker.state]);
 
   // 초기 환영 메시지 설정 및 업데이트
   useEffect(() => {
@@ -152,6 +187,50 @@ const ChatbotPage: React.FC = () => {
     setInputMessage(question);
   };
 
+  // 뒤로가기 클릭 시 피드백 모달 표시
+  const handleGoBack = () => {
+    // 대화가 있는 경우에만 피드백 요청
+    if (hasConversation()) {
+      setIsFeedbackModalOpen(true);
+    } else {
+      setIsLeavingPage(true);
+      navigate(RouterPaths.Home);
+    }
+  };
+
+  // 피드백 선택 처리
+  const handleFeedback = (isPositive: boolean) => {
+    const feedbackType = isPositive ? '좋음' : '나쁨';
+    console.log(`챗봇 사용 피드백: ${feedbackType}`);
+
+    setIsFeedbackModalOpen(false);
+    setIsLeavingPage(true);
+
+    message.success(`피드백 감사합니다! (${feedbackType})`, 2);
+
+    // blocker가 있으면 proceed, 없으면 일반 네비게이션
+    if (blocker.state === 'blocked') {
+      blocker.proceed();
+    } else {
+      setTimeout(() => {
+        navigate(RouterPaths.Home);
+      }, 500);
+    }
+  };
+
+  // 피드백 모달 닫기 (피드백 없이 나가기)
+  const handleCloseFeedbackModal = () => {
+    setIsFeedbackModalOpen(false);
+    setIsLeavingPage(true);
+
+    // blocker가 있으면 proceed, 없으면 일반 네비게이션
+    if (blocker.state === 'blocked') {
+      blocker.proceed();
+    } else {
+      navigate(RouterPaths.Home);
+    }
+  };
+
   // 로딩 상태
   if (userLoading || surveyLoading) {
     return (
@@ -196,7 +275,7 @@ const ChatbotPage: React.FC = () => {
               <Button
                 type="text"
                 icon={<ArrowLeftOutlined />}
-                onClick={() => navigate(RouterPaths.Home)}
+                onClick={handleGoBack}
                 className="mr-4"
               />
               <div className="flex items-center gap-1">
@@ -254,10 +333,7 @@ const ChatbotPage: React.FC = () => {
                   >
                     퍼스널컬러 진단하기
                   </Button>
-                  <Button
-                    size="large"
-                    onClick={() => navigate(RouterPaths.Home)}
-                  >
+                  <Button size="large" onClick={handleGoBack}>
                     홈으로 가기
                   </Button>
                 </Space>
@@ -279,7 +355,7 @@ const ChatbotPage: React.FC = () => {
             <Button
               type="text"
               icon={<ArrowLeftOutlined />}
-              onClick={() => navigate(RouterPaths.Home)}
+              onClick={handleGoBack}
               className="mr-4"
             />
             <div className="flex items-center gap-1">
@@ -453,6 +529,65 @@ const ChatbotPage: React.FC = () => {
             </Button>
           </div>
         </Card>
+
+        {/* 피드백 모달 */}
+        <Modal
+          title="챗봇 사용 만족도"
+          open={isFeedbackModalOpen}
+          onCancel={handleCloseFeedbackModal}
+          footer={null}
+          centered
+          width={400}
+        >
+          <div className="text-center py-4">
+            <Title level={4} className="mb-4">
+              챗봇 서비스는 어떠셨나요?
+            </Title>
+            <Text className="!text-gray-600 block mb-6">
+              더 나은 서비스 제공을 위해 피드백을 남겨주세요.
+            </Text>
+
+            <Space size="large">
+              <Button
+                size="large"
+                type="primary"
+                icon={<LikeOutlined />}
+                onClick={() => handleFeedback(true)}
+                style={{
+                  background:
+                    'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                  border: 'none',
+                  borderRadius: '10px',
+                  minWidth: '120px',
+                }}
+              >
+                좋음 👍
+              </Button>
+              <Button
+                size="large"
+                danger
+                icon={<DislikeOutlined />}
+                onClick={() => handleFeedback(false)}
+                style={{
+                  borderRadius: '10px',
+                  minWidth: '120px',
+                }}
+              >
+                나쁨 👎
+              </Button>
+            </Space>
+
+            <div className="mt-4">
+              <Button
+                type="text"
+                onClick={handleCloseFeedbackModal}
+                className="!text-gray-500"
+              >
+                피드백 없이 나가기
+              </Button>
+            </div>
+          </div>
+        </Modal>
       </div>
     </div>
   );
