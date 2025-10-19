@@ -1,8 +1,7 @@
-import React from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { ConfigProvider, FloatButton } from 'antd';
 
-import { HomePage, SignUpPage, LoginPage, MyPage, PersonalColorTestPage } from './pages';
+import { HomePage, SignUpPage, LoginPage, MyPage, PersonalColorTestPage, ChatbotPage } from './pages';
 import { Header, Footer, ScrollToTop } from './components';
 
 import './App.css';
@@ -34,6 +33,7 @@ function App() {
             <Route path={RouterPaths.Login} element={<LoginPage />} />
             <Route path={RouterPaths.MyPage} element={<MyPage />} />
             <Route path={RouterPaths.PersonalColorTest} element={<PersonalColorTestPage />} />
+            <Route path={RouterPaths.Chatbot} element={<ChatbotPage />} />
           </Routes>
         </div>
 
