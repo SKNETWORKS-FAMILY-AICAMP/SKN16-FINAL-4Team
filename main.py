@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from routers import user_router
 from routers import chatbot_router
 from routers import survey_router
+from routers import feedback_router
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -60,3 +61,4 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 app.include_router(user_router.router)
 app.include_router(chatbot_router.router)
 app.include_router(survey_router.router)
+app.include_router(feedback_router.router)

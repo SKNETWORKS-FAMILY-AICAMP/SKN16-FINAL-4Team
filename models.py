@@ -5,7 +5,6 @@ from database import Base
 
 class User(Base):
     __tablename__ = "user"
-    
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), nullable=False)
     nickname = Column(String(50), unique=True, index=True, nullable=False)
@@ -13,9 +12,8 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     gender = Column(Enum("여성", "남성", name="gender_enum"), nullable=True)
     create_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    is_active = Column(Boolean, default=True)  # > is_deleted -> is_active 변경
+    is_active = Column(Boolean, default=True)
 
-# 퍼스널컬러 진단 설문 저장용 모델 추가
 class SurveyResult(Base):
     __tablename__ = "survey_result"
     id = Column(Integer, primary_key=True, index=True)
@@ -40,7 +38,55 @@ class SurveyAnswer(Base):
     __tablename__ = "survey_answer"
     id = Column(Integer, primary_key=True, index=True)
     survey_result_id = Column(Integer, ForeignKey("survey_result.id"), nullable=False)
-    question_id = Column(Integer)  # 질문 ID
+    question_id = Column(Integer)
     option_id = Column(String(50))
     option_label = Column(String(255))
     result = relationship("SurveyResult", back_populates="answers")
+
+class ChatHistory(Base):
+    __tablename__ = "chat_history"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    ended_at = Column(DateTime, nullable=True)
+    user = relationship("User", backref="chat_histories")
+    messages = relationship("ChatMessage", back_populates="history", cascade="all, delete-orphan")
+    user_feedback = relationship("UserFeedback", back_populates="history", uselist=False)
+
+class ChatMessage(Base):
+    __tablename__ = "chat_message"
+    id = Column(Integer, primary_key=True, index=True)
+    history_id = Column(Integer, ForeignKey("chat_history.id"), nullable=False)
+    role = Column(String(10))  # "user" / "ai"
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    history = relationship("ChatHistory", back_populates="messages")
+    ai_feedback = relationship("AIFeedback", back_populates="message", uselist=False)
+
+class UserFeedback(Base):
+    __tablename__ = "user_feedback"
+    id = Column(Integer, primary_key=True, index=True)
+    history_id = Column(Integer, ForeignKey("chat_history.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+    feedback = Column(String(10))  # "좋다" or "싫다"
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    history = relationship("ChatHistory", back_populates="user_feedback")
+
+class AIFeedback(Base):
+    __tablename__ = "ai_feedback"
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey("chat_message.id"), nullable=False)
+    accuracy = Column(Float)
+    consistency = Column(Float)
+    reliability = Column(Float)
+    personalization = Column(Float)
+    practicality = Column(Float)
+    total_score = Column(Float)
+    vector_db_quality = Column(Float)
+    detail_accuracy = Column(Text)
+    detail_consistency = Column(Text)
+    detail_reliability = Column(Text)
+    detail_personalization = Column(Text)
+    detail_practicality = Column(Text)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    message = relationship("ChatMessage", back_populates="ai_feedback")

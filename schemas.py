@@ -4,6 +4,7 @@ from typing import List, Dict, Optional, Literal
 import re
 import json
 
+# --- 기존 User, Survey 관련 모델 생략 없이 포함 ---
 class UserCreate(BaseModel):
     nickname: str = Field(min_length=2, max_length=14)
     username: str
@@ -57,29 +58,14 @@ class Token(BaseModel):
     user: User
 
 class SurveyAnswerCreate(BaseModel):
-    """
-    사용자의 답변 데이터 (프론트엔드에서 전송)
-    - score_map, confidence, total_score는 OpenAI에서 받을 예정
-    """
     question_id: int
     option_id: str
     option_label: str
 
 class SurveyResultCreate(BaseModel):
-    """
-    퍼스널 컬러 테스트 결과 생성 스키마
-    - answers: 모든 질문에 대한 답변 데이터만 포함
-    - OpenAI API에서 받을 데이터:
-      - result_tone: spring, summer, autumn, winter
-      - confidence: 0-1 사이의 신뢰도
-      - total_score: 종합 점수
-    """
-    answers: List[SurveyAnswerCreate]  # 사용자의 모든 답변
+    answers: List[SurveyAnswerCreate]
 
 class SurveyAnswer(BaseModel):
-    """
-    저장된 사용자 답변 (DB에서 조회)
-    """
     id: int
     survey_result_id: int
     question_id: int
@@ -91,10 +77,6 @@ class SurveyAnswer(BaseModel):
         from_attributes = True
 
 class SurveyResult(BaseModel):
-    """
-    설문 결과 응답 스키마
-    - 사용자의 과거 모든 설문 결과를 포함
-    """
     id: int
     user_id: Optional[int]
     created_at: datetime
@@ -155,3 +137,34 @@ class SurveyResult(BaseModel):
 
     class Config:
         from_attributes = True
+
+# --- 챗봇 관련 모델 추가 ---
+class ChatResModel(BaseModel):
+    primary_tone: str
+    sub_tone: str
+    description: str
+    recommendations: List[str]
+
+class ChatItemModel(BaseModel):
+    question_id: int
+    question: str
+    answer: str
+    chat_res: ChatResModel
+
+class ChatbotRequest(BaseModel):
+    history_id: Optional[int] = 0
+    question: str
+
+class ChatbotHistoryResponse(BaseModel):
+    history_id: int
+    items: List[ChatItemModel]
+
+class UserFeedbackRequest(BaseModel):
+    history_id: int
+    feedback: str  # "좋다" 또는 "싫다"
+
+class UserFeedbackResponse(BaseModel):
+    user_feedback_id: int
+    history_id: int
+    user_id: int
+    feedback: str

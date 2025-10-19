@@ -1,46 +1,35 @@
-# routers/chatbot_router.py
-
-import os
-import json
-from typing import List, Dict, Any
-from math import sqrt
-
 from fastapi import APIRouter, HTTPException, Depends, status
-from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
-
+from datetime import datetime, timezone
 import models
 from routers.user_router import get_current_user
 from database import SessionLocal
+import os, json
+from typing import List, Optional, Dict, Any
+from math import sqrt
+
+from schemas import ChatbotRequest, ChatbotHistoryResponse, ChatItemModel, ChatResModel
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    raise RuntimeError("환경변수 OPENAI_API_KEY가 설정되지 않았습니다.")
+    raise RuntimeError("[translate:환경변수 OPENAI_API_KEY가 설정되지 않았습니다.]")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 router = APIRouter(prefix="/api/chatbot", tags=["Chatbot"])
 
-# DB 세션 의존성 (에러 로깅 추가)
 def get_db():
-    try:
-        db = SessionLocal()
-        print("▶ DB 세션 생성 성공:", db)
-    except Exception as e:
-        print("▶ DB 세션 생성 오류:", e)
-        raise
+    db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-        print("▶ DB 세션 종료")
 
-# ---------------- 유틸 함수 ----------------
 def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
     if overlap >= chunk_size:
-        raise ValueError("overlap은 chunk_size보다 작아야 합니다.")
+        raise ValueError("[translate:overlap은 chunk_size보다 작아야 합니다.]")
     chunks = []
     start = 0
     text_length = len(text)
@@ -78,117 +67,89 @@ def build_rag_index(client: OpenAI, filepath: str) -> Dict[str, Any]:
 fixed_index = build_rag_index(client, "data/RAG/personal_color_RAG.txt")
 trend_index = build_rag_index(client, "data/RAG/beauty_trend_2025_autumn_RAG.txt")
 
-class ChatbotRequest(BaseModel):
-    answers: List[str]
-
-class ChatbotResponse(BaseModel):
-    primary_tone: str
-    sub_tone: str
-    description: str
-    recommendations: List[str]
-
-@router.get("/health")
-def health_check(current_user: models.User = Depends(get_current_user)):
-    return {"status": "ok", "message": "Chatbot API is running"}
-
-@router.post("/analyze", response_model=ChatbotResponse)
-def analyze_personal_color(
+@router.post("/analyze", response_model=ChatbotHistoryResponse)
+def analyze(
     request: ChatbotRequest,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    try:
-        # 1. DB에서 사용자 최신 설문 결과 조회
-        survey_result = db.query(models.SurveyResult)\
-            .filter(models.SurveyResult.user_id == current_user.id)\
-            .order_by(models.SurveyResult.created_at.desc())\
-            .first()
-
-        # 2. 설문 결과 컨텍스트 생성 (최신 진단값 직접 포함)
-        survey_context = ""
-        if survey_result:
-            survey_context = (
-                f"[최신 설문 결과]\n"
-                f"진단 tone: {survey_result.result_tone}\n"
-                f"confidence: {survey_result.confidence}\n"
-                f"total_score: {survey_result.total_score}\n"
-            )
-            survey_context += "\n".join(
-                f"{ans.question_id}: {ans.option_label}"
-                for ans in survey_result.answers
-            )
-
-        # 3. 사용자 입력 + 설문 병합
-        query_part = " / ".join(request.answers).strip()
-        combined_query = (
-            f"{query_part}\n\n[사용자 설문 결과]\n{survey_context}"
-            if survey_context else query_part
-        )
-
-        if not combined_query.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="answers 배열에 하나 이상의 답변이 필요합니다."
-            )
-
-        # 4. RAG 검색
-        fixed_chunks = top_k_chunks(combined_query, fixed_index, client, k=3)
-        trend_chunks = top_k_chunks(combined_query, trend_index, client, k=3)
-
-        # 5. 프롬프트 생성
-        prompt_system = (
-            "당신은 퍼스널컬러 전문가이자 최신 패션 트렌드 컨설턴트입니다. "
-            "사용자의 최신 설문 진단 결과(result_tone, confidence, total_score 등)를 반드시 참고해서 퍼스널컬러 리포트와 추천을 작성해 주세요."
-        )
-        prompt_user = f"""
-사용자 데이터:
-{combined_query}
-
-[불변 지식]
-{chr(10).join(fixed_chunks)}
-
-[가변 지식]
-{chr(10).join(trend_chunks)}
-
-JSON 형식으로 only 결과를 반환:
-- primary_tone: '웜' 또는 '쿨'
-- sub_tone: '봄'/'여름'/'가을'/'겨울'
-- description: 설명
-- recommendations: 추천 리스트
+    # 신규 세션 생성 또는 기존 세션 이어받기
+    if not request.history_id:
+        chat_history = models.ChatHistory(user_id=current_user.id)
+        db.add(chat_history)
+        db.commit()
+        db.refresh(chat_history)
+    else:
+        chat_history = db.query(models.ChatHistory).filter_by(id=request.history_id, user_id=current_user.id).first()
+        if not chat_history:
+            raise HTTPException(status_code=404, detail="[translate:해당 history_id 세션 없음]")
+        if chat_history.ended_at:
+            raise HTTPException(status_code=400, detail="[translate:이미 종료된 세션입니다.]")
+    prev_questions = db.query(models.ChatMessage).filter_by(history_id=chat_history.id, role="user").order_by(models.ChatMessage.id.asc()).all()
+    question_id = len(prev_questions) + 1
+    user_msg = models.ChatMessage(history_id=chat_history.id, role="user", text=request.question)
+    db.add(user_msg)
+    db.commit()
+    db.refresh(user_msg)
+    survey_result = db.query(models.SurveyResult).filter(models.SurveyResult.user_id==current_user.id).order_by(models.SurveyResult.created_at.desc()).first()
+    survey_context = ""
+    if survey_result:
+        survey_context = f"[translate:최신 설문 결과]\n[translate:진단 tone]: {survey_result.result_tone}\n[translate:confidence]: {survey_result.confidence}\n[translate:total_score]: {survey_result.total_score}\n"
+        survey_context += "\n".join(f"{ans.question_id}: {ans.option_label}" for ans in survey_result.answers)
+    combined_query = f"{request.question}\n\n[translate:사용자 설문 결과]\n{survey_context}" if survey_context else request.question
+    fixed_chunks = top_k_chunks(combined_query, fixed_index, client, k=3)
+    trend_chunks = top_k_chunks(combined_query, trend_index, client, k=3)
+    prompt_system = (
+        "[translate:당신은 퍼스널컬러 전문가이자 최신 패션 트렌드 컨설턴트입니다. 사용자의 최신 설문 진단 결과(result_tone, confidence, total_score 등)를 반드시 참고해서 퍼스널컬러 리포트와 추천을 작성해 주세요.]"
+    )
+    prompt_user = f"""[translate:사용자 데이터]:\n{combined_query}\n\n[translate:불변 지식]\n{chr(10).join(fixed_chunks)}\n\n[translate:가변 지식]\n{chr(10).join(trend_chunks)}\n\n[translate:JSON 형식으로 only 결과를 반환]:
+- [translate:primary_tone]: '[translate:웜]' [translate:또는] '[translate:쿨]'
+- [translate:sub_tone]: '[translate:봄]'/'[translate:여름]'/'[translate:가을]'/'[translate:겨울]'
+- [translate:description]: [translate:설명]
+- [translate:recommendations]: [translate:추천 리스트]
 """
+    messages = [{"role": "system", "content": prompt_system}, {"role": "user", "content": prompt_user}]
+    resp = client.chat.completions.create(model="gpt-4o-mini", messages=messages, temperature=0.3, max_tokens=600)
+    content = resp.choices[0].message.content
+    start, end = content.find("{"), content.rfind("}")
+    if start == -1 or end == -1:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="[translate:JSON 결과 없음]")
+    data = json.loads(content[start:end+1])
+    if isinstance(data.get("recommendations"), dict):
+        data["recommendations"] = list(data["recommendations"].values())
+    if not isinstance(data["recommendations"], list):
+        data["recommendations"] = []
+    answer_string = data.get("description","")
+    ai_msg = models.ChatMessage(history_id=chat_history.id, role="ai", text=json.dumps(data, ensure_ascii=False))
+    db.add(ai_msg)
+    db.commit()
+    db.refresh(ai_msg)
+    msgs = db.query(models.ChatMessage).filter_by(history_id=chat_history.id).order_by(models.ChatMessage.id.asc()).all()
+    items = []
+    qid = 1
+    for i in range(0,len(msgs)-1,2):
+        if msgs[i].role=="user" and msgs[i+1].role=="ai":
+            d = json.loads(msgs[i+1].text)
+            items.append(ChatItemModel(
+                question_id=qid,
+                question=msgs[i].text,
+                answer=d.get("description",""),
+                chat_res=ChatResModel.parse_obj(d)
+            ))
+            qid += 1
+    return {"history_id": chat_history.id, "items": items}
 
-        messages = [
-            {"role": "system", "content": prompt_system},
-            {"role": "user", "content": prompt_user}
-        ]
-
-        # 6. LLM 호출
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            temperature=0.3,
-            max_tokens=600
-        )
-        content = resp.choices[0].message.content
-
-        # 7. JSON 파싱
-        start, end = content.find("{"), content.rfind("}")
-        if start == -1 or end == -1:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="JSON 결과를 찾을 수 없습니다."
-            )
-        data = json.loads(content[start:end+1])
-
-        # 8. recommendations 리스트 보장
-        recs = data.get("recommendations")
-        if isinstance(recs, dict):
-            data["recommendations"] = recs.get("colors") or list(recs.values())[0]
-        if not isinstance(data["recommendations"], list):
-            data["recommendations"] = []
-
-        return ChatbotResponse(**data)
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"서버 내부 오류: {e}")
+@router.post("/end/{history_id}")
+def end_chat_session(
+    history_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    chat = db.query(models.ChatHistory).filter_by(id=history_id, user_id=current_user.id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail="[translate:대화 세션 없음]")
+    if chat.ended_at:
+        return {"message": "[translate:이미 종료됨]", "ended_at": chat.ended_at}
+    chat.ended_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"message": "[translate:대화 종료]", "ended_at": chat.ended_at}

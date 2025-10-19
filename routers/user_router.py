@@ -136,5 +136,10 @@ async def delete_user_account(
 async def get_my_info(current_user: models.User = Depends(get_current_user)):
     return current_user
 
-
-
+@router.get("/me")
+def get_my_info(current_user: models.User = Depends(get_current_user)):
+    return {
+        "user_id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email
+    }
