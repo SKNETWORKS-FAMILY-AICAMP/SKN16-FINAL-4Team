@@ -26,6 +26,7 @@ import { useNavigate, useBeforeUnload, useBlocker } from 'react-router-dom';
 import { useCurrentUser } from '@/hooks/useUser';
 import { useSurveyResultsLive } from '@/hooks/useSurvey';
 import { chatbotApi, type ChatResModel } from '@/api/chatbot';
+import { userFeedbackApi } from '@/api/feedback';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -263,24 +264,50 @@ const ChatbotPage: React.FC = () => {
 
   // 피드백 선택 처리
   const handleFeedback = async (isPositive: boolean) => {
-    const feedbackType = isPositive ? '좋음' : '나쁨';
+    const feedbackType = isPositive ? '좋다' : '싫다';
     console.log(`챗봇 사용 피드백: ${feedbackType}`);
 
-    // 채팅 세션 종료
-    await handleEndChatSession();
+    try {
+      // 채팅 세션 종료
+      await handleEndChatSession();
 
-    setIsFeedbackModalOpen(false);
-    setIsLeavingPage(true);
+      // 사용자 피드백 API 호출
+      if (currentHistoryId) {
+        await userFeedbackApi.submitUserFeedback({
+          history_id: currentHistoryId,
+          feedback: feedbackType,
+        });
+        console.log('사용자 피드백이 성공적으로 제출되었습니다.');
+      }
 
-    message.success(`피드백 감사합니다! (${feedbackType})`, 2);
+      setIsFeedbackModalOpen(false);
+      setIsLeavingPage(true);
 
-    // blocker가 있으면 proceed, 없으면 일반 네비게이션
-    if (blocker.state === 'blocked') {
-      blocker.proceed();
-    } else {
-      setTimeout(() => {
-        navigate('/');
-      }, 500);
+      message.success(`피드백 감사합니다! (${feedbackType})`, 2);
+
+      // blocker가 있으면 proceed, 없으면 일반 네비게이션
+      if (blocker.state === 'blocked') {
+        blocker.proceed();
+      } else {
+        setTimeout(() => {
+          navigate('/');
+        }, 500);
+      }
+    } catch (error) {
+      console.error('피드백 제출 중 오류:', error);
+      message.error('피드백 제출 중 오류가 발생했습니다.');
+      
+      // 오류가 발생해도 페이지는 나갈 수 있도록 처리
+      setIsFeedbackModalOpen(false);
+      setIsLeavingPage(true);
+      
+      if (blocker.state === 'blocked') {
+        blocker.proceed();
+      } else {
+        setTimeout(() => {
+          navigate('/');
+        }, 500);
+      }
     }
   };
 
