@@ -8,6 +8,62 @@ from utils.shared import get_db, client
 
 router = APIRouter(prefix="/api/feedback", tags=["Feedback"])
 
+# ------------------ 관리자용 ai_feedback 리스트 라우터 (파일 하단) ------------------
+
+@router.get("/list/ai_feedbacks")
+def get_all_ai_feedbacks_admin(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="관리자만 접근 가능합니다.")
+    ai_feedbacks = db.query(models.AIFeedback).all()
+    result = []
+    for fb in ai_feedbacks:
+        msg = db.query(models.ChatMessage).filter_by(id=fb.message_id).first()
+        history = db.query(models.ChatHistory).filter_by(id=msg.history_id).first() if msg else None
+        # 질문 메시지 찾기 (같은 history에서 msg.id보다 작은 user role)
+        question_msg = None
+        if history and msg:
+            question_msg = db.query(models.ChatMessage).filter(
+                models.ChatMessage.history_id == history.id,
+                models.ChatMessage.role == "user",
+                models.ChatMessage.id < msg.id
+            ).order_by(models.ChatMessage.id.desc()).first()
+        result.append({
+            "history_id": history.id if history else None,
+            "question": question_msg.text if question_msg else None,
+            "answer": msg.text if msg else None,
+            "ai_feedback": {
+                "id": fb.id,
+                "message_id": fb.message_id,
+                "accuracy": fb.accuracy,
+                "consistency": fb.consistency,
+                "reliability": fb.reliability,
+                "personalization": fb.personalization,
+                "practicality": fb.practicality,
+                "total_score": fb.total_score,
+                "vector_db_quality": fb.vector_db_quality,
+                "detail_accuracy": fb.detail_accuracy,
+                "detail_consistency": fb.detail_consistency,
+                "detail_reliability": fb.detail_reliability,
+                "detail_personalization": fb.detail_personalization,
+                "detail_practicality": fb.detail_practicality
+            }
+        })
+    return {"ai_feedbacks": result}
+
+# ------------------ import 및 router 선언 (최상단) ------------------
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from routers.user_router import get_current_user
+import models
+import json
+from schemas import UserFeedbackRequest, UserFeedbackResponse
+from utils.shared import get_db, client
+
+router = APIRouter(prefix="/api/feedback", tags=["Feedback"])
+
 
 def parse_chat_pair_items(history):
     msgs = sorted(history.messages, key=lambda m: m.id)
