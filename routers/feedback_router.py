@@ -68,9 +68,12 @@ def parse_chat_pair_items(history):
     return items
 
 # llm_auto_feedback 함수는 반드시 파일 상단에 분리되어야 함
-def llm_auto_feedback(answer):
+def llm_auto_feedback(question, answer):
     llm_prompt = f"""너는 퍼스널컬러 AI 진단 결과를 평가하는 AI 평가자야.
-아래 AI 답변 결과에 대해 아래 항목을 반드시 JSON 형태(아래 포맷)로 평가해줘.
+아래 '질문'에 대해 '답변'이 얼마나 적절한지, 아래 항목에 따라 반드시 JSON 형태(아래 포맷)로 평가해줘.
+
+질문: {question}
+답변: {answer}
 
 {{
     "accuracy": [0~100점],
@@ -88,8 +91,6 @@ def llm_auto_feedback(answer):
 }}
 
 절대로 JSON 객체만, 예시대로 아래에 반환해줘!!
-아래는 평가 대상 AI 답변(진단 결과)야:
-{answer}
 """
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -150,16 +151,15 @@ def generate_ai_feedbacks(
     history = db.query(models.ChatHistory).filter_by(id=history_id, user_id=current_user.id).first()
     if not history:
         raise HTTPException(status_code=404, detail="채팅 이력 없음")
-    if not history.ended_at:
-        raise HTTPException(status_code=400, detail="채팅 종료 후에만 실행")
+    # 채팅 종료 여부와 상관없이 평가 가능하도록 변경
     items = parse_chat_pair_items(history)
     generated = 0
     for pair in items:
         ai_msg = pair["ai_msg"]
         if ai_msg.ai_feedback:
             continue
-        # 실제 AI 평가 호출
-        data = llm_auto_feedback(ai_msg.text)
+        # 실제 AI 평가 호출 (질문과 답변 모두 전달)
+        data = llm_auto_feedback(pair["question"], ai_msg.text)
         ai_feedback = models.AIFeedback(
             message_id=ai_msg.id,
             accuracy=data["accuracy"],

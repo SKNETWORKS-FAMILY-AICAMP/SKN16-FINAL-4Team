@@ -10,7 +10,10 @@ import os, json
 from typing import List, Dict, Any
 from math import sqrt
 
+
 from schemas import ChatbotRequest, ChatbotHistoryResponse, ChatItemModel, ChatResModel
+# AI 피드백 자동 평가 함수 임포트
+from routers.feedback_router import generate_ai_feedbacks
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -142,6 +145,13 @@ def analyze(
     db.add(ai_msg)
     db.commit()
     db.refresh(ai_msg)
+
+    # AI 답변 저장 후, AI 피드백 자동 평가 실행 (채팅 종료 전에도 평가 가능하도록 예외 무시)
+    try:
+        generate_ai_feedbacks(history_id=chat_history.id, current_user=current_user, db=db)
+    except Exception as e:
+        # 예: 채팅 종료 전에는 평가 불가 등의 예외 발생 가능, 무시하고 진행
+        pass
     msgs = db.query(models.ChatMessage).filter_by(history_id=chat_history.id).order_by(models.ChatMessage.id.asc()).all()
     items = []
     qid = 1
