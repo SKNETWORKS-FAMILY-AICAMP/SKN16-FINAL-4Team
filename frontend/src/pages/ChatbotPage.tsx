@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { formatKoreanDate } from '@/utils/dateUtils';
 import {
   Card,
   Input,
@@ -108,9 +109,8 @@ const ChatbotPage: React.FC = () => {
         id: 'welcome',
         content: `안녕하세요! 🎨 퍼스널컬러 전문 AI 어시스턴트입니다.
         
-최근 진단 결과가 "${
-          latestResult.result_name || latestResult.result_tone.toUpperCase()
-        } 타입"이시네요!
+최근 진단 결과가 "${latestResult.result_name || latestResult.result_tone.toUpperCase()
+          } 타입"이시네요!
 
 퍼스널컬러와 관련된 어떤 질문이든 자유롭게 물어보세요:
 • 추천 색상 조합
@@ -468,10 +468,9 @@ const ChatbotPage: React.FC = () => {
         {/* 알림 메시지 */}
         <Alert
           message="맞춤형 조언 제공"
-          description={`[${
-            surveyResults[0].result_name ||
+          description={`[${surveyResults[0].result_name ||
             surveyResults[0].result_tone.toUpperCase()
-          }] 타입 기반으로 개인화된 상담을 제공합니다.`}
+            }] 타입 기반으로 개인화된 상담을 제공합니다.`}
           type="info"
           showIcon
           className="mb-6"
@@ -487,14 +486,12 @@ const ChatbotPage: React.FC = () => {
             {messages.map(msg => (
               <div
                 key={msg.id}
-                className={`flex mb-4 ${
-                  msg.isUser ? 'justify-end' : 'justify-start'
-                }`}
+                className={`flex mb-4 ${msg.isUser ? 'justify-end' : 'justify-start'
+                  }`}
               >
                 <div
-                  className={`flex max-w-xs lg:max-w-md items-start ${
-                    msg.isUser ? 'flex-row-reverse' : 'flex-row'
-                  }`}
+                  className={`flex max-w-xs lg:max-w-md items-start ${msg.isUser ? 'flex-row-reverse' : 'flex-row'
+                    }`}
                 >
                   <Avatar
                     icon={msg.isUser ? <UserOutlined /> : <RobotOutlined />}
@@ -505,16 +502,14 @@ const ChatbotPage: React.FC = () => {
                     className={msg.isUser ? '!ml-2' : '!mr-2'}
                   />
                   <div
-                    className={`px-4 py-2 rounded-lg ${
-                      msg.isUser
+                    className={`px-4 py-2 rounded-lg ${msg.isUser
                         ? 'bg-blue-500 text-white'
                         : 'bg-white border border-gray-200'
-                    }`}
+                      }`}
                   >
                     <Text
-                      className={`whitespace-pre-wrap ${
-                        msg.isUser ? '!text-white' : '!text-gray-800'
-                      }`}
+                      className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'
+                        }`}
                     >
                       {msg.content}
                     </Text>
@@ -558,10 +553,7 @@ const ChatbotPage: React.FC = () => {
                     )}
 
                     <div className="text-xs mt-1 opacity-70">
-                      {msg.timestamp.toLocaleTimeString('ko-KR', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
+                      {formatKoreanDate(msg.timestamp, true)}
                     </div>
                   </div>
                 </div>

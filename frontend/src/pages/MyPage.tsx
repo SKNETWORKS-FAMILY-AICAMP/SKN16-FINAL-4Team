@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatKoreanDate } from '@/utils/dateUtils';
 import {
   Row,
   Col,
@@ -307,7 +308,7 @@ const MyPage: React.FC = () => {
                     </Text>
                     <Text className="text-gray-900">
                       {user.create_date
-                        ? new Date(user.create_date).toLocaleDateString('ko-KR')
+                        ? formatKoreanDate(user.create_date)
                         : '정보 없음'}
                     </Text>
                   </div>
@@ -318,9 +319,8 @@ const MyPage: React.FC = () => {
                     </Text>
                     <div className="flex items-center">
                       <div
-                        className={`w-2 h-2 rounded-full mr-2 ${
-                          user.is_active ? 'bg-green-500' : 'bg-red-500'
-                        }`}
+                        className={`w-2 h-2 rounded-full mr-2 ${user.is_active ? 'bg-green-500' : 'bg-red-500'
+                          }`}
                       ></div>
                       <Text
                         className={
@@ -408,15 +408,7 @@ const MyPage: React.FC = () => {
                               <div className="flex items-center mb-2">
                                 <Text className="!text-gray-500 text-sm flex items-center">
                                   <CalendarOutlined className="mr-1" />
-                                  {new Date(
-                                    result.created_at
-                                  ).toLocaleDateString('ko-KR', {
-                                    year: 'numeric',
-                                    month: 'long',
-                                    day: 'numeric',
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                  })}
+                                  {formatKoreanDate(result.created_at, true)}
                                 </Text>
                               </div>
 
@@ -431,9 +423,9 @@ const MyPage: React.FC = () => {
                                 <Text className="!text-gray-600 text-sm block mb-2">
                                   {result.result_description.length > 100
                                     ? `${result.result_description.substring(
-                                        0,
-                                        100
-                                      )}...`
+                                      0,
+                                      100
+                                    )}...`
                                     : result.result_description}
                                 </Text>
                               )}
@@ -459,7 +451,7 @@ const MyPage: React.FC = () => {
                                         handleDeleteSurvey(
                                           result.id,
                                           result.result_name ||
-                                            `${result.result_tone.toUpperCase()} 타입`
+                                          `${result.result_tone.toUpperCase()} 타입`
                                         ),
                                     },
                                   ],
@@ -553,7 +545,7 @@ const MyPage: React.FC = () => {
                 handleDeleteSurvey(
                   selectedResult.id,
                   selectedResult.result_name ||
-                    `${selectedResult.result_tone.toUpperCase()} 타입`
+                  `${selectedResult.result_tone.toUpperCase()} 타입`
                 );
                 handleCloseDetailModal();
               }
@@ -580,16 +572,7 @@ const MyPage: React.FC = () => {
                     </Title>
                     <Text className="!text-gray-500 flex items-center">
                       <CalendarOutlined className="mr-1" />
-                      {new Date(selectedResult.created_at).toLocaleDateString(
-                        'ko-KR',
-                        {
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        }
-                      )}
+                      {formatKoreanDate(selectedResult.created_at, true)}
                     </Text>
                   </div>
 
