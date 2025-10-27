@@ -120,3 +120,7 @@ frontend/dist/
 # Others
 *.swp
 *.swo
+
+awscliv2.zip
+eksctl
+eksctl_Linux_amd64.tar.gz
