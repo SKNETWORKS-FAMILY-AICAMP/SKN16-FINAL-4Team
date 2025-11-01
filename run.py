@@ -8,6 +8,10 @@ load_dotenv()
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
+
+# watchfiles DEBUG 로깅 비활성화
+logging.getLogger("watchfiles").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 HOST = os.getenv("HOST", "127.0.0.1")
