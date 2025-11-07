@@ -425,40 +425,6 @@ const ChatbotPage: React.FC = () => {
                       {msg.content}
                     </Text>
 
-                    {/* AI 응답의 경우 추가 정보 표시 */}
-                    {!msg.isUser && msg.chatRes && (
-                      <div className="mt-3 pt-3 border-t border-gray-100">
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-purple-600">
-                              퍼스널 컬러:
-                            </span>
-                            <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded-full">
-                              {msg.chatRes.primary_tone} - {msg.chatRes.sub_tone}
-                            </span>
-                          </div>
-
-                          {msg.chatRes.recommendations && msg.chatRes.recommendations.length > 0 && (
-                            <div>
-                              <div className="text-xs font-semibold text-gray-600 mb-1">
-                                🎨 추천사항:
-                              </div>
-                              <div className="space-y-1">
-                                {msg.chatRes.recommendations.map((rec, index) => (
-                                  <div
-                                    key={index}
-                                    className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded border-l-2 border-blue-300"
-                                  >
-                                    • {rec}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
                     <div className="text-xs mt-1 opacity-70">
                       {formatKoreanDate(msg.timestamp, true)}
                     </div>
