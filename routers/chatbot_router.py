@@ -56,17 +56,31 @@ async def save_chatbot_analysis_result(
     db: Session
 ):
     """
-    챗봇 대화 분석을 통해 퍼스널 컬러 진단 결과를 SurveyResult에 저장
+    🆕 새로운 퍼스널 컬러 진단 기록 생성 🆕
+    
+    ⚠️ 중요: 이 함수는 새로운 진단 기록(SurveyResult)을 생성합니다!
+    - 챗봇 대화 분석을 통한 새로운 퍼스널 컬러 진단
+    - 마이페이지 진단 기록에 새로운 항목이 추가됨
+    - 대화 내용을 AI가 분석하여 새로운 진단 결과 도출
+    
+    호출 시점:
+    1. 대화 세션 종료 시 (충분한 대화가 진행된 경우)
+    2. 수동 분석 요청 시 (/analyze/{history_id} API)
     """
     try:
+        print(f"🔍 새로운 진단 기록 생성 시작: user_id={user_id}, chat_history_id={chat_history_id}")
+        
         # 대화 히스토리에서 메시지들 가져오기
         messages = db.query(models.ChatMessage).filter_by(
             history_id=chat_history_id
         ).order_by(models.ChatMessage.created_at.asc()).all()
         
         if not messages:
+            print("❌ 대화 메시지가 없어서 진단 불가")
             return None
             
+        print(f"📝 대화 메시지 {len(messages)}개 발견, 분석 시작...")
+        
         # 대화 내용을 분석하여 퍼스널 컬러 결정
         conversation_text = ""
         for msg in messages:
@@ -138,7 +152,8 @@ async def save_chatbot_analysis_result(
             }
         ]
         
-        # SurveyResult로 저장
+        # SurveyResult로 새로운 진단 기록 저장
+        print(f"💾 새로운 진단 기록 DB 저장 시작...")
         survey_result = models.SurveyResult(
             user_id=user_id,
             result_tone=primary_type,
@@ -157,6 +172,11 @@ async def save_chatbot_analysis_result(
         db.add(survey_result)
         db.commit()
         db.refresh(survey_result)
+        
+        print(f"✅ 새로운 진단 기록 생성 완료: survey_result_id={survey_result.id}")
+        print(f"   - 진단 타입: {survey_result.result_tone}")
+        print(f"   - 신뢰도: {survey_result.confidence}")
+        print(f"   ⚠️ 마이페이지 진단 기록에 새로운 항목 추가됨")
         
         return survey_result
         
@@ -448,3 +468,146 @@ async def analyze_chat_for_personal_color(
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"분석 중 오류가 발생했습니다: {str(e)}")
+
+@router.post("/report/request")
+async def request_personal_color_report(
+    request_data: dict,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    🔥 기존 퍼스널 컬러 진단 보고서 생성 요청 🔥
+    
+    ⚠️ 중요: 이 API는 새로운 진단 기록을 생성하지 않습니다!
+    - 기존 진단 결과(SurveyResult)를 기반으로 리포트만 생성
+    - 진단 기록(마이페이지)에 새로운 항목이 추가되지 않음
+    - 단순히 기존 데이터를 시각화/포맷팅하여 리포트로 제공
+    
+    새로운 진단 기록은 오직 대화형 분석을 통해서만 생성됩니다.
+    """
+    survey_result_id = request_data.get("history_id")  # 실제로는 survey_result_id
+    
+    if not survey_result_id:
+        raise HTTPException(status_code=400, detail="진단 결과 ID가 필요합니다")
+    
+    # 사용자의 기존 진단 결과 조회 (읽기 전용)
+    survey_result = db.query(models.SurveyResult).filter_by(
+        id=survey_result_id, 
+        user_id=current_user.id, 
+        is_active=True
+    ).first()
+    
+    if not survey_result:
+        raise HTTPException(status_code=404, detail="진단 결과를 찾을 수 없습니다")
+    
+    print(f"📊 기존 진단 결과 기반 리포트 생성: survey_result_id={survey_result_id}")
+    print(f"   - 결과 타입: {survey_result.result_tone}")
+    print(f"   - 생성일: {survey_result.created_at}")
+    print(f"   ❗ 새로운 진단 기록을 생성하지 않음 (리포트만 생성)")
+    
+    try:
+        from utils.report_generator import PersonalColorReportGenerator
+        
+        # 리포트 생성기 초기화
+        report_generator = PersonalColorReportGenerator()
+        
+        # 기존 진단 결과를 리포트 데이터로 변환 (읽기 전용)
+        survey_data = {
+            "result_tone": survey_result.result_tone,
+            "result_name": survey_result.result_name,
+            "confidence": survey_result.confidence,
+            "detailed_analysis": survey_result.detailed_analysis,
+            "color_palette": survey_result.color_palette,
+            "style_keywords": survey_result.style_keywords,
+            "makeup_tips": survey_result.makeup_tips
+        }
+        
+        # 대화 히스토리 조회 (리포트에 포함할 대화 내용, 읽기 전용)
+        chat_history = []
+        if hasattr(survey_result, 'chat_history_id') and survey_result.chat_history_id:
+            messages = db.query(models.ChatMessage).filter_by(
+                history_id=survey_result.chat_history_id
+            ).order_by(models.ChatMessage.created_at.asc()).all()
+            
+            chat_history = [
+                {
+                    "role": msg.role,
+                    "text": msg.text,
+                    "created_at": msg.created_at.isoformat()
+                }
+                for msg in messages
+            ]
+        
+        # 리포트 데이터 생성 (기존 데이터 시각화만, DB 변경 없음)
+        report_data = report_generator.generate_report_data(survey_data, chat_history)
+        
+        # ⚠️ 중요: 여기서 db.add(), db.commit() 등의 DB 변경 작업 절대 금지!
+        print(f"✅ 리포트 생성 완료 (DB 변경 없음)")
+        
+        return {
+            "status": "success",
+            "message": f"{survey_result.result_name or survey_result.result_tone.upper()} 타입 분석 리포트가 생성되었습니다",
+            "survey_result_id": survey_result_id,
+            "report_data": report_data,
+            "note": "기존 진단 데이터 기반 리포트 생성 (새로운 진단 기록 추가 없음)"
+        }
+        
+    except Exception as e:
+        print(f"❌ 리포트 생성 중 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"리포트 생성 중 오류가 발생했습니다: {str(e)}")
+
+@router.get("/report/{survey_result_id}")
+async def get_personal_color_report(
+    survey_result_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    생성된 퍼스널 컬러 진단 보고서 조회
+    """
+    survey_result = db.query(models.SurveyResult).filter_by(
+        id=survey_result_id, 
+        user_id=current_user.id, 
+        is_active=True
+    ).first()
+    
+    if not survey_result:
+        raise HTTPException(status_code=404, detail="진단 결과를 찾을 수 없습니다")
+    
+    try:
+        from utils.report_generator import PersonalColorReportGenerator
+        
+        report_generator = PersonalColorReportGenerator()
+        
+        # 진단 결과 데이터 준비
+        survey_data = {
+            "result_tone": survey_result.result_tone,
+            "result_name": survey_result.result_name,
+            "confidence": survey_result.confidence,
+            "detailed_analysis": survey_result.detailed_analysis,
+            "color_palette": survey_result.color_palette,
+            "style_keywords": survey_result.style_keywords,
+            "makeup_tips": survey_result.makeup_tips
+        }
+        
+        # 대화 히스토리 조회
+        chat_history = []
+        
+        # 리포트 데이터 생성
+        report_data = report_generator.generate_report_data(survey_data, chat_history)
+        
+        # HTML 리포트도 생성
+        html_report = report_generator.generate_html_report(report_data)
+        
+        return {
+            "message": "리포트 조회 성공",
+            "report_data": report_data,
+            "html_report": html_report,
+            "download_available": True
+        }
+        
+    except Exception as e:
+        print(f"❌ 리포트 조회 중 오류: {e}")
+        raise HTTPException(status_code=500, detail=f"리포트 조회 중 오류가 발생했습니다: {str(e)}")
