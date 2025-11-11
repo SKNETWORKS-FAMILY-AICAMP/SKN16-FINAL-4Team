@@ -1,4 +1,5 @@
 import apiClient from './client';
+import type { SurveyResultDetail } from './survey';
 
 /**
  * 챗봇 관련 API 타입 정의
@@ -63,6 +64,25 @@ class ChatbotApi {
       {},
       {
         timeout: 10000,
+      }
+    );
+    return response.data;
+  }
+
+  /**
+   * 채팅 세션 분석하여 진단 결과 저장
+   */
+  async analyzeChatForDiagnosis(
+    historyId: number
+  ): Promise<SurveyResultDetail> {
+    const response = await apiClient.post<SurveyResultDetail>(
+      `/chatbot/analyze/${historyId}`,
+      {},
+      {
+        timeout: 30000, // 분석에 시간이 걸릴 수 있음
+        headers: {
+          'Content-Type': 'application/json',
+        },
       }
     );
     return response.data;

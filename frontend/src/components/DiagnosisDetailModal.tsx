@@ -4,13 +4,23 @@ import {
   Modal,
   Button,
   message,
+  Tooltip,
+  Typography,
+  Tabs,
+  Tag,
+  Divider,
 } from 'antd';
 import {
   DeleteOutlined,
   DownloadOutlined,
+  TrophyOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons';
 import type { SurveyResultDetail } from '@/api/survey';
+import type { PersonalColorType } from '@/types/personalColor';
 import html2canvas from 'html2canvas';
+
+const { Title, Text } = Typography;
 
 interface DiagnosisDetailModalProps {
   open: boolean;
@@ -21,7 +31,7 @@ interface DiagnosisDetailModalProps {
 }
 
 /**
- * 진단 결과 상세보기 모달 컴포넌트 - 이미지 다운로드 최적화
+ * 진단 결과 상세보기 모달 컴포넌트 - MyPage 스타일 적용
  */
 const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
   open,
@@ -30,62 +40,356 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
   onDelete,
   showDeleteButton = true,
 }) => {
-  const [isDownloading, setIsDownloading] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const [activeTabKey, setActiveTabKey] = useState('spring');
 
-  // 모달 닫기 - 컴포넌트 초기화
   const handleClose = () => {
     onClose();
   };
 
-  // 진단 기록 삭제
-  const handleDelete = () => {
-    if (selectedResult && onDelete) {
-      onDelete(
-        selectedResult.id,
-        selectedResult.result_name || `${selectedResult.result_tone.toUpperCase()} 타입`
-      );
-      handleClose();
-    }
+  const handleColorCopy = (color: string) => {
+    navigator.clipboard.writeText(color);
+    message.success(`${color} 복사됨!`);
   };
 
-  // 간단한 이미지 다운로드 핸들러
   const handleDownloadImage = async () => {
-    if (!selectedResult || !contentRef.current) return;
-    
-    setIsDownloading(true);
+    if (!contentRef.current || !selectedResult) return;
+
     try {
-      // 매우 기본적인 html2canvas 설정으로 oklch 문제 회피
-      const canvas = await html2canvas(contentRef.current, {
+      message.loading('이미지를 생성하는 중...', 0);
+
+      // 완전히 새로운 DOM 생성 (CSS 클래스 없이)
+      const createImageContent = () => {
+        const container = document.createElement('div');
+        container.style.cssText = `
+          width: 600px;
+          padding: 20px;
+          background-color: #ffffff;
+          font-family: 'Arial', sans-serif;
+          color: #000000;
+          line-height: 1.6;
+          box-sizing: border-box;
+        `;
+
+        // 제목
+        const header = document.createElement('div');
+        header.style.cssText = `
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 24px;
+        `;
+
+        const titleSection = document.createElement('div');
+        const titleIcon = document.createElement('span');
+        titleIcon.textContent = '🏆';
+        titleIcon.style.cssText = 'color: #eab308; margin-right: 8px;';
+        
+        const titleText = document.createElement('span');
+        titleText.textContent = '퍼스널컬러 분석 결과';
+        titleText.style.cssText = 'font-size: 18px; font-weight: bold; color: #000000;';
+        
+        titleSection.appendChild(titleIcon);
+        titleSection.appendChild(titleText);
+
+        const dateSection = document.createElement('div');
+        const dateIcon = document.createElement('span');
+        dateIcon.textContent = '📅';
+        dateIcon.style.cssText = 'margin-right: 4px;';
+        
+        const dateText = document.createElement('span');
+        dateText.textContent = formatKoreanDate(selectedResult.created_at, true);
+        dateText.style.cssText = 'color: #6b7280; font-size: 14px;';
+        
+        dateSection.appendChild(dateIcon);
+        dateSection.appendChild(dateText);
+
+        header.appendChild(titleSection);
+        header.appendChild(dateSection);
+        container.appendChild(header);
+
+        // 진단 결과
+        if (selectedResult.top_types && selectedResult.top_types.length > 0) {
+          selectedResult.top_types.slice(0, 3).forEach((typeData, index) => {
+            const typeCard = document.createElement('div');
+            typeCard.style.cssText = `
+              margin-bottom: 20px;
+              border-radius: 16px;
+              overflow: hidden;
+              box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            `;
+
+            // 메인 카드
+            const mainCard = document.createElement('div');
+            mainCard.style.cssText = `
+              padding: 16px;
+              text-align: center;
+              color: #ffffff;
+            `;
+
+            // 타입별 배경색 설정
+            if (typeData.type === 'spring') {
+              mainCard.style.background = 'linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%)';
+              mainCard.style.color = '#2d3436';
+            } else if (typeData.type === 'summer') {
+              mainCard.style.background = 'linear-gradient(135deg, #a8e6cf 0%, #dcedc8 100%)';
+              mainCard.style.color = '#2d3436';
+            } else if (typeData.type === 'autumn') {
+              mainCard.style.background = 'linear-gradient(135deg, #d4a574 0%, #8b4513 100%)';
+              mainCard.style.color = '#ffffff';
+            } else if (typeData.type === 'winter') {
+              mainCard.style.background = 'linear-gradient(135deg, #74b9ff 0%, #0984e3 100%)';
+              mainCard.style.color = '#ffffff';
+            }
+
+            const typeTitle = document.createElement('h3');
+            typeTitle.style.cssText = `
+              margin: 0 0 8px 0;
+              font-size: 20px;
+              font-weight: bold;
+            `;
+            typeTitle.textContent = `${index === 0 ? '🏆 ' : ''}${typeData.name}`;
+
+            const typeDesc = document.createElement('p');
+            typeDesc.style.cssText = `
+              margin: 0;
+              font-size: 14px;
+              opacity: 0.9;
+            `;
+            typeDesc.textContent = typeData.description || '';
+
+            mainCard.appendChild(typeTitle);
+            if (typeData.description) {
+              mainCard.appendChild(typeDesc);
+            }
+            typeCard.appendChild(mainCard);
+
+            // 컬러 팔레트
+            if (typeData.color_palette && typeData.color_palette.length > 0) {
+              const paletteSection = document.createElement('div');
+              paletteSection.style.cssText = `
+                padding: 16px;
+                background-color: #ffffff;
+                border-top: 1px solid #f0f0f0;
+              `;
+
+              const paletteTitle = document.createElement('p');
+              paletteTitle.style.cssText = `
+                margin: 0 0 12px 0;
+                font-weight: bold;
+                color: #374151;
+                font-size: 14px;
+              `;
+              paletteTitle.textContent = '🎨 당신만의 컬러 팔레트';
+
+              const paletteGrid = document.createElement('div');
+              paletteGrid.style.cssText = `
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 12px;
+                margin-bottom: 12px;
+              `;
+
+              typeData.color_palette.slice(0, 8).forEach(color => {
+                const colorItem = document.createElement('div');
+                colorItem.style.cssText = 'text-align: center;';
+
+                const colorCircle = document.createElement('div');
+                colorCircle.style.cssText = `
+                  width: 40px;
+                  height: 40px;
+                  border-radius: 50%;
+                  margin: 0 auto 4px auto;
+                  background-color: ${color === '#ffffff' ? '#f5f5f5' : color};
+                  border: 2px solid ${color === '#ffffff' ? '#d9d9d9' : '#ffffff'};
+                  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                `;
+
+                const colorLabel = document.createElement('div');
+                colorLabel.style.cssText = `
+                  font-size: 10px;
+                  color: #6b7280;
+                `;
+                colorLabel.textContent = color;
+
+                colorItem.appendChild(colorCircle);
+                colorItem.appendChild(colorLabel);
+                paletteGrid.appendChild(colorItem);
+              });
+
+              paletteSection.appendChild(paletteTitle);
+              paletteSection.appendChild(paletteGrid);
+              typeCard.appendChild(paletteSection);
+            }
+
+            // 스타일 키워드
+            if (typeData.style_keywords && typeData.style_keywords.length > 0) {
+              const keywordsSection = document.createElement('div');
+              keywordsSection.style.cssText = `
+                padding: 16px;
+                background-color: #fafafa;
+                border-top: 1px solid #f0f0f0;
+              `;
+
+              const keywordsTitle = document.createElement('p');
+              keywordsTitle.style.cssText = `
+                margin: 0 0 8px 0;
+                font-weight: bold;
+                color: #374151;
+                font-size: 14px;
+              `;
+              keywordsTitle.textContent = '✨ 스타일 키워드';
+
+              const keywordsContainer = document.createElement('div');
+              keywordsContainer.style.cssText = `
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+              `;
+
+              typeData.style_keywords.forEach(keyword => {
+                const keywordTag = document.createElement('span');
+                keywordTag.style.cssText = `
+                  padding: 0px 7px 5px 7px;
+                  background-color: #f0f5ff;
+                  color: #1d39c4;
+                  border-radius: 4px;
+                  border: 1px solid #adc6ff;
+                  font-size: 12px;
+                `;
+                keywordTag.textContent = keyword;
+                keywordsContainer.appendChild(keywordTag);
+              });
+
+              keywordsSection.appendChild(keywordsTitle);
+              keywordsSection.appendChild(keywordsContainer);
+              typeCard.appendChild(keywordsSection);
+            }
+
+            // 메이크업 팁
+            if (typeData.makeup_tips && typeData.makeup_tips.length > 0) {
+              const tipsSection = document.createElement('div');
+              tipsSection.style.cssText = `
+                padding: 16px;
+                background-color: #fef7f0;
+                border-top: 1px solid #f0f0f0;
+              `;
+
+              const tipsTitle = document.createElement('p');
+              tipsTitle.style.cssText = `
+                margin: 0 0 8px 0;
+                font-weight: bold;
+                color: #374151;
+                font-size: 14px;
+              `;
+              tipsTitle.textContent = '💄 메이크업 팁';
+
+              const tipsContainer = document.createElement('div');
+              tipsContainer.style.cssText = `
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+              `;
+
+              typeData.makeup_tips.forEach(tip => {
+                const tipTag = document.createElement('span');
+                tipTag.style.cssText = `
+                  padding: 0px 7px 5px 7px;
+                  background-color: #fff2e8;
+                  color: #d4380d;
+                  border-radius: 4px;
+                  border: 1px solid #ffbb96;
+                  font-size: 12px;
+                `;
+                tipTag.textContent = tip;
+                tipsContainer.appendChild(tipTag);
+              });
+
+              tipsSection.appendChild(tipsTitle);
+              tipsSection.appendChild(tipsContainer);
+              typeCard.appendChild(tipsSection);
+            }
+
+            container.appendChild(typeCard);
+          });
+        }
+
+        // 상세 분석
+        if (selectedResult.detailed_analysis) {
+          const analysisSection = document.createElement('div');
+          analysisSection.style.cssText = `
+            margin-top: 20px;
+            padding: 16px;
+            background: linear-gradient(135deg, #fef7ff 0%, #fdf2f8 100%);
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+          `;
+
+          const analysisTitle = document.createElement('h4');
+          analysisTitle.style.cssText = `
+            margin: 0 0 12px 0;
+            font-size: 16px;
+            font-weight: bold;
+            color: #374151;
+          `;
+          analysisTitle.textContent = 'AI 상세 분석';
+
+          const analysisContent = document.createElement('p');
+          analysisContent.style.cssText = `
+            margin: 0;
+            color: #4b5563;
+            line-height: 1.6;
+            white-space: pre-line;
+          `;
+          analysisContent.textContent = selectedResult.detailed_analysis;
+
+          analysisSection.appendChild(analysisTitle);
+          analysisSection.appendChild(analysisContent);
+          container.appendChild(analysisSection);
+        }
+
+        return container;
+      };
+
+      const imageContent = createImageContent();
+      
+      // 임시 컨테이너에 추가
+      const tempContainer = document.createElement('div');
+      tempContainer.style.cssText = `
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+        width: 600px;
+      `;
+      tempContainer.appendChild(imageContent);
+      document.body.appendChild(tempContainer);
+
+      const canvas = await html2canvas(imageContent, {
         backgroundColor: '#ffffff',
-        scale: 1,
+        scale: 2,
         useCORS: true,
         allowTaint: true,
         logging: false,
-        removeContainer: true,
-        foreignObjectRendering: false,
+        width: 600,
+        height: imageContent.offsetHeight
       });
 
-      // 이미지로 변환 및 다운로드
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.download = `personal-color-diagnosis-${selectedResult.id}-${new Date().toISOString().slice(0, 10)}.png`;
-          link.href = url;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(url);
-          message.success('진단 결과 이미지가 다운로드되었습니다!');
-        }
-      }, 'image/png', 0.95);
+      // 임시 컨테이너 제거
+      document.body.removeChild(tempContainer);
       
-    } catch (error: any) {
-      console.error('이미지 다운로드 오류:', error);
-      message.error('이미지 다운로드 중 오류가 발생했습니다.');
-    } finally {
-      setIsDownloading(false);
+      message.destroy();
+
+      const link = document.createElement('a');
+      link.download = `퍼스널컬러_진단결과_${selectedResult.result_name || selectedResult.result_tone}_${new Date().getTime()}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+
+      message.success('이미지가 다운로드되었습니다!');
+    } catch (error) {
+      message.destroy();
+      console.error('이미지 다운로드 실패:', error);
+      message.error('이미지 다운로드에 실패했습니다.');
     }
   };
 
@@ -100,7 +404,16 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
             key="delete"
             danger
             icon={<DeleteOutlined />}
-            onClick={handleDelete}
+            onClick={() => {
+              if (selectedResult) {
+                onDelete(
+                  selectedResult.id,
+                  selectedResult.result_name ||
+                  `${selectedResult.result_tone.toUpperCase()} 타입`
+                );
+                handleClose();
+              }
+            }}
           >
             삭제
           </Button>
@@ -110,10 +423,8 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
           type="primary"
           icon={<DownloadOutlined />}
           onClick={handleDownloadImage}
-          loading={isDownloading}
-          style={{ backgroundColor: '#3b82f6', borderColor: '#3b82f6' }}
         >
-          {isDownloading ? '다운로드 중...' : '이미지 다운로드'}
+          이미지 저장
         </Button>,
         <Button key="close" onClick={handleClose}>
           닫기
@@ -124,6 +435,7 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
       {selectedResult && (
         <div 
           ref={contentRef} 
+          className="space-y-6 py-2"
           style={{
             backgroundColor: '#ffffff',
             color: '#000000',
@@ -131,199 +443,317 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
             fontFamily: 'Arial, sans-serif'
           }}
         >
-          {/* 진단 결과 헤더 */}
-          <div style={{ textAlign: 'center', marginBottom: '30px' }}>
-            <h2 style={{ 
-              fontSize: '24px', 
-              fontWeight: 'bold', 
-              color: '#6366f1', 
-              marginBottom: '8px',
-              margin: '0 0 8px 0'
-            }}>
-              🎨 퍼스널 컬러 진단 결과
-            </h2>
-            <p style={{ color: '#6b7280', margin: '0' }}>
-              분석일: {selectedResult.created_at 
-                ? formatKoreanDate(selectedResult.created_at, true) 
-                : '분석 완료'}
-            </p>
-          </div>
-
-          {/* 메인 결과 타입 */}
-          {selectedResult.top_types && selectedResult.top_types.length > 0 && (
-            <div style={{ marginBottom: '20px' }}>
-              {selectedResult.top_types.slice(0, 1).map((typeData: any, index: number) => {
-                const typeNames: Record<string, { name: string; emoji: string; color: string }> = {
-                  spring: { name: '봄 웜톤', emoji: '🌸', color: '#fab1a0' },
-                  summer: { name: '여름 쿨톤', emoji: '💎', color: '#a8e6cf' },
-                  autumn: { name: '가을 웜톤', emoji: '🍂', color: '#d4a574' },
-                  winter: { name: '겨울 쿨톤', emoji: '❄️', color: '#74b9ff' },
-                };
-                const typeInfo = typeNames[typeData.type] || typeNames.spring;
-
-                return (
-                  <div
-                    key={index}
-                    style={{
-                      background: `linear-gradient(135deg, ${typeInfo.color}, ${typeInfo.color}aa)`,
-                      color: '#000000',
-                      padding: '20px',
-                      borderRadius: '12px',
-                      textAlign: 'center',
-                      marginBottom: '20px'
-                    }}
-                  >
-                    <h3 style={{ 
-                      fontSize: '20px', 
-                      fontWeight: 'bold', 
-                      margin: '0 0 8px 0',
-                      color: '#000000'
-                    }}>
-                      {typeInfo.emoji} {typeData.name}
-                    </h3>
-                    <p style={{ 
-                      fontSize: '14px', 
-                      margin: '0',
-                      color: '#000000'
-                    }}>
-                      {typeData.description}
-                    </p>
-                  </div>
-                );
-              })}
-
-              {/* 컬러 팔레트 */}
-              {selectedResult.top_types[0]?.color_palette && (
-                <div style={{ marginBottom: '20px' }}>
-                  <h4 style={{ 
-                    color: '#374151', 
-                    marginBottom: '12px',
-                    fontSize: '16px',
-                    fontWeight: 'bold'
-                  }}>
-                    🎨 당신만의 컬러 팔레트
-                  </h4>
-                  <div style={{ 
-                    display: 'flex', 
-                    flexWrap: 'wrap', 
-                    justifyContent: 'center', 
-                    gap: '12px' 
-                  }}>
-                    {selectedResult.top_types[0].color_palette.slice(0, 8).map((color: string, colorIndex: number) => (
-                      <div key={colorIndex} style={{ textAlign: 'center' }}>
-                        <div
-                          style={{
-                            width: '48px',
-                            height: '48px',
-                            backgroundColor: color,
-                            borderRadius: '50%',
-                            border: '2px solid #ffffff',
-                            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-                            margin: '0 auto 4px'
-                          }}
-                        />
-                        <span style={{ 
-                          fontSize: '11px', 
-                          color: '#6b7280',
-                          display: 'block'
-                        }}>
-                          {color}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+          {/* Top Types 결과 - Tabs UI */}
+          {selectedResult.top_types &&
+            selectedResult.top_types.length > 0 && (
+              <div>
+                <div className="flex justify-between">
+                  <Title level={5} className="mb-4 flex items-center">
+                    <TrophyOutlined className="mr-2 text-yellow-500" />
+                    퍼스널컬러 분석 결과
+                  </Title>
+                  <Text className="!text-gray-500 flex items-center">
+                    <CalendarOutlined className="mr-1" />
+                    {formatKoreanDate(selectedResult.created_at, true)}
+                  </Text>
                 </div>
-              )}
 
-              {/* 스타일 키워드 */}
-              {selectedResult.top_types[0]?.style_keywords && selectedResult.top_types[0].style_keywords.length > 0 && (
-                <div style={{ marginBottom: '20px' }}>
-                  <h4 style={{ 
-                    color: '#374151', 
-                    marginBottom: '12px',
-                    fontSize: '16px',
-                    fontWeight: 'bold'
-                  }}>
-                    ✨ 스타일 키워드
-                  </h4>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                    {selectedResult.top_types[0].style_keywords.map((keyword: string, keywordIndex: number) => (
-                      <span
-                        key={keywordIndex}
-                        style={{
-                          background: '#e0e7ff',
-                          color: '#3730a3',
-                          padding: '4px 12px',
-                          borderRadius: '16px',
-                          fontSize: '12px',
-                          fontWeight: '500'
-                        }}
-                      >
-                        {keyword}
-                      </span>
-                    ))}
-                  </div>
+                <Tabs
+                  activeKey={activeTabKey}
+                  onChange={setActiveTabKey}
+                  items={selectedResult.top_types
+                    .slice(0, 3)
+                    .map((typeData, index) => {
+                      const isHighestScore = index === 0;
+
+                      // 타입별 정보
+                      const typeNames: Record<
+                        string,
+                        { name: string; emoji: string; color: string }
+                      > = {
+                        spring: {
+                          name: '봄 웜톤',
+                          emoji: '🌸',
+                          color: '#fab1a0',
+                        },
+                        summer: {
+                          name: '여름 쿨톤',
+                          emoji: '💎',
+                          color: '#a8e6cf',
+                        },
+                        autumn: {
+                          name: '가을 웜톤',
+                          emoji: '🍂',
+                          color: '#d4a574',
+                        },
+                        winter: {
+                          name: '겨울 쿨톤',
+                          emoji: '❄️',
+                          color: '#74b9ff',
+                        },
+                      };
+                      const typeInfo =
+                        typeNames[typeData.type] || typeNames.spring;
+
+                      // 배경 스타일 (PersonalColorTest와 동일)
+                      const allBackgrounds = {
+                        spring: {
+                          background:
+                            'linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%)',
+                          color: '#2d3436',
+                        },
+                        summer: {
+                          background:
+                            'linear-gradient(135deg, #a8e6cf 0%, #dcedc8 100%)',
+                          color: '#2d3436',
+                        },
+                        autumn: {
+                          background:
+                            'linear-gradient(135deg, #d4a574 0%, #8b4513 100%)',
+                          color: '#ffffff',
+                        },
+                        winter: {
+                          background:
+                            'linear-gradient(135deg, #74b9ff 0%, #0984e3 100%)',
+                          color: '#ffffff',
+                        },
+                      };
+                      const displayStyle =
+                        allBackgrounds[typeData.type as PersonalColorType];
+
+                      // 컬러 데이터 (PersonalColorTest와 동일)
+                      const colorData = {
+                        swatches: typeData.color_palette || [],
+                        keyColors:
+                          typeData.color_palette?.map(
+                            (_, idx) => `색상 ${idx + 1}`
+                          ) || [],
+                      };
+
+                      return {
+                        key: typeData.type,
+                        label: (
+                          <div className="flex items-center px-2 gap-1">
+                            {isHighestScore && (
+                              <Tag color="gold" className="ml-1 text-xs">
+                                추천
+                              </Tag>
+                            )}
+                            <span className="mr-1">{typeInfo.emoji}</span>
+                            <span
+                              className={
+                                isHighestScore
+                                  ? 'font-bold text-purple-600'
+                                  : ''
+                              }
+                            >
+                              {typeData.name}
+                            </span>
+                          </div>
+                        ),
+                        children: (
+                          <div className="space-y-4">
+                            {/* 메인 타입 카드 (PersonalColorTest와 동일) */}
+                            <div
+                              className="p-4 rounded-2xl text-center transition-all duration-300"
+                              style={{
+                                background: displayStyle.background,
+                                color: displayStyle.color,
+                              }}
+                            >
+                              <Title
+                                level={3}
+                                style={{
+                                  color: displayStyle.color,
+                                  margin: 0,
+                                }}
+                              >
+                                {typeData.name}
+                              </Title>
+                              <Text
+                                style={{
+                                  color: displayStyle.color,
+                                  fontSize: '14px',
+                                  display: 'block',
+                                  marginTop: '8px',
+                                }}
+                              >
+                                {typeData.description}
+                              </Text>
+                            </div>
+
+                            {/* 컬러 팔레트 (PersonalColorTest와 동일) */}
+                            {colorData.swatches.length > 0 && (
+                              <div>
+                                <Text
+                                  strong
+                                  className="!text-gray-700 block mb-2 text-sm"
+                                >
+                                  🎨 당신만의 컬러 팔레트
+                                </Text>
+                                <div className="flex flex-wrap justify-center gap-3 mb-3">
+                                  {colorData.swatches
+                                    .slice(0, 8)
+                                    .map((color, colorIndex) => {
+                                      const isWhite = color.toLowerCase() === '#ffffff';
+                                      return (
+                                        <Tooltip
+                                          key={colorIndex}
+                                          title={`${color} 복사`}
+                                          placement="top"
+                                        >
+                                          <div
+                                            className="cursor-pointer transition-transform hover:scale-110 active:scale-95 group"
+                                            onClick={() => handleColorCopy(color)}
+                                          >
+                                            <div
+                                              className="w-12 h-12 rounded-full border-2 border-white shadow-lg group-hover:shadow-xl transition-shadow"
+                                              style={{ 
+                                                backgroundColor: isWhite ? '#f5f5f5' : color,
+                                                borderColor: isWhite ? '#d9d9d9' : '#ffffff'
+                                              }}
+                                            />
+                                            <Text className="text-xs text-center block mt-1 !text-gray-600">
+                                              {color}
+                                            </Text>
+                                          </div>
+                                        </Tooltip>
+                                      );
+                                    })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* 스타일 키워드 */}
+                            {typeData.style_keywords &&
+                              typeData.style_keywords.length > 0 && (
+                                <div>
+                                  <Text
+                                    strong
+                                    className="!text-gray-700 block mb-2 text-sm"
+                                  >
+                                    ✨ 스타일 키워드
+                                  </Text>
+                                  <div className="flex flex-wrap gap-2">
+                                    {typeData.style_keywords.map(
+                                      (keyword, keywordIndex) => (
+                                        <Tag
+                                          key={keywordIndex}
+                                          color="geekblue"
+                                        >
+                                          {keyword}
+                                        </Tag>
+                                      )
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                            {/* 메이크업 팁 */}
+                            {typeData.makeup_tips &&
+                              typeData.makeup_tips.length > 0 && (
+                                <div>
+                                  <Text
+                                    strong
+                                    className="!text-gray-700 block mb-2 text-sm"
+                                  >
+                                    💄 메이크업 팁
+                                  </Text>
+                                  <div className="flex flex-wrap gap-2">
+                                    {typeData.makeup_tips.map(
+                                      (tip, tipIndex) => (
+                                        <Tag key={tipIndex} color="volcano">
+                                          {tip}
+                                        </Tag>
+                                      )
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                          </div>
+                        ),
+                      };
+                    })}
+                  className="mb-4"
+                />
+              </div>
+            )}
+
+          {/* 컬러 팔레트 (기존 코드 유지하되 top_types가 있을 때는 숨김) */}
+          {selectedResult.color_palette &&
+            selectedResult.color_palette.length > 0 &&
+            (!selectedResult.top_types ||
+              selectedResult.top_types.length === 0) && (
+              <div>
+                <Title level={5} className="mb-3">
+                  추천 컬러 팔레트
+                </Title>
+                <div className="flex flex-wrap gap-2">
+                  {selectedResult.color_palette.map((color, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center bg-white border rounded-lg p-2 shadow-sm"
+                    >
+                      <div
+                        className="w-6 h-6 rounded mr-2 border"
+                        style={{ backgroundColor: color }}
+                      />
+                      <Text className="text-sm">{color}</Text>
+                    </div>
+                  ))}
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* 메이크업 팁 */}
-              {selectedResult.top_types[0]?.makeup_tips && selectedResult.top_types[0].makeup_tips.length > 0 && (
-                <div style={{ marginBottom: '20px' }}>
-                  <h4 style={{ 
-                    color: '#374151', 
-                    marginBottom: '12px',
-                    fontSize: '16px',
-                    fontWeight: 'bold'
-                  }}>
-                    💄 메이크업 팁
-                  </h4>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                    {selectedResult.top_types[0].makeup_tips.map((tip: string, tipIndex: number) => (
-                      <span
-                        key={tipIndex}
-                        style={{
-                          background: '#fee2e2',
-                          color: '#991b1b',
-                          padding: '4px 12px',
-                          borderRadius: '16px',
-                          fontSize: '12px',
-                          fontWeight: '500'
-                        }}
-                      >
-                        {tip}
-                      </span>
-                    ))}
-                  </div>
+          {/* 스타일 키워드 (기존 코드 유지하되 top_types가 있을 때는 숨김) */}
+          {selectedResult.style_keywords &&
+            selectedResult.style_keywords.length > 0 &&
+            (!selectedResult.top_types ||
+              selectedResult.top_types.length === 0) && (
+              <div>
+                <Title level={5} className="mb-3">
+                  스타일 키워드
+                </Title>
+                <div className="flex flex-wrap gap-2">
+                  {selectedResult.style_keywords.map((keyword, index) => (
+                    <Tag key={index} color="geekblue">
+                      {keyword}
+                    </Tag>
+                  ))}
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
 
-          {/* AI 상세 분석 */}
+          {/* 메이크업 팁 (기존 코드 유지하되 top_types가 있을 때는 숨김) */}
+          {selectedResult.makeup_tips &&
+            selectedResult.makeup_tips.length > 0 &&
+            (!selectedResult.top_types ||
+              selectedResult.top_types.length === 0) && (
+              <div>
+                <Title level={5} className="mb-3">
+                  메이크업 팁
+                </Title>
+                <div className="flex flex-wrap gap-2">
+                  {selectedResult.makeup_tips.map((tip, index) => (
+                    <Tag key={index} color="volcano">
+                      {tip}
+                    </Tag>
+                  ))}
+                </div>
+              </div>
+            )}
+
+          {/* 상세 분석 (AI 생성) */}
           {selectedResult.detailed_analysis && (
-            <div style={{ marginTop: '20px' }}>
-              <h4 style={{ 
-                color: '#374151', 
-                marginBottom: '12px',
-                fontSize: '16px',
-                fontWeight: 'bold'
-              }}>
-                🤖 AI 상세 분석
-              </h4>
-              <div style={{
-                background: 'linear-gradient(135deg, #f3e8ff 0%, #fce7f3 100%)',
-                padding: '16px',
-                borderRadius: '8px',
-                borderLeft: '4px solid #8b5cf6'
-              }}>
-                <p style={{ 
-                  color: '#374151', 
-                  lineHeight: '1.6',
-                  margin: '0',
-                  whiteSpace: 'pre-line'
-                }}>
+            <div>
+              <Divider />
+              <Title level={5} className="mb-3">
+                AI 상세 분석
+              </Title>
+              <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-4 rounded-lg">
+                <Text className="!text-gray-700 leading-relaxed whitespace-pre-line">
                   {selectedResult.detailed_analysis}
-                </p>
+                </Text>
               </div>
             </div>
           )}

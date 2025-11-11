@@ -10,6 +10,7 @@ import {
   Avatar,
   Space,
   Modal,
+  Tag,
 } from 'antd';
 import {
   SendOutlined,
@@ -35,10 +36,18 @@ interface ChatMessage {
   id: string;
   question?: string;
   content: string;
+  customContent?: React.ReactNode;
   isUser: boolean;
   timestamp: Date;
   chatRes?: ChatResModel;
   questionId?: number;
+  diagnosisData?: {
+    result_name: string;
+    detailed_analysis: string;
+    color_palette: string[];
+    style_keywords: string[];
+    makeup_tips: string[];
+  };
 }
 
 /**
@@ -185,11 +194,45 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
   // 진단 결과 상세보기 모달 열기
   const handleViewDiagnosisDetail = () => {
     if (surveyResults && surveyResults.length > 0) {
-      // 가장 최근 진단 결과를 선택
+      // 기존 진단 결과
       setSelectedResult(surveyResults[0] as SurveyResultDetail);
       setIsDetailModalOpen(true);
+    } else if (userTurnCount >= 3 && messages.length > 0) {
+      // 3턴 후 임시 진단 결과 생성
+      const lastBotMessage = messages.filter(msg => !msg.isUser && msg.chatRes).pop();
+      
+      if (lastBotMessage?.chatRes) {
+        const tempResult: SurveyResultDetail = {
+          id: Date.now(),
+          result_tone: (lastBotMessage.chatRes.primary_tone || 'spring') as any,
+          result_name: `${lastBotMessage.chatRes.sub_tone || '봄'} ${lastBotMessage.chatRes.primary_tone || '웜'}톤`,
+          confidence: 0.85,
+          total_score: 85,
+          detailed_analysis: lastBotMessage.chatRes.description || '3턴 대화를 통한 분석 결과입니다.',
+          color_palette: [],
+          style_keywords: lastBotMessage.chatRes.recommendations || [],
+          makeup_tips: [],
+          answers: [],
+          created_at: new Date().toISOString(),
+          user_id: user?.id || 0,
+          top_types: [{
+            type: (lastBotMessage.chatRes.sub_tone?.toLowerCase() || 'spring') as any,
+            name: `${lastBotMessage.chatRes.sub_tone || '봄'} ${lastBotMessage.chatRes.primary_tone || '웜'}톤`,
+            description: lastBotMessage.chatRes.description || '3턴 대화 분석 결과',
+            score: 0.85,
+            color_palette: ['#FFB6C1', '#FFA07A', '#FFFF99', '#98FB98', '#87CEEB'],
+            style_keywords: lastBotMessage.chatRes.recommendations?.slice(0, 3) || ['밝은', '화사한', '생동감'],
+            makeup_tips: ['자연스러운 톤', '코랄 계열 립', '피치 블러셔']
+          }]
+        };
+        
+        setSelectedResult(tempResult);
+        setIsDetailModalOpen(true);
+      } else {
+        message.warning('진단 데이터를 찾을 수 없습니다.');
+      }
     } else {
-      message.warning('조회할 진단 결과가 없습니다.');
+      message.warning('아직 충분한 진단 정보가 없습니다. 더 대화해보세요!');
     }
   };
 
@@ -204,7 +247,7 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
     if (!inputMessage.trim()) return;
 
     const isReportRequest = checkReportKeywords(inputMessage.trim());
-    const userNickname = user?.nickname || '님';
+    const userNickname = `${user?.nickname || '사용자'}님`;
 
     // 현재 상태 디버깅 로그
     console.log('🔍 현재 상태 확인:');
@@ -228,7 +271,48 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
     try {
       // 🔥 키워드 감지 시 리포트 요청
       if (isReportRequest) {
-        // 이전 진단 내역이 있는지 확인 (surveyResults 기반)
+        // 3턴 이하인 경우 처리
+        if (userTurnCount < 3) {
+          // 이전 진단 데이터가 있는지 확인
+          if (surveyResults && surveyResults.length > 0) {
+            console.log('📊 리포트 키워드 감지, 이전 데이터 있음 - 상세 모달 버튼 노출');
+            
+            const existingDataMessage: ChatMessage = {
+              id: (Date.now() + 1).toString(),
+              content: `📊 ${userNickname}의 이전 퍼스널컬러 진단 결과를 찾았어요!
+
+${surveyResults[0].result_name || surveyResults[0].result_tone.toUpperCase()} 타입으로 진단받으셨던 결과를 상세히 확인하실 수 있습니다.
+
+[상세보기]`,
+              isUser: false,
+              timestamp: new Date(),
+            };
+            
+            setMessages(prev => [...prev, existingDataMessage]);
+            setIsTyping(false);
+            return;
+          } else {
+            // 이전 데이터 없음
+            console.log('📊 리포트 키워드 감지, 이전 데이터 없음 - 분석을 위해 정보가 더 필요');
+            
+            const needMoreDataMessage: ChatMessage = {
+              id: (Date.now() + 1).toString(),
+              content: `${userNickname}, 분석을 위해 정보가 더 필요해요! 📋
+
+퍼스널컬러 진단을 위해 몇 가지 질문에 답변해 주시면, 그 결과로 상세한 분석 리포트를 만들어드릴 수 있어요!
+
+어떤 색깔 옷을 좋아하시는지, 어떤 메이크업이 잘 어울리는지부터 편하게 이야기해보실래요? 🎨`,
+              isUser: false,
+              timestamp: new Date(),
+            };
+            
+            setMessages(prev => [...prev, needMoreDataMessage]);
+            setIsTyping(false);
+            return;
+          }
+        }
+        
+        // 3턴 이상인 경우 기존 로직 유지
         if (surveyResults && surveyResults.length > 0) {
           console.log('📊 리포트 키워드 감지, 리포트 요청 중...');
           console.log('이전 진단 결과:', surveyResults[0]);
@@ -275,14 +359,14 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
             return;
           }
         } else {
-          // 진단 내역이 없어서 리포트 생성 불가
+          // 3턴 이상이지만 진단 내역이 없어서 리포트 생성 불가
           const noHistoryMessage: ChatMessage = {
             id: (Date.now() + 1).toString(),
-            content: `${userNickname}, 아직 퍼스널컬러 진단 내역이 없어서 리포트를 생성할 수 없어요 😅
+            content: `${userNickname}, 아직 저장된 퍼스널컬러 진단 내역이 없어서 리포트를 생성할 수 없어요 😅
 
-먼저 저와 대화를 통해 퍼스널컬러 진단을 받아보시면, 그 결과로 상세한 분석 리포트를 만들어드릴 수 있습니다! 
+방금 전 대화를 통해 분석한 결과가 있다면, 먼저 그 결과를 저장한 후 리포트를 요청해 주세요!
 
-어떤 색깔 옷을 좋아하시는지, 어떤 메이크업이 잘 어울리는지부터 편하게 이야기해보실래요? 🎨`,
+또는 새로운 진단을 진행하실 수도 있어요! 🎨`,
             isUser: false,
             timestamp: new Date(),
           };
@@ -323,49 +407,183 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
         
         // 3번 턴 후 자동 요약 레포트 생성
         if (newTurnCount === 3 && !hasAutoReportGenerated && latestItem.chat_res) {
-          console.log('🎯 3번 턴 완료! 자동 요약 레포트 생성 시작...');
+          console.log('🎯 3번 턴 완료! 자동 진단 결과 저장 및 요약 생성 시작...');
           setHasAutoReportGenerated(true);
           
           try {
-            // 새로운 진단 결과를 백엔드에 저장하고 요약 레포트 생성
-            const summaryResponse = await reportApi.requestReport(response.history_id);
-            console.log('✅ 3번 턴 요약 레포트 생성 성공:', summaryResponse);
+            // 1. 먼저 진단 결과를 저장하여 마이페이지에 기록 생성
+            console.log('💾 진단 결과 저장 중...');
+            const diagnosisResult = await chatbotApi.analyzeChatForDiagnosis(response.history_id);
+            console.log('✅ 진단 결과 저장 성공:', diagnosisResult);
+            
+            // 2. 그 다음 리포트 생성 (선택사항)
+            try {
+              if (diagnosisResult.survey_result_id) {
+                const reportResponse = await reportApi.requestReport(diagnosisResult.survey_result_id);
+                console.log('✅ 리포트 생성 성공:', reportResponse);
+              }
+            } catch (reportError) {
+              console.log('⚠️ 리포트 생성은 실패했지만 진단 결과는 저장됨:', reportError);
+            }
             
             // 요약 리포트 생성 완료 메시지
-            const summaryReportMessage: ChatMessage = {
-              id: (Date.now() + 2).toString(),
-              content: `🎉 ${userNickname}와의 3번의 대화를 통해 퍼스널컬러 분석이 완료되었습니다!
+            const summaryMessage: ChatMessage = {
+              id: `diagnosis-summary-${Date.now()}`,
+              content: '',
+              customContent: (
+                <div style={{ padding: '16px' }}>
+                  <div style={{ marginBottom: '20px' }}>
+                    <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '8px', color: '#1a1a1a' }}>
+                      🎉 {userNickname}과의 대화를 통해 퍼스널컬러 진단이 완료되었습니다!
+                    </div>
+                  </div>
 
-📊 **요약 분석 리포트가 생성되었습니다**
+                  {/* 퍼스널 타입 정보 - 동적 스타일 적용 */}
+                  {(() => {
+                    // 결과 타입에 따른 스타일 설정
+                    const typeNames: Record<string, { name: string; emoji: string; color: string }> = {
+                      spring: { name: '봄 웜톤', emoji: '🌸', color: '#fab1a0' },
+                      summer: { name: '여름 쿨톤', emoji: '💎', color: '#a8e6cf' },
+                      autumn: { name: '가을 웜톤', emoji: '🍂', color: '#d4a574' },
+                      winter: { name: '겨울 쿨톤', emoji: '❄️', color: '#74b9ff' },
+                    };
 
-대화를 통해 파악된 ${userNickname}의 특성을 바탕으로 상세한 분석 리포트를 작성했어요. 
+                    // 현재 진단 결과에서 타입 추출
+                    const resultTone = diagnosisResult.result_tone || latestItem.chat_res.primary_tone || 'spring';
+                    const typeInfo = typeNames[resultTone] || typeNames.spring;
 
-📋 리포트에서 확인하실 수 있는 내용:
-• 퍼스널컬러 타입 분석 결과
-• 추천 색상 팔레트
-• 스타일링 가이드
-• 메이크업 및 패션 조언
+                    return (
+                      <div style={{
+                        background: `linear-gradient(135deg, ${typeInfo.color}, ${typeInfo.color}aa)`,
+                        color: '#000000',
+                        padding: '16px',
+                        borderRadius: '12px',
+                        textAlign: 'center',
+                        marginBottom: '16px'
+                      }}>
+                        <div style={{ 
+                          fontSize: '18px', 
+                          fontWeight: 'bold', 
+                          margin: '0 0 4px 0',
+                          color: '#000000'
+                        }}>
+                          {typeInfo.emoji} {diagnosisResult.result_name || `${latestItem.chat_res.sub_tone} ${latestItem.chat_res.primary_tone}톤`}
+                        </div>
+                        <div style={{ 
+                          fontSize: '13px', 
+                          margin: '0',
+                          color: '#000000'
+                        }}>
+                          {diagnosisResult.detailed_analysis?.split('.')[0] + '.' || latestItem.chat_res.description || '당신만의 개성을 살릴 수 있는 퍼스널컬러를 찾았어요!'}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
-마이페이지에서 리포트를 확인하거나, "리포트 보기" 라고 말씀해주시면 바로 안내해드릴게요! 🎨`,
+                  {/* 컬러 팔레트 */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <div style={{ 
+                      fontSize: '14px', 
+                      fontWeight: 'bold', 
+                      marginBottom: '8px',
+                      color: '#374151'
+                    }}>
+                      🎨 당신만의 컬러 팔레트
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {(diagnosisResult.color_palette || ['#ff5722', '#2196f3', '#8bc34a', '#ff9800']).slice(0, 4).map((color: string, index: number) => {
+                        const isWhite = color.toLowerCase() === '#ffffff';
+                        return (
+                          <Tag
+                            key={index}
+                            style={isWhite ? {
+                              backgroundColor: '#f5f5f5',
+                              color: '#333333',
+                              border: '1px solid #d9d9d9',
+                              borderRadius: '4px',
+                              padding: '4px 8px',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                              margin: '0'
+                            } : {
+                              backgroundColor: color,
+                              color: '#ffffff',
+                              border: 'none',
+                              borderRadius: '4px',
+                              padding: '4px 8px',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                              textShadow: '1px 1px 2px rgba(0,0,0,0.5)',
+                              margin: '0'
+                            }}
+                          >
+                            {color}
+                          </Tag>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: '14px', color: '#6b7280', textAlign: 'center' }}>
+                    상세한 분석 결과를 확인해보세요!{' '}
+                    <span 
+                      style={{
+                        color: '#3b82f6',
+                        textDecoration: 'underline',
+                        cursor: 'pointer',
+                        fontWeight: 'bold'
+                      }}
+                      onClick={() => {
+                        if (diagnosisResult) {
+                          setSelectedResult(diagnosisResult);
+                          setIsDetailModalOpen(true);
+                        }
+                      }}
+                    >
+                      [상세보기]
+                    </span>
+                  </div>
+                </div>
+              ),
               isUser: false,
               timestamp: new Date(),
+              chatRes: latestItem.chat_res, // 진단 결과 데이터 포함
+              // 추가 진단 데이터 포함
+              diagnosisData: {
+                result_name: diagnosisResult.result_name || '',
+                detailed_analysis: diagnosisResult.detailed_analysis || '',
+                color_palette: diagnosisResult.color_palette || [],
+                style_keywords: diagnosisResult.style_keywords || [],
+                makeup_tips: diagnosisResult.makeup_tips || []
+              }
             };
             
             setTimeout(() => {
-              setMessages(prev => [...prev, summaryReportMessage]);
+              setMessages(prev => [...prev, summaryMessage]);
             }, 1000); // 1초 딜레이로 자연스러운 흐름
             
-          } catch (reportError: any) {
-            console.error('❌ 3번 턴 요약 리포트 생성 실패:', reportError);
+          } catch (diagnosisError: any) {
+            console.error('❌ 진단 결과 저장 실패:', diagnosisError);
             
             const summaryErrorMessage: ChatMessage = {
               id: (Date.now() + 2).toString(),
-              content: `🎉 ${userNickname}와의 3번의 대화를 통해 퍼스널컬러 분석이 완료되었습니다!
+              content: `🎉 ${userNickname}과의 대화를 통해 퍼스널컬러 분석이 완료되었습니다!
 
-분석 결과를 바탕으로 요약 리포트를 준비하고 있어요. 
-잠시 후 "리포트 생성해줘" 라고 말씀해주시면 상세한 분석 리포트를 만들어드릴게요! 📊`,
+📊 **퍼스널컬러 분석 요약**
+
+🎨 **퍼스널 타입**: ${latestItem.chat_res.sub_tone ? `${latestItem.chat_res.sub_tone} 타입` : '퍼스널컬러 타입'}
+
+� **타입 특성**: ${latestItem.chat_res.description || '당신만의 개성을 살릴 수 있는 퍼스널컬러를 찾았어요!'}
+
+🌈 **추천 컬러 팔레트**: 
+🎨 #FFB6C1 🎨 #FFA07A 🎨 #FFFF99 🎨 #98FB98 🎨 #87CEEB
+
+상세한 분석 결과와 맞춤 추천을 확인해보세요!
+
+[상세보기]`,
               isUser: false,
               timestamp: new Date(),
+              chatRes: latestItem.chat_res, // 진단 결과 데이터 포함
             };
             
             setTimeout(() => {
@@ -464,9 +682,11 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
         });
       }
 
+      // 세션 종료 시 플래그 초기화
+      
       setIsFeedbackModalOpen(false);
       setIsLeavingPage(true);
-      message.success(`피드백 감사합니다! (${feedbackType})`, 2);
+      message.success(`피드백 감사합니다!`, 2);
 
       if (blocker.state === 'blocked') {
         blocker.proceed();
@@ -476,6 +696,9 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
     } catch (error) {
       console.error('피드백 제출 중 오류:', error);
       message.error('피드백 제출 중 오류가 발생했습니다.');
+      
+      // 오류 시에도 플래그 초기화
+      
       setIsFeedbackModalOpen(false);
       setIsLeavingPage(true);
 
@@ -490,6 +713,9 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
   // 피드백 모달 닫기 (피드백 없이 나가기)
   const handleCloseFeedbackModal = async () => {
     await handleEndChatSession();
+    
+    // 세션 종료 시 플래그 초기화
+    
     setIsFeedbackModalOpen(false);
     setIsLeavingPage(true);
 
@@ -600,11 +826,97 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
                         : 'bg-white border border-gray-200'
                       }`}
                   >
-                    <Text
-                      className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                    >
-                      {msg.content}
-                    </Text>
+                    {/* 메시지 내용 렌더링 - customContent 또는 일반 content */}
+                    {msg.customContent ? (
+                      msg.customContent
+                    ) : msg.content.includes('[상세보기]') ? (
+                      <div>
+                        {/* 컬러 팔레트가 포함된 진단 결과 메시지인지 확인 */}
+                        {msg.content.includes('🌈 **추천 컬러 팔레트**') && msg.diagnosisData ? (
+                          <div>
+                            {/* 메인 텍스트 (컬러 팔레트 부분 제외) */}
+                            <Text
+                              className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                            >
+                              {msg.content.split('🌈 **추천 컬러 팔레트**')[0]}
+                            </Text>
+                            
+                            {/* 컬러 팔레트 시각적 표시 */}
+                            <div className="mt-3">
+                              <Text strong className="block mb-2 !text-gray-700">
+                                🌈 추천 컬러 팔레트
+                              </Text>
+                              <div className="flex flex-wrap gap-2 mb-3">
+                                {msg.diagnosisData.color_palette && msg.diagnosisData.color_palette.length > 0 ? 
+                                  msg.diagnosisData.color_palette.map((color: string, index: number) => (
+                                    <div key={index} className="flex items-center gap-1">
+                                      <div
+                                        className="w-6 h-6 rounded-full border border-gray-300"
+                                        style={{ backgroundColor: color }}
+                                        title={color}
+                                      />
+                                      <Text className="text-xs text-gray-600">{color}</Text>
+                                    </div>
+                                  )) : (
+                                    <>
+                                      <div className="flex items-center gap-1">
+                                        <div className="w-6 h-6 rounded-full border border-gray-300" style={{ backgroundColor: '#FFB6C1' }} />
+                                        <Text className="text-xs text-gray-600">#FFB6C1</Text>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <div className="w-6 h-6 rounded-full border border-gray-300" style={{ backgroundColor: '#FFA07A' }} />
+                                        <Text className="text-xs text-gray-600">#FFA07A</Text>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <div className="w-6 h-6 rounded-full border border-gray-300" style={{ backgroundColor: '#FFFF99' }} />
+                                        <Text className="text-xs text-gray-600">#FFFF99</Text>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <div className="w-6 h-6 rounded-full border border-gray-300" style={{ backgroundColor: '#98FB98' }} />
+                                        <Text className="text-xs text-gray-600">#98FB98</Text>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <div className="w-6 h-6 rounded-full border border-gray-300" style={{ backgroundColor: '#87CEEB' }} />
+                                        <Text className="text-xs text-gray-600">#87CEEB</Text>
+                                      </div>
+                                    </>
+                                  )
+                                }
+                              </div>
+                            </div>
+                            
+                            {/* 나머지 텍스트 */}
+                            <Text
+                              className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                            >
+                              {msg.content.split('🌈 **추천 컬러 팔레트**')[1]?.replace(/🎨 #[A-Fa-f0-9]{6}/g, '').replace('[상세보기]', '').trim()}
+                            </Text>
+                          </div>
+                        ) : (
+                          <Text
+                            className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                          >
+                            {msg.content.replace('[상세보기]', '')}
+                          </Text>
+                        )}
+                        <div className="mt-3">
+                          <Button
+                            type="primary"
+                            size="small"
+                            onClick={handleViewDiagnosisDetail}
+                            className="bg-purple-500 hover:bg-purple-600 border-purple-500 hover:border-purple-600"
+                          >
+                            📊 상세보기
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Text
+                        className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                      >
+                        {msg.content}
+                      </Text>
+                    )}
 
                     <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
                       {/* 리포트 관련 메시지에 리포트 상세보기 버튼 추가 */}
@@ -615,7 +927,7 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
                           onClick={handleViewDiagnosisDetail}
                           className="border-purple-300 text-purple-600 hover:border-purple-500 hover:text-purple-700"
                         >
-                          🎨 이전 진단 결과
+                          🎨 진단 결과
                         </Button>
                     )}
                       {formatKoreanDate(msg.timestamp, true)}

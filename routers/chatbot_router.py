@@ -40,6 +40,107 @@ if EMOTION_MODEL_ID:
 else:
     print(f"   ⚠️ Fine-tuned 모델 미설정, 기본 모델 사용")
 
+def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dict:
+    """
+    OpenAI API를 통해 완전한 진단 데이터 생성
+    """
+    try:
+        season_map = {
+            "봄": "Spring",
+            "여름": "Summer", 
+            "가을": "Autumn",
+            "겨울": "Winter"
+        }
+        
+        prompt = f"""
+다음은 사용자와 퍼스널 컬러 챗봇의 실제 대화 내용입니다:
+
+{conversation_text}
+
+이 대화를 바탕으로 사용자가 {season} 타입으로 진단된 결과를 JSON 형식으로 생성해주세요.
+
+다음 형식으로 응답해주세요:
+{{
+    "emotional_description": "한 줄의 감성적인 설명 문장 (예: 생기 넘치고 화사한 당신! 밝고 따뜻한 색상이 잘 어울립니다.)",
+    "color_palette": ["#색상코드1", "#색상코드2", "#색상코드3", "#색상코드4", "#색상코드5"],
+    "style_keywords": ["키워드1", "키워드2", "키워드3", "키워드4", "키워드5"],
+    "makeup_tips": ["팁1", "팁2", "팁3", "팁4"],
+    "detailed_analysis": "대화를 바탕으로 한 개인화된 상세 분석 (3-4문단)"
+}}
+
+{season} 타입의 특성을 반영하되, 사용자의 대화 내용에서 나타난 개인적 특성을 포함하여 맞춤형으로 생성해주세요.
+
+색상 팔레트는 {season} 타입에 어울리는 실제 HEX 코드로, 스타일 키워드는 짧고 명확하게, 메이크업 팁은 구체적이고 실용적으로 작성해주세요.
+"""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user", 
+                "content": prompt
+            }],
+            max_tokens=1200,
+            temperature=0.7
+        )
+        
+        ai_response = response.choices[0].message.content.strip()
+        
+        # JSON 파싱 시도
+        try:
+            import re
+            # JSON 부분만 추출
+            json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group()
+                result = json.loads(json_str)
+                return result
+        except Exception as parse_error:
+            print(f"❌ AI 응답 JSON 파싱 실패: {parse_error}")
+            
+        # 파싱 실패 시 기본값 반환
+        return get_default_diagnosis_data(season)
+        
+    except Exception as e:
+        print(f"❌ OpenAI API 호출 실패: {e}")
+        return get_default_diagnosis_data(season)
+
+def get_default_diagnosis_data(season: str) -> dict:
+    """
+    API 실패 시 사용할 기본 진단 데이터
+    """
+    default_data = {
+        "봄": {
+            "emotional_description": "생기 넘치고 화사한 당신! 밝고 따뜻한 색상이 잘 어울립니다.",
+            "color_palette": ["#FFB6C1", "#FFA07A", "#FFFF99", "#98FB98", "#87CEEB"],
+            "style_keywords": ["밝은", "화사한", "생동감", "따뜻한", "자연스러운"],
+            "makeup_tips": ["코랄 계열 립스틱", "피치 블러셔", "골드 아이섀도", "브라운 마스카라"],
+            "detailed_analysis": "대화를 통해 분석해본 결과, 봄 타입의 특성이 잘 나타나고 있습니다. 밝고 화사한 색상을 선호하시며, 자연스러운 아름다움을 추구하는 성향이 보입니다."
+        },
+        "여름": {
+            "emotional_description": "시원하고 우아한 당신! 부드럽고 차가운 색상이 잘 어울립니다.",
+            "color_palette": ["#E6E6FA", "#B0C4DE", "#FFC0CB", "#DDA0DD", "#F0F8FF"],
+            "style_keywords": ["부드러운", "우아한", "세련된", "시원한", "파스텔"],
+            "makeup_tips": ["로즈 핑크 립", "라벤더 아이섀도", "실버 하이라이터", "애쉬 브라운 아이브로우"],
+            "detailed_analysis": "대화를 통해 분석해본 결과, 여름 타입의 특성이 잘 나타나고 있습니다. 부드럽고 우아한 색상을 선호하시며, 세련된 스타일을 추구하는 성향이 보입니다."
+        },
+        "가을": {
+            "emotional_description": "깊이 있고 세련된 당신! 진하고 따뜻한 색상이 잘 어울립니다.",
+            "color_palette": ["#D2691E", "#CD853F", "#DEB887", "#BC8F8F", "#F4A460"],
+            "style_keywords": ["깊은", "세련된", "따뜻한", "자연스러운", "클래식"],
+            "makeup_tips": ["브라운 계열 립", "골드 브론즈 아이섀도", "따뜻한 블러셔", "다크 브라운 마스카라"],
+            "detailed_analysis": "대화를 통해 분석해본 결과, 가을 타입의 특성이 잘 나타나고 있습니다. 깊이 있고 따뜻한 색상을 선호하시며, 클래식한 아름다움을 추구하는 성향이 보입니다."
+        },
+        "겨울": {
+            "emotional_description": "명확하고 강렬한 당신! 선명하고 차가운 색상이 잘 어울립니다.",
+            "color_palette": ["#FF1493", "#4169E1", "#000000", "#FFFFFF", "#8A2BE2"],
+            "style_keywords": ["명확한", "강렬한", "선명한", "차가운", "드라마틱"],
+            "makeup_tips": ["레드 립스틱", "실버 아이섀도", "블랙 아이라이너", "볼드 컨투어링"],
+            "detailed_analysis": "대화를 통해 분석해본 결과, 겨울 타입의 특성이 잘 나타나고 있습니다. 명확하고 강렬한 색상을 선호하시며, 드라마틱한 아름다움을 추구하는 성향이 보입니다."
+        }
+    }
+    
+    return default_data.get(season, default_data["봄"])
+
 def get_db():
     db = SessionLocal()
     try:
@@ -94,56 +195,44 @@ async def save_chatbot_analysis_result(
                     conversation_text += f"AI: {msg.text}\n"
         
         # 대화 분석을 통한 퍼스널 컬러 진단
-        color_analysis = analyze_conversation_for_color_tone(
-            client, conversation_text, fixed_index
+        primary_tone, sub_tone = analyze_conversation_for_color_tone(
+            conversation_text, ""  # 현재 질문은 빈 문자열로 처리 (전체 대화 기반 분석)
         )
         
-        if not color_analysis:
-            return None
-            
-        # AI가 분석한 최종 결과에서 정보 추출
-        primary_type = color_analysis.get("primary_type", "spring")
-        confidence = color_analysis.get("confidence", 0.8)
+        print(f"🎨 AI 분석 결과: {primary_tone}톤 {sub_tone}")
         
-        # 퍼스널 컬러 타입별 기본 정보
-        color_type_info = {
-            "spring": {
-                "name": "봄 웜톤 🌸",
-                "description": "생기 넘치고 화사한 당신! 밝고 따뜻한 색상이 잘 어울립니다.",
-                "color_palette": ["#FFB6C1", "#FFA07A", "#FFFF99", "#98FB98", "#87CEEB"],
-                "style_keywords": ["밝은", "화사한", "생기있는", "따뜻한", "생동감"],
-                "makeup_tips": ["코랄 계열 립", "피치 계열 블러셔", "브라운 계열 아이섀도우"]
-            },
-            "summer": {
-                "name": "여름 쿨톤 💎",
-                "description": "시원하고 우아한 당신! 부드럽고 차가운 색상이 잘 어울립니다.",
-                "color_palette": ["#E6E6FA", "#B0C4DE", "#FFC0CB", "#DDA0DD", "#F0F8FF"],
-                "style_keywords": ["우아한", "시원한", "부드러운", "세련된", "차분한"],
-                "makeup_tips": ["로즈 계열 립", "핑크 계열 블러셔", "쿨톤 아이섀도우"]
-            },
-            "autumn": {
-                "name": "가을 웜톤 🍂",
-                "description": "깊이 있고 세련된 당신! 진하고 따뜻한 색상이 잘 어울립니다.",
-                "color_palette": ["#D2691E", "#CD853F", "#DEB887", "#BC8F8F", "#F4A460"],
-                "style_keywords": ["깊이있는", "세련된", "따뜻한", "고급스러운", "안정적"],
-                "makeup_tips": ["벽돌색 계열 립", "브론즈 계열 블러셔", "브라운 계열 아이섀도우"]
-            },
-            "winter": {
-                "name": "겨울 쿨톤 ❄️",
-                "description": "명확하고 강렬한 당신! 선명하고 차가운 색상이 잘 어울립니다.",
-                "color_palette": ["#FF1493", "#4169E1", "#000000", "#FFFFFF", "#8A2BE2"],
-                "style_keywords": ["명확한", "강렬한", "선명한", "모던한", "시크한"],
-                "makeup_tips": ["레드 계열 립", "쿨톤 블러셔", "진한 아이메이크업"]
-            }
+        # 🆕 OpenAI를 통한 완전한 진단 데이터 생성
+        print("🤖 OpenAI API를 통한 맞춤형 진단 데이터 생성 중...")
+        ai_diagnosis_data = generate_complete_diagnosis_data(conversation_text, sub_tone)
+        
+        # 기본 타입 정보에 AI 생성 데이터 적용
+        type_info = {
+            "name": f"{sub_tone} {primary_tone}톤",
+            "description": ai_diagnosis_data["emotional_description"],
+            "detailed_analysis": ai_diagnosis_data["detailed_analysis"],
+            "color_palette": ai_diagnosis_data["color_palette"],
+            "style_keywords": ai_diagnosis_data["style_keywords"],
+            "makeup_tips": ai_diagnosis_data["makeup_tips"]
         }
         
-        type_info = color_type_info.get(primary_type, color_type_info["spring"])
+        # 결과 톤 및 신뢰도 설정  
+        result_tone = f"{primary_tone}톤 {sub_tone}"
+        confidence = 0.85  # 기본 신뢰도
         
-        # Top types 생성 (신뢰도 기반으로 다른 타입들도 포함)
+        # primary_type 매핑
+        type_mapping = {
+            ("웜", "봄"): "spring",
+            ("웜", "가을"): "autumn", 
+            ("쿨", "여름"): "summer",
+            ("쿨", "겨울"): "winter"
+        }
+        primary_type = type_mapping.get((primary_tone, sub_tone), "spring")
+        
+        # Top types 생성 (AI 생성 데이터 기반)
         top_types = [
             {
                 "type": primary_type,
-                "name": type_info["name"],
+                "name": f"{sub_tone} {primary_tone}톤",
                 "description": type_info["description"],
                 "color_palette": type_info["color_palette"],
                 "style_keywords": type_info["style_keywords"],
@@ -160,7 +249,7 @@ async def save_chatbot_analysis_result(
             confidence=confidence,
             total_score=int(confidence * 100),
             source_type="chatbot",  # 챗봇 분석 출처 표시
-            detailed_analysis=color_analysis.get("analysis", "AI 챗봇을 통한 대화형 퍼스널 컬러 분석 결과입니다."),
+            detailed_analysis=type_info["detailed_analysis"],
             result_name=type_info["name"],
             result_description=type_info["description"],
             color_palette=json.dumps(type_info["color_palette"], ensure_ascii=False),
