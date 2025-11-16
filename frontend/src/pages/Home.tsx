@@ -10,7 +10,8 @@ const HomePage: React.FC = () => {
   const navigate = useNavigate();
 
   const handleStartTest = () => {
-    navigate(RouterPaths.PersonalColorTest);
+    // navigate(RouterPaths.PersonalColorTest); // 기존 설문 방식 (비활성화)
+    navigate(RouterPaths.Chatbot); // 대화형 진단으로 변경
   };
 
   return (
@@ -20,8 +21,8 @@ const HomePage: React.FC = () => {
           나만의 퍼스널 컬러를 찾아보세요
         </Title>
         <Paragraph className="text-xl !text-gray-600 mb-8 max-w-2xl mx-auto">
-          간단한 질문에 답변하기만 하면 AI가 당신에게 가장 어울리는 퍼스널 컬러를 분석해드립니다.
-          피부톤, 눈동자 색, 머리카락 색상에 대한 몇 가지 질문으로 정확한 진단을 받아보세요.
+          사진 업로드와 AI 전문가와의 대화를 통해 가장 어울리는 퍼스널 컬러를 분석해드립니다.<br />
+          이미지 분석과 맞춤형 상담으로 정확한 진단을 받아보세요.
         </Paragraph>
         <Space size="large">
           <Button
@@ -31,7 +32,7 @@ const HomePage: React.FC = () => {
             className="px-8 py-6 h-auto"
             onClick={handleStartTest}
           >
-            진단 시작하기
+            AI 전문가와 상담하기
           </Button>
         </Space>
       </div>
@@ -40,19 +41,19 @@ const HomePage: React.FC = () => {
       <Row gutter={[32, 32]} className="mb-16">
         <Col xs={24} md={8}>
           <Card className="text-center h-full card-hover" variant={'outlined'}>
-            <div className="text-4xl mb-4">📝</div>
-            <Title level={4}>간편한 질문 방식</Title>
+            <div className="text-4xl mb-4">📷</div>
+            <Title level={4}>이미지 업로드 분석</Title>
             <Paragraph className="!text-gray-600">
-              복잡한 사진 업로드 없이 간단한 텍스트 질문에만 답하면 됩니다.
+              사진을 업로드하면 AI가 얼굴 분석을 통해 정확한 퍼스널 컬러를 진단합니다.
             </Paragraph>
           </Card>
         </Col>
         <Col xs={24} md={8}>
           <Card className="text-center h-full card-hover" variant={'outlined'}>
-            <div className="text-4xl mb-4">⚡</div>
-            <Title level={4}>빠른 진단</Title>
+            <div className="text-4xl mb-4">💬</div>
+            <Title level={4}>AI 전문가와 대화</Title>
             <Paragraph className="text-gray-600">
-              몇 가지 질문에 답한 후 단 몇 분 만에 개인 맞춤형 퍼스널 컬러 결과를 확인할 수 있습니다.
+              전문적인 AI와 자연스러운 대화를 통해 맞춤형 퍼스널 컬러 상담을 받아보세요.
             </Paragraph>
           </Card>
         </Col>
@@ -61,7 +62,7 @@ const HomePage: React.FC = () => {
             <div className="text-4xl mb-4">🎨</div>
             <Title level={4}>정확한 AI 분석</Title>
             <Paragraph className="!text-gray-600">
-              피부톤, 눈동자, 머리카락 색상 정보를 바탕으로 AI가 정확한 퍼스널 컬러를 분석합니다.
+              이미지 분석과 대화 내용을 종합하여 가장 정확한 퍼스널 컬러를 추천드립니다.
             </Paragraph>
           </Card>
         </Col>
@@ -74,7 +75,7 @@ const HomePage: React.FC = () => {
             지금 바로 시작해보세요!
           </Title>
           <Paragraph className="!text-blue-100 text-lg mb-6">
-            무료 회원가입 후 간단한 질문으로 나만의 퍼스널 컬러를 발견해보세요
+            무료 회원가입 후 AI 전문가와 대화하며 나만의 퍼스널 컬러를 발견해보세요
           </Paragraph>
           <Button
             type="default"
@@ -83,7 +84,7 @@ const HomePage: React.FC = () => {
             className="px-8 py-6 h-auto"
             onClick={handleStartTest}
           >
-            무료로 시작하기
+            무료로 AI 상담 시작하기
           </Button>
         </div>
       </Card>

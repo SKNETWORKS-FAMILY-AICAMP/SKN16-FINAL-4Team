@@ -24,10 +24,11 @@ class SurveyResult(Base):
     confidence = Column(Float)
     total_score = Column(Integer)
     is_active = Column(Boolean, default=True)  # 소프트 딜리트를 위한 필드
+    source_type = Column(Enum("survey", "chatbot", name="source_type_enum"), default="survey", nullable=False)  # 분석 출처 구분
     
     # OpenAI 분석 결과 상세 저장
     detailed_analysis = Column(Text, nullable=True)  # 상세 분석 텍스트
-    result_name = Column(String(100), nullable=True)  # "봄 웜톤 🌸"
+    result_name = Column(String(100), nullable=True)  # "봄 웜톤"
     result_description = Column(Text, nullable=True)  # 메인 타입 설명
     color_palette = Column(Text, nullable=True)  # JSON 문자열로 저장
     style_keywords = Column(Text, nullable=True)  # JSON 문자열로 저장  

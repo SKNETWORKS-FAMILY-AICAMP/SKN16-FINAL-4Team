@@ -531,6 +531,7 @@ async def submit_survey(
             result_tone=result_tone,
             confidence=confidence,
             total_score=total_score,
+            source_type="survey",  # 설문 분석 출처 표시
             detailed_analysis=openai_result.get('detailed_analysis'),
             result_name=openai_result.get('name'),
             result_description=openai_result.get('description'),

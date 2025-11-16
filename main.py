@@ -42,9 +42,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def read_root():
-    return {"message": "퍼스널컬러 진단 AI 백엔드 서버"}
+# @app.get("/")
+# def read_root():
+#     return {"message": "퍼스널컬러 진단 AI 백엔드 서버"}
 
 # RequestValidationError 핸들러 추가 (422 에러 상세 정보)
 @app.exception_handler(RequestValidationError)

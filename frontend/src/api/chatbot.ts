@@ -50,6 +50,14 @@ class ChatbotApi {
   }
 
   /**
+   * 명시적으로 새 채팅 세션을 생성하고 history_id를 반환합니다.
+   */
+  async startSession(): Promise<{ history_id: number; reused: boolean; user_turns: number }> {
+    const response = await apiClient.post(`/chatbot/start`, {});
+    return response.data;
+  }
+
+  /**
    * 채팅 세션 종료
    */
   async endChatSession(
@@ -65,6 +73,31 @@ class ChatbotApi {
         timeout: 10000,
       }
     );
+    return response.data;
+  }
+
+  /**
+   * 챗봇 대화 내용을 기반으로 진단 저장 (프론트 3턴 후 호출용)
+   * 내부적으로 서버의 `/chatbot/report/save` 엔드포인트를 호출합니다.
+   */
+  async analyzeChatForDiagnosis(
+    historyId: number
+  ): Promise<{
+    survey_result_id?: number;
+    message?: string;
+    created_at?: string;
+    result_tone?: string;
+    result_name?: string;
+    detailed_analysis?: string;
+    color_palette?: string[];
+    style_keywords?: string[];
+    makeup_tips?: string[];
+    report_data?: any;
+  }>
+  {
+    const response = await apiClient.post(`/chatbot/report/save`, {
+      history_id: historyId,
+    });
     return response.data;
   }
 }

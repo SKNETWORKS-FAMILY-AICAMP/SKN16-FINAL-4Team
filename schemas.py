@@ -93,6 +93,7 @@ class SurveyResult(BaseModel):
     result_tone: str
     confidence: float
     total_score: int
+    source_type: Literal['survey', 'chatbot'] = 'survey'  # 분석 출처 구분
     
     # OpenAI 분석 결과 상세 정보
     detailed_analysis: Optional[str] = None
@@ -168,6 +169,27 @@ class ChatbotRequest(BaseModel):
 class ChatbotHistoryResponse(BaseModel):
     history_id: int
     items: List[ChatItemModel]
+
+
+class ReportCreate(BaseModel):
+    history_id: int
+    # force 생성: 기존 중복 방지 로직을 무시하고 항상 새 레코드를 생성할지 여부
+    force: bool = False
+
+
+class ReportResponse(BaseModel):
+    survey_result_id: int | None = None
+    message: str
+    created_at: Optional[datetime] = None
+    # 요약/미리보기 데이터 (프론트에 즉시 표시할 수 있는 형태)
+    result_tone: Optional[str] = None
+    result_name: Optional[str] = None
+    detailed_analysis: Optional[str] = None
+    color_palette: Optional[List[str]] = None
+    style_keywords: Optional[List[str]] = None
+    makeup_tips: Optional[List[str]] = None
+    # 전체 리포트 데이터 (선택적, 자세한 리포트 구조)
+    report_data: Optional[Dict] = None
 
 class UserFeedbackRequest(BaseModel):
     history_id: int

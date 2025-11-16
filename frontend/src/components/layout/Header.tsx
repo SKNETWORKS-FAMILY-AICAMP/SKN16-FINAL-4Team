@@ -1,6 +1,11 @@
 import React from 'react';
 import { Typography, Button, Space, Avatar, Dropdown } from 'antd';
-import { UserAddOutlined, LoginOutlined, UserOutlined, LogoutOutlined, ManOutlined, WomanOutlined } from '@ant-design/icons';
+import {
+  UserAddOutlined,
+  LoginOutlined,
+  UserOutlined,
+  LogoutOutlined,
+} from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useNavigate } from 'react-router-dom';
 
@@ -44,73 +49,47 @@ const Header: React.FC = () => {
     navigate(RouterPaths.Home);
   };
 
-  // 성별에 따른 아바타 렌더링
-  const getGenderAvatar = () => {
-    const avatarInfo = getAvatarRenderInfo(user?.gender, user?.id);
-
-    if (avatarInfo.content) {
-      // 이모티콘 방식
-      return avatarInfo;
-    } else {
-      // 아이콘 방식 (fallback)
-      let icon;
-      switch (avatarInfo.iconType) {
-        case 'man':
-          icon = <ManOutlined />;
-          break;
-        case 'woman':
-          icon = <WomanOutlined />;
-          break;
-        default:
-          icon = <UserOutlined />;
-          break;
-      }
-      return {
-        content: icon,
-        className: avatarInfo.className,
-        style: avatarInfo.style
-      };
-    }
-  };
+  // 아바타 렌더링: getAvatarRenderInfo를 직접 사용
 
   // 로그인된 사용자의 드롭다운 메뉴
-  const userMenuItems: MenuProps['items'] = user?.role === 'admin'
-    ? [
-      {
-        key: 'mypage',
-        icon: <UserOutlined />,
-        label: '마이페이지',
-        onClick: handleMyPage,
-      },
-      {
-        key: 'dashboard',
-        icon: <UserOutlined />,
-        label: '대시보드',
-        onClick: handleDashboard,
-      },
-      { type: 'divider' },
-      {
-        key: 'logout',
-        icon: <LogoutOutlined />,
-        label: '로그아웃',
-        onClick: handleLogout,
-      },
-    ]
-    : [
-      {
-        key: 'mypage',
-        icon: <UserOutlined />,
-        label: '마이페이지',
-        onClick: handleMyPage,
-      },
-      { type: 'divider' },
-      {
-        key: 'logout',
-        icon: <LogoutOutlined />,
-        label: '로그아웃',
-        onClick: handleLogout,
-      },
-    ];
+  const userMenuItems: MenuProps['items'] =
+    user?.role === 'admin'
+      ? [
+          {
+            key: 'mypage',
+            icon: <UserOutlined />,
+            label: '마이페이지',
+            onClick: handleMyPage,
+          },
+          {
+            key: 'dashboard',
+            icon: <UserOutlined />,
+            label: '대시보드',
+            onClick: handleDashboard,
+          },
+          { type: 'divider' },
+          {
+            key: 'logout',
+            icon: <LogoutOutlined />,
+            label: '로그아웃',
+            onClick: handleLogout,
+          },
+        ]
+      : [
+          {
+            key: 'mypage',
+            icon: <UserOutlined />,
+            label: '마이페이지',
+            onClick: handleMyPage,
+          },
+          { type: 'divider' },
+          {
+            key: 'logout',
+            icon: <LogoutOutlined />,
+            label: '로그아웃',
+            onClick: handleLogout,
+          },
+        ];
 
   // 로딩 중일 때는 기본 헤더만 표시
   const isLoggedIn = !!user && !isLoading;
@@ -118,7 +97,11 @@ const Header: React.FC = () => {
   return (
     <header className="bg-white shadow-sm fixed top-0 left-0 right-0 z-50">
       <div className="max-w-6xl min-h-[64px] mx-auto px-4 py-2 flex justify-between items-center">
-        <Title level={3} className="gradient-text !mb-0 cursor-pointer" onClick={() => navigate(RouterPaths.Home)}>
+        <Title
+          level={3}
+          className="gradient-text !mb-0 cursor-pointer"
+          onClick={() => navigate(RouterPaths.Home)}
+        >
           퍼스널 컬러 진단 AI
         </Title>
 
@@ -126,7 +109,8 @@ const Header: React.FC = () => {
           // 로그인된 상태
           <div className="flex items-center gap-4">
             <span className="text-gray-600 hidden sm:inline">
-              안녕하세요, <span className="font-bold text-gray-800">{user.nickname}</span>님
+              안녕하세요,{' '}
+              <span className="font-bold text-gray-800">{user.nickname}</span>님
             </span>
             <Dropdown
               menu={{ items: userMenuItems }}
@@ -135,8 +119,10 @@ const Header: React.FC = () => {
             >
               <div className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 px-3 py-2 rounded-lg transition-colors">
                 {(() => {
-                  const avatarConfig = getGenderAvatar();
-
+                  const avatarConfig = getAvatarRenderInfo(
+                    user?.gender,
+                    user?.id
+                  );
                   return (
                     <Avatar
                       size="default"

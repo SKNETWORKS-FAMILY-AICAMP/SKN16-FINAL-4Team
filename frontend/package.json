@@ -22,6 +22,7 @@
     "antd": "^5.27.4",
     "axios": "^1.12.2",
     "clsx": "^2.1.1",
+    "html2canvas": "^1.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.9.4"
@@ -35,7 +36,9 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^5.0.4",
     "autoprefixer": "^10.4.21",
+    "es-toolkit": "^1.41.0",
     "eslint": "^9.36.0",
+    "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.22",
     "globals": "^16.4.0",

@@ -65,6 +65,9 @@ export interface SurveyResultDetail {
   makeup_tips?: string[];
   top_types?: PersonalColorTypeData[];
   answers: SurveyAnswer[];
+  // 챗봇 API 응답에서 필요한 추가 필드들
+  message?: string;
+  survey_result_id?: number;
 }
 
 /**

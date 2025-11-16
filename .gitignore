@@ -117,6 +117,34 @@ frontend/dist/
 .env
 # .env.*
 
+# OpenAI API sensitive data
+data/
+!data/README.md
+!data/.gitkeep
+
+# Fine-tuning training data (contains proprietary conversations)
+*.jsonl
+
+# Fine-tuning evaluation results (contains model IDs)
+four_way_comparison_results_*.json
+!*_sanitized.json
+quick_test_results_*.json
+improved_test_results_*.json
+chatbot_evaluation_results_*.json
+
+# Temporary training files
+temp/
+temp_extract/
+
+# Model artifacts and logs
+*.log
+*.pt
+*.pth
+*.bin
+
+# Datasets (large files, should be downloaded separately)  
+datasets/
+
 # Others
 *.swp
 *.swo

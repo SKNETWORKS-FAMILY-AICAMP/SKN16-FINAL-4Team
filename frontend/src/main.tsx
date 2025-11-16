@@ -12,7 +12,7 @@ import {
   SignUpPage,
   LoginPage,
   MyPage,
-  PersonalColorTestPage,
+  // PersonalColorTestPage, // 대화형 진단으로 변경으로 인해 비활성화
   ChatbotPage,
   AdminDashboard,
 } from './pages';
@@ -38,10 +38,10 @@ const router = createBrowserRouter([
         path: 'mypage',
         element: <MyPage />,
       },
-      {
-        path: 'personal-color-test',
-        element: <PersonalColorTestPage />,
-      },
+      // {
+      //   path: 'personal-color-test',
+      //   element: <PersonalColorTestPage />,
+      // }, // 대화형 진단으로 변경으로 인해 비활성화
       {
         path: 'chatbot',
         element: <ChatbotPage />,
