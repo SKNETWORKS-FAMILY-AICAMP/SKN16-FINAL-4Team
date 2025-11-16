@@ -35,9 +35,11 @@ export const reportApi = {
   /**
    * 퍼스널 컬러 진단 보고서 생성 요청
    */
-  requestReport: async (historyId: number): Promise<{ message: string; status: string }> => {
+  requestReport: async (
+    historyId: number
+  ): Promise<{ message: string; status: string }> => {
     const response = await apiClient.post(`/chatbot/report/request`, {
-      history_id: historyId
+      history_id: historyId,
     });
     return response.data;
   },
@@ -48,5 +50,5 @@ export const reportApi = {
   getReport: async (historyId: number): Promise<ReportData> => {
     const response = await apiClient.get(`/chatbot/report/${historyId}`);
     return response.data;
-  }
+  },
 };

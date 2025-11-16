@@ -41,7 +41,16 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
   showDeleteButton = true,
 }) => {
   const contentRef = useRef<HTMLDivElement>(null);
-  const [activeTabKey, setActiveTabKey] = useState('spring');
+  const [activeTabKey, setActiveTabKey] = useState<string>('');
+
+  // selectedResult가 변경될 때 첫 번째 타입을 기본 탭으로 설정
+  React.useEffect(() => {
+    if (selectedResult?.top_types && selectedResult.top_types.length > 0) {
+      setActiveTabKey(selectedResult.top_types[0].type);
+    } else {
+      setActiveTabKey('');
+    }
+  }, [selectedResult]);
 
   const handleClose = () => {
     onClose();
@@ -432,332 +441,173 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
       ]}
       width={700}
     >
-      {selectedResult && (
-        <div 
-          ref={contentRef} 
+      {selectedResult ? (
+        <div
+          ref={contentRef}
           className="space-y-6 py-2"
           style={{
             backgroundColor: '#ffffff',
             color: '#000000',
             padding: '20px',
-            fontFamily: 'Arial, sans-serif'
+            fontFamily: 'Arial, sans-serif',
           }}
         >
           {/* Top Types 결과 - Tabs UI */}
-          {selectedResult.top_types &&
-            selectedResult.top_types.length > 0 && (
-              <div>
-                <div className="flex justify-between">
-                  <Title level={5} className="mb-4 flex items-center">
-                    <TrophyOutlined className="mr-2 text-yellow-500" />
-                    퍼스널컬러 분석 결과
-                  </Title>
-                  <Text className="!text-gray-500 flex items-center">
-                    <CalendarOutlined className="mr-1" />
-                    {formatKoreanDate(selectedResult.created_at, true)}
-                  </Text>
-                </div>
-
-                <Tabs
-                  activeKey={activeTabKey}
-                  onChange={setActiveTabKey}
-                  items={selectedResult.top_types
-                    .slice(0, 3)
-                    .map((typeData, index) => {
-                      const isHighestScore = index === 0;
-
-                      // 타입별 정보
-                      const typeNames: Record<
-                        string,
-                        { name: string; emoji: string; color: string }
-                      > = {
-                        spring: {
-                          name: '봄 웜톤',
-                          emoji: '🌸',
-                          color: '#fab1a0',
-                        },
-                        summer: {
-                          name: '여름 쿨톤',
-                          emoji: '💎',
-                          color: '#a8e6cf',
-                        },
-                        autumn: {
-                          name: '가을 웜톤',
-                          emoji: '🍂',
-                          color: '#d4a574',
-                        },
-                        winter: {
-                          name: '겨울 쿨톤',
-                          emoji: '❄️',
-                          color: '#74b9ff',
-                        },
-                      };
-                      const typeInfo =
-                        typeNames[typeData.type] || typeNames.spring;
-
-                      // 배경 스타일 (PersonalColorTest와 동일)
-                      const allBackgrounds = {
-                        spring: {
-                          background:
-                            'linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%)',
-                          color: '#2d3436',
-                        },
-                        summer: {
-                          background:
-                            'linear-gradient(135deg, #a8e6cf 0%, #dcedc8 100%)',
-                          color: '#2d3436',
-                        },
-                        autumn: {
-                          background:
-                            'linear-gradient(135deg, #d4a574 0%, #8b4513 100%)',
-                          color: '#ffffff',
-                        },
-                        winter: {
-                          background:
-                            'linear-gradient(135deg, #74b9ff 0%, #0984e3 100%)',
-                          color: '#ffffff',
-                        },
-                      };
-                      const displayStyle =
-                        allBackgrounds[typeData.type as PersonalColorType];
-
-                      // 컬러 데이터 (PersonalColorTest와 동일)
-                      const colorData = {
-                        swatches: typeData.color_palette || [],
-                        keyColors:
-                          typeData.color_palette?.map(
-                            (_, idx) => `색상 ${idx + 1}`
-                          ) || [],
-                      };
-
-                      return {
-                        key: typeData.type,
-                        label: (
-                          <div className="flex items-center px-2 gap-1">
-                            {isHighestScore && (
-                              <Tag color="gold" className="ml-1 text-xs">
-                                추천
-                              </Tag>
-                            )}
-                            <span className="mr-1">{typeInfo.emoji}</span>
-                            <span
-                              className={
-                                isHighestScore
-                                  ? 'font-bold text-purple-600'
-                                  : ''
-                              }
-                            >
-                              {typeData.name}
-                            </span>
-                          </div>
-                        ),
-                        children: (
-                          <div className="space-y-4">
-                            {/* 메인 타입 카드 (PersonalColorTest와 동일) */}
-                            <div
-                              className="p-4 rounded-2xl text-center transition-all duration-300"
-                              style={{
-                                background: displayStyle.background,
-                                color: displayStyle.color,
-                              }}
-                            >
-                              <Title
-                                level={3}
-                                style={{
-                                  color: displayStyle.color,
-                                  margin: 0,
-                                }}
-                              >
-                                {typeData.name}
-                              </Title>
-                              <Text
-                                style={{
-                                  color: displayStyle.color,
-                                  fontSize: '14px',
-                                  display: 'block',
-                                  marginTop: '8px',
-                                }}
-                              >
-                                {typeData.description}
-                              </Text>
+          {selectedResult.top_types && selectedResult.top_types.length > 0 ? (
+            <div>
+              <div className="flex justify-between">
+                <Title level={5} className="mb-4 flex items-center">
+                  <TrophyOutlined className="mr-2 text-yellow-500" />
+                  퍼스널컬러 분석 결과
+                </Title>
+                <Text className="!text-gray-500 flex items-center">
+                  <CalendarOutlined className="mr-1" />
+                  {formatKoreanDate(selectedResult.created_at, true)}
+                </Text>
+              </div>
+              <Tabs
+                activeKey={activeTabKey}
+                onChange={setActiveTabKey}
+                items={selectedResult.top_types.slice(0, 3).map((typeData, index) => {
+                  const isHighestScore = index === 0;
+                  const typeNames: Record<string, { name: string; emoji: string; color: string }> = {
+                    spring: { name: '봄 웜톤', emoji: '🌸', color: '#fab1a0' },
+                    summer: { name: '여름 쿨톤', emoji: '💎', color: '#a8e6cf' },
+                    autumn: { name: '가을 웜톤', emoji: '🍂', color: '#d4a574' },
+                    winter: { name: '겨울 쿨톤', emoji: '❄️', color: '#74b9ff' },
+                  };
+                  const typeInfo = typeNames[typeData.type] || typeNames.spring;
+                  const allBackgrounds = {
+                    spring: { background: 'linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%)', color: '#2d3436' },
+                    summer: { background: 'linear-gradient(135deg, #a8e6cf 0%, #dcedc8 100%)', color: '#2d3436' },
+                    autumn: { background: 'linear-gradient(135deg, #d4a574 0%, #8b4513 100%)', color: '#ffffff' },
+                    winter: { background: 'linear-gradient(135deg, #74b9ff 0%, #0984e3 100%)', color: '#ffffff' },
+                  };
+                  const displayStyle = allBackgrounds[typeData.type as PersonalColorType];
+                  const colorData = {
+                    swatches: typeData.color_palette || [],
+                    keyColors: typeData.color_palette?.map((_, idx) => `색상 ${idx + 1}`) || [],
+                  };
+                  return {
+                    key: typeData.type,
+                    label: (
+                      <div className="flex items-center px-2 gap-1">
+                        {isHighestScore && (
+                          <Tag color="gold" className="ml-1 text-xs">추천</Tag>
+                        )}
+                        <span className="mr-1">{typeInfo.emoji}</span>
+                        <span className={isHighestScore ? 'text-purple-600' : ''}>{typeData.name}</span>
+                      </div>
+                    ),
+                    children: (
+                      <div className="space-y-4">
+                        {/* 메인 타입 카드 */}
+                        <div className="p-4 rounded-2xl text-center transition-all duration-300" style={{ background: displayStyle.background, color: displayStyle.color }}>
+                          <Title level={3} style={{ color: displayStyle.color, margin: 0 }}>{typeData.name}</Title>
+                          <Text style={{ color: displayStyle.color, fontSize: '14px', display: 'block', marginTop: '8px' }}>{typeData.description}</Text>
+                        </div>
+                        {/* 컬러 팔레트 */}
+                        {colorData.swatches.length > 0 && (
+                          <div>
+                            <Text strong className="!text-gray-700 block mb-2 text-sm">🎨 당신만의 컬러 팔레트</Text>
+                            <div className="flex flex-wrap justify-center gap-3 mb-3">
+                              {colorData.swatches.slice(0, 8).map((color, colorIndex) => {
+                                const isWhite = color.toLowerCase() === '#ffffff';
+                                return (
+                                  <Tooltip key={colorIndex} title={`${color} 복사`} placement="top">
+                                    <div className="cursor-pointer transition-transform hover:scale-110 active:scale-95 group" onClick={() => handleColorCopy(color)}>
+                                      <div className="w-12 h-12 rounded-full border-2 border-white shadow-lg group-hover:shadow-xl transition-shadow" style={{ backgroundColor: isWhite ? '#f5f5f5' : color, borderColor: isWhite ? '#d9d9d9' : '#ffffff' }} />
+                                      <Text className="text-xs text-center block mt-1 !text-gray-600">{color}</Text>
+                                    </div>
+                                  </Tooltip>
+                                );
+                              })}
                             </div>
-
-                            {/* 컬러 팔레트 (PersonalColorTest와 동일) */}
-                            {colorData.swatches.length > 0 && (
-                              <div>
-                                <Text
-                                  strong
-                                  className="!text-gray-700 block mb-2 text-sm"
-                                >
-                                  🎨 당신만의 컬러 팔레트
-                                </Text>
-                                <div className="flex flex-wrap justify-center gap-3 mb-3">
-                                  {colorData.swatches
-                                    .slice(0, 8)
-                                    .map((color, colorIndex) => {
-                                      const isWhite = color.toLowerCase() === '#ffffff';
-                                      return (
-                                        <Tooltip
-                                          key={colorIndex}
-                                          title={`${color} 복사`}
-                                          placement="top"
-                                        >
-                                          <div
-                                            className="cursor-pointer transition-transform hover:scale-110 active:scale-95 group"
-                                            onClick={() => handleColorCopy(color)}
-                                          >
-                                            <div
-                                              className="w-12 h-12 rounded-full border-2 border-white shadow-lg group-hover:shadow-xl transition-shadow"
-                                              style={{ 
-                                                backgroundColor: isWhite ? '#f5f5f5' : color,
-                                                borderColor: isWhite ? '#d9d9d9' : '#ffffff'
-                                              }}
-                                            />
-                                            <Text className="text-xs text-center block mt-1 !text-gray-600">
-                                              {color}
-                                            </Text>
-                                          </div>
-                                        </Tooltip>
-                                      );
-                                    })}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* 스타일 키워드 */}
-                            {typeData.style_keywords &&
-                              typeData.style_keywords.length > 0 && (
-                                <div>
-                                  <Text
-                                    strong
-                                    className="!text-gray-700 block mb-2 text-sm"
-                                  >
-                                    ✨ 스타일 키워드
-                                  </Text>
-                                  <div className="flex flex-wrap gap-2">
-                                    {typeData.style_keywords.map(
-                                      (keyword, keywordIndex) => (
-                                        <Tag
-                                          key={keywordIndex}
-                                          color="geekblue"
-                                        >
-                                          {keyword}
-                                        </Tag>
-                                      )
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-
-                            {/* 메이크업 팁 */}
-                            {typeData.makeup_tips &&
-                              typeData.makeup_tips.length > 0 && (
-                                <div>
-                                  <Text
-                                    strong
-                                    className="!text-gray-700 block mb-2 text-sm"
-                                  >
-                                    💄 메이크업 팁
-                                  </Text>
-                                  <div className="flex flex-wrap gap-2">
-                                    {typeData.makeup_tips.map(
-                                      (tip, tipIndex) => (
-                                        <Tag key={tipIndex} color="volcano">
-                                          {tip}
-                                        </Tag>
-                                      )
-                                    )}
-                                  </div>
-                                </div>
-                              )}
                           </div>
-                        ),
-                      };
-                    })}
-                  className="mb-4"
-                />
-              </div>
-            )}
-
+                        )}
+                        {/* 스타일 키워드 */}
+                        {typeData.style_keywords && typeData.style_keywords.length > 0 && (
+                          <div>
+                            <Text strong className="!text-gray-700 block mb-2 text-sm">✨ 스타일 키워드</Text>
+                            <div className="flex flex-wrap gap-2">
+                              {typeData.style_keywords.map((keyword, keywordIndex) => (
+                                <Tag key={keywordIndex} color="geekblue">{keyword}</Tag>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {/* 메이크업 팁 */}
+                        {typeData.makeup_tips && typeData.makeup_tips.length > 0 && (
+                          <div>
+                            <Text strong className="!text-gray-700 block mb-2 text-sm">💄 메이크업 팁</Text>
+                            <div className="flex flex-wrap gap-2">
+                              {typeData.makeup_tips.map((tip, tipIndex) => (
+                                <Tag key={tipIndex} color="volcano">{tip}</Tag>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ),
+                  };
+                })}
+                className="mb-4"
+              />
+            </div>
+          ) : (
+            <div className="text-center text-gray-400 py-8">
+              진단 결과 데이터가 없습니다.
+            </div>
+          )}
           {/* 컬러 팔레트 (기존 코드 유지하되 top_types가 있을 때는 숨김) */}
-          {selectedResult.color_palette &&
-            selectedResult.color_palette.length > 0 &&
-            (!selectedResult.top_types ||
-              selectedResult.top_types.length === 0) && (
-              <div>
-                <Title level={5} className="mb-3">
-                  추천 컬러 팔레트
-                </Title>
-                <div className="flex flex-wrap gap-2">
-                  {selectedResult.color_palette.map((color, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center bg-white border rounded-lg p-2 shadow-sm"
-                    >
-                      <div
-                        className="w-6 h-6 rounded mr-2 border"
-                        style={{ backgroundColor: color }}
-                      />
-                      <Text className="text-sm">{color}</Text>
-                    </div>
-                  ))}
-                </div>
+          {selectedResult.color_palette && selectedResult.color_palette.length > 0 && (!selectedResult.top_types || selectedResult.top_types.length === 0) && (
+            <div>
+              <Title level={5} className="mb-3">추천 컬러 팔레트</Title>
+              <div className="flex flex-wrap gap-2">
+                {selectedResult.color_palette.map((color, index) => (
+                  <div key={index} className="flex items-center bg-white border rounded-lg p-2 shadow-sm">
+                    <div className="w-6 h-6 rounded mr-2 border" style={{ backgroundColor: color }} />
+                    <Text className="text-sm">{color}</Text>
+                  </div>
+                ))}
               </div>
-            )}
-
+            </div>
+          )}
           {/* 스타일 키워드 (기존 코드 유지하되 top_types가 있을 때는 숨김) */}
-          {selectedResult.style_keywords &&
-            selectedResult.style_keywords.length > 0 &&
-            (!selectedResult.top_types ||
-              selectedResult.top_types.length === 0) && (
-              <div>
-                <Title level={5} className="mb-3">
-                  스타일 키워드
-                </Title>
-                <div className="flex flex-wrap gap-2">
-                  {selectedResult.style_keywords.map((keyword, index) => (
-                    <Tag key={index} color="geekblue">
-                      {keyword}
-                    </Tag>
-                  ))}
-                </div>
+          {selectedResult.style_keywords && selectedResult.style_keywords.length > 0 && (!selectedResult.top_types || selectedResult.top_types.length === 0) && (
+            <div>
+              <Title level={5} className="mb-3">스타일 키워드</Title>
+              <div className="flex flex-wrap gap-2">
+                {selectedResult.style_keywords.map((keyword, index) => (
+                  <Tag key={index} color="geekblue">{keyword}</Tag>
+                ))}
               </div>
-            )}
-
+            </div>
+          )}
           {/* 메이크업 팁 (기존 코드 유지하되 top_types가 있을 때는 숨김) */}
-          {selectedResult.makeup_tips &&
-            selectedResult.makeup_tips.length > 0 &&
-            (!selectedResult.top_types ||
-              selectedResult.top_types.length === 0) && (
-              <div>
-                <Title level={5} className="mb-3">
-                  메이크업 팁
-                </Title>
-                <div className="flex flex-wrap gap-2">
-                  {selectedResult.makeup_tips.map((tip, index) => (
-                    <Tag key={index} color="volcano">
-                      {tip}
-                    </Tag>
-                  ))}
-                </div>
+          {selectedResult.makeup_tips && selectedResult.makeup_tips.length > 0 && (!selectedResult.top_types || selectedResult.top_types.length === 0) && (
+            <div>
+              <Title level={5} className="mb-3">메이크업 팁</Title>
+              <div className="flex flex-wrap gap-2">
+                {selectedResult.makeup_tips.map((tip, index) => (
+                  <Tag key={index} color="volcano">{tip}</Tag>
+                ))}
               </div>
-            )}
-
+            </div>
+          )}
           {/* 상세 분석 (AI 생성) */}
           {selectedResult.detailed_analysis && (
             <div>
               <Divider />
-              <Title level={5} className="mb-3">
-                AI 상세 분석
-              </Title>
+              <Title level={5} className="mb-3">AI 상세 분석</Title>
               <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-4 rounded-lg">
-                <Text className="!text-gray-700 leading-relaxed whitespace-pre-line">
-                  {selectedResult.detailed_analysis}
-                </Text>
+                <Text className="!text-gray-700 leading-relaxed whitespace-pre-line">{selectedResult.detailed_analysis}</Text>
               </div>
             </div>
           )}
         </div>
+      ) : (
+        <div className="text-center text-gray-400 py-8">진단 결과 데이터가 없습니다.</div>
       )}
     </Modal>
   );

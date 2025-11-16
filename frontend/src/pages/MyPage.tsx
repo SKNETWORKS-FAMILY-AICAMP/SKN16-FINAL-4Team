@@ -10,21 +10,13 @@ import {
   Modal,
   message,
   List,
-  Tag,
   Spin,
-  Divider,
-  Tabs,
-  Tooltip,
   Dropdown,
 } from 'antd';
 import {
-  UserOutlined,
-  ManOutlined,
-  WomanOutlined,
   DeleteOutlined,
   ExclamationCircleOutlined,
   CalendarOutlined,
-  TrophyOutlined,
   MoreOutlined,
   MessageOutlined,
 } from '@ant-design/icons';
@@ -38,7 +30,7 @@ import { getAvatarRenderInfo } from '@/utils/genderUtils';
 import RouterPaths from '@/routes/Router';
 import { useSurveyResultsLive, useDeleteSurvey } from '@/hooks/useSurvey';
 import type { SurveyResultDetail } from '@/api/survey';
-import type { PersonalColorType } from '@/types/personalColor';
+import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
 
 const { Title, Text } = Typography;
 
@@ -58,7 +50,9 @@ const MyPage: React.FC = () => {
   const [selectedResult, setSelectedResult] =
     useState<SurveyResultDetail | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [activeTabKey, setActiveTabKey] = useState<string>('');
+  // 페이징 상태
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const pageSize = 5;
 
   // AI 전문가 상담으로 이동
   const handleAIConsultation = () => {
@@ -70,17 +64,12 @@ const MyPage: React.FC = () => {
   const handleViewDetail = (result: SurveyResultDetail) => {
     setSelectedResult(result);
     setIsDetailModalOpen(true);
-    // 첫 번째 타입을 기본 활성 탭으로 설정
-    if (result.top_types && result.top_types.length > 0) {
-      setActiveTabKey(result.top_types[0].type);
-    }
   };
 
   // 상세보기 모달 닫기 - 컴포넌트 초기화
   const handleCloseDetailModal = () => {
     setIsDetailModalOpen(false);
     setSelectedResult(null);
-    setActiveTabKey(''); // 활성 탭 초기화
   };
 
   // 진단 기록 삭제 확인
@@ -152,34 +141,7 @@ const MyPage: React.FC = () => {
     });
   };
 
-  // 성별에 따른 아바타 렌더링
-  const getGenderAvatar = () => {
-    const avatarInfo = getAvatarRenderInfo(user?.gender, user?.id);
-
-    if (avatarInfo.content) {
-      // 이모티콘 방식
-      return avatarInfo;
-    } else {
-      // 아이콘 방식 (fallback)
-      let icon;
-      switch (avatarInfo.iconType) {
-        case 'man':
-          icon = <ManOutlined />;
-          break;
-        case 'woman':
-          icon = <WomanOutlined />;
-          break;
-        default:
-          icon = <UserOutlined />;
-          break;
-      }
-      return {
-        content: icon,
-        className: avatarInfo.className,
-        style: avatarInfo.style,
-      };
-    }
-  };
+  // 아바타 렌더링: getAvatarRenderInfo를 직접 사용
 
   if (isLoading) {
     return (
@@ -219,8 +181,10 @@ const MyPage: React.FC = () => {
               {/* 아바타, 닉네임, 이름 센터 배치 */}
               <div className="flex flex-col items-center justify-center py-2 border-b border-gray-100">
                 {(() => {
-                  const avatarConfig = getGenderAvatar();
-
+                  const avatarConfig = getAvatarRenderInfo(
+                    user?.gender,
+                    user?.id
+                  );
                   return (
                     <Avatar
                       size={100}
@@ -320,8 +284,9 @@ const MyPage: React.FC = () => {
                     </Text>
                     <div className="flex items-center">
                       <div
-                        className={`w-2 h-2 rounded-full mr-2 ${user.is_active ? 'bg-green-500' : 'bg-red-500'
-                          }`}
+                        className={`w-2 h-2 rounded-full mr-2 ${
+                          user.is_active ? 'bg-green-500' : 'bg-red-500'
+                        }`}
                       ></div>
                       <Text
                         className={
@@ -346,9 +311,14 @@ const MyPage: React.FC = () => {
               style={{ borderRadius: '8px' }}
             >
               <div className="px-6 py-2">
-                <Title level={4} className="mb-6 text-gray-800">
-                  최근 진단 기록
-                </Title>
+                <div className="flex items-center justify-between">
+                  <Title level={4} className="mb-6 text-gray-800">
+                    최근 진단 기록
+                  </Title>
+                  <Text className="!text-gray-500 !text-sm">
+                    총 {surveyResults?.length || 0}건
+                  </Text>
+                </div>
 
                 {isLoadingSurveys ? (
                   <div className="text-center py-12">
@@ -384,9 +354,12 @@ const MyPage: React.FC = () => {
                       itemLayout="vertical"
                       size="large"
                       pagination={{
-                        pageSize: 5,
+                        current: currentPage,
+                        pageSize: pageSize,
+                        total: surveyResults.length,
+                        onChange: (page) => setCurrentPage(page),
                         showSizeChanger: false,
-                        showQuickJumper: false,
+                        showQuickJumper: true,
                       }}
                       dataSource={surveyResults}
                       renderItem={result => (
@@ -414,9 +387,9 @@ const MyPage: React.FC = () => {
                                 <Text className="!text-gray-600 text-sm block mb-2">
                                   {result.result_description.length > 100
                                     ? `${result.result_description.substring(
-                                      0,
-                                      100
-                                    )}...`
+                                        0,
+                                        100
+                                      )}...`
                                     : result.result_description}
                                 </Text>
                               )}
@@ -442,7 +415,7 @@ const MyPage: React.FC = () => {
                                         handleDeleteSurvey(
                                           result.id,
                                           result.result_name ||
-                                          `${result.result_tone.toUpperCase()} 타입`
+                                            `${result.result_tone.toUpperCase()} 타입`
                                         ),
                                     },
                                   ],
@@ -520,354 +493,27 @@ const MyPage: React.FC = () => {
       </div>
 
       {/* 진단 결과 상세보기 모달 */}
-      <Modal
-        title="진단 결과 상세"
+      <DiagnosisDetailModal
         open={isDetailModalOpen}
-        onCancel={handleCloseDetailModal}
-        footer={[
-          <Button
-            key="delete"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => {
-              if (selectedResult) {
-                handleDeleteSurvey(
-                  selectedResult.id,
-                  selectedResult.result_name ||
-                  `${selectedResult.result_tone.toUpperCase()} 타입`
-                );
-                handleCloseDetailModal();
-              }
-            }}
-          >
-            삭제
-          </Button>,
-          <Button key="close" onClick={handleCloseDetailModal}>
-            닫기
-          </Button>,
-        ]}
-        width={700}
-      >
-        {selectedResult && (
-          <div className="space-y-6 py-2">
-            {/* Top Types 결과 - Tabs UI */}
-            {selectedResult.top_types &&
-              selectedResult.top_types.length > 0 && (
-                <div>
-                  <div className="flex justify-between">
-                    <Title level={5} className="mb-4 flex items-center">
-                      <TrophyOutlined className="mr-2 text-yellow-500" />
-                      퍼스널컬러 분석 결과
-                    </Title>
-                    <Text className="!text-gray-500 flex items-center">
-                      <CalendarOutlined className="mr-1" />
-                      {formatKoreanDate(selectedResult.created_at, true)}
-                    </Text>
-                  </div>
-
-                  <Tabs
-                    activeKey={activeTabKey}
-                    onChange={setActiveTabKey}
-                    items={selectedResult.top_types
-                      .slice(0, 3)
-                      .map((typeData, index) => {
-                        const isHighestScore = index === 0;
-
-                        // 타입별 정보
-                        const typeNames: Record<
-                          string,
-                          { name: string; emoji: string; color: string }
-                        > = {
-                          spring: {
-                            name: '봄 웜톤',
-                            emoji: '🌸',
-                            color: '#fab1a0',
-                          },
-                          summer: {
-                            name: '여름 쿨톤',
-                            emoji: '💎',
-                            color: '#a8e6cf',
-                          },
-                          autumn: {
-                            name: '가을 웜톤',
-                            emoji: '🍂',
-                            color: '#d4a574',
-                          },
-                          winter: {
-                            name: '겨울 쿨톤',
-                            emoji: '❄️',
-                            color: '#74b9ff',
-                          },
-                        };
-                        const typeInfo =
-                          typeNames[typeData.type] || typeNames.spring;
-
-                        // 배경 스타일 (PersonalColorTest와 동일)
-                        const allBackgrounds = {
-                          spring: {
-                            background:
-                              'linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%)',
-                            color: '#2d3436',
-                          },
-                          summer: {
-                            background:
-                              'linear-gradient(135deg, #a8e6cf 0%, #dcedc8 100%)',
-                            color: '#2d3436',
-                          },
-                          autumn: {
-                            background:
-                              'linear-gradient(135deg, #d4a574 0%, #8b4513 100%)',
-                            color: '#ffffff',
-                          },
-                          winter: {
-                            background:
-                              'linear-gradient(135deg, #74b9ff 0%, #0984e3 100%)',
-                            color: '#ffffff',
-                          },
-                        };
-                        const displayStyle =
-                          allBackgrounds[typeData.type as PersonalColorType];
-
-                        // 컬러 데이터 (PersonalColorTest와 동일)
-                        const colorData = {
-                          swatches: typeData.color_palette || [],
-                          keyColors:
-                            typeData.color_palette?.map(
-                              (_, idx) => `색상 ${idx + 1}`
-                            ) || [],
-                        };
-
-                        return {
-                          key: typeData.type,
-                          label: (
-                            <div className="flex items-center px-2 gap-1">
-                              {isHighestScore && (
-                                <Tag color="gold" className="ml-1 text-xs">
-                                  추천
-                                </Tag>
-                              )}
-                              <span className="mr-1">{typeInfo.emoji}</span>
-                              <span
-                                className={
-                                  isHighestScore
-                                    ? 'font-bold text-purple-600'
-                                    : ''
-                                }
-                              >
-                                {typeData.name}
-                              </span>
-                            </div>
-                          ),
-                          children: (
-                            <div className="space-y-4">
-                              {/* 메인 타입 카드 (PersonalColorTest와 동일) */}
-                              <div
-                                className="p-4 rounded-2xl text-center transition-all duration-300"
-                                style={{
-                                  background: displayStyle.background,
-                                  color: displayStyle.color,
-                                }}
-                              >
-                                <Title
-                                  level={3}
-                                  style={{
-                                    color: displayStyle.color,
-                                    margin: 0,
-                                  }}
-                                >
-                                  {typeData.name}
-                                </Title>
-                                <Text
-                                  style={{
-                                    color: displayStyle.color,
-                                    fontSize: '14px',
-                                    display: 'block',
-                                    marginTop: '8px',
-                                  }}
-                                >
-                                  {typeData.description}
-                                </Text>
-                              </div>
-
-                              {/* 컬러 팔레트 (PersonalColorTest와 동일) */}
-                              {colorData.swatches.length > 0 && (
-                                <div>
-                                  <Text
-                                    strong
-                                    className="!text-gray-700 block mb-2 text-sm"
-                                  >
-                                    🎨 당신만의 컬러 팔레트
-                                  </Text>
-                                  <div className="flex flex-wrap justify-center gap-3 mb-3">
-                                    {colorData.swatches
-                                      .slice(0, 8)
-                                      .map((color, colorIndex) => (
-                                        <Tooltip
-                                          key={colorIndex}
-                                          title={`${color} 복사`}
-                                          placement="top"
-                                        >
-                                          <div
-                                            className="cursor-pointer transition-transform hover:scale-110 active:scale-95 group"
-                                            onClick={() => {
-                                              navigator.clipboard.writeText(
-                                                color
-                                              );
-                                              message.success(
-                                                `${color} 복사됨!`
-                                              );
-                                            }}
-                                          >
-                                            <div
-                                              className="w-12 h-12 rounded-full border-2 border-white shadow-lg group-hover:shadow-xl transition-shadow"
-                                              style={{ backgroundColor: color }}
-                                            />
-                                            <Text className="text-xs text-center block mt-1 !text-gray-600">
-                                              {color}
-                                            </Text>
-                                          </div>
-                                        </Tooltip>
-                                      ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* 스타일 키워드 */}
-                              {typeData.style_keywords &&
-                                typeData.style_keywords.length > 0 && (
-                                  <div>
-                                    <Text
-                                      strong
-                                      className="!text-gray-700 block mb-2 text-sm"
-                                    >
-                                      ✨ 스타일 키워드
-                                    </Text>
-                                    <div className="flex flex-wrap gap-2">
-                                      {typeData.style_keywords.map(
-                                        (keyword, keywordIndex) => (
-                                          <Tag
-                                            key={keywordIndex}
-                                            color="geekblue"
-                                          >
-                                            {keyword}
-                                          </Tag>
-                                        )
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-
-                              {/* 메이크업 팁 */}
-                              {typeData.makeup_tips &&
-                                typeData.makeup_tips.length > 0 && (
-                                  <div>
-                                    <Text
-                                      strong
-                                      className="!text-gray-700 block mb-2 text-sm"
-                                    >
-                                      💄 메이크업 팁
-                                    </Text>
-                                    <div className="flex flex-wrap gap-2">
-                                      {typeData.makeup_tips.map(
-                                        (tip, tipIndex) => (
-                                          <Tag key={tipIndex} color="volcano">
-                                            {tip}
-                                          </Tag>
-                                        )
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-                            </div>
-                          ),
-                        };
-                      })}
-                    className="mb-4"
-                  />
-                </div>
-              )}
-
-            {/* 컬러 팔레트 (기존 코드 유지하되 top_types가 있을 때는 숨김) */}
-            {selectedResult.color_palette &&
-              selectedResult.color_palette.length > 0 &&
-              (!selectedResult.top_types ||
-                selectedResult.top_types.length === 0) && (
-                <div>
-                  <Title level={5} className="mb-3">
-                    추천 컬러 팔레트
-                  </Title>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedResult.color_palette.map((color, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center bg-white border rounded-lg p-2 shadow-sm"
-                      >
-                        <div
-                          className="w-6 h-6 rounded mr-2 border"
-                          style={{ backgroundColor: color }}
-                        />
-                        <Text className="text-sm">{color}</Text>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-            {/* 스타일 키워드 (기존 코드 유지하되 top_types가 있을 때는 숨김) */}
-            {selectedResult.style_keywords &&
-              selectedResult.style_keywords.length > 0 &&
-              (!selectedResult.top_types ||
-                selectedResult.top_types.length === 0) && (
-                <div>
-                  <Title level={5} className="mb-3">
-                    스타일 키워드
-                  </Title>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedResult.style_keywords.map((keyword, index) => (
-                      <Tag key={index} color="geekblue">
-                        {keyword}
-                      </Tag>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-            {/* 메이크업 팁 (기존 코드 유지하되 top_types가 있을 때는 숨김) */}
-            {selectedResult.makeup_tips &&
-              selectedResult.makeup_tips.length > 0 &&
-              (!selectedResult.top_types ||
-                selectedResult.top_types.length === 0) && (
-                <div>
-                  <Title level={5} className="mb-3">
-                    메이크업 팁
-                  </Title>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedResult.makeup_tips.map((tip, index) => (
-                      <Tag key={index} color="volcano">
-                        {tip}
-                      </Tag>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-            {/* 상세 분석 (AI 생성) */}
-            {selectedResult.detailed_analysis && (
-              <div>
-                <Divider />
-                <Title level={5} className="mb-3">
-                  AI 상세 분석
-                </Title>
-                <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-4 rounded-lg">
-                  <Text className="!text-gray-700 leading-relaxed whitespace-pre-line">
-                    {selectedResult.detailed_analysis}
-                  </Text>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
+        onClose={handleCloseDetailModal}
+        selectedResult={selectedResult}
+        onDelete={handleDeleteSurvey}
+        showDeleteButton={true}
+        recentResults={(() => {
+          if (!surveyResults || surveyResults.length === 0) return [];
+          const seen = new Set<string>();
+          const out: SurveyResultDetail[] = [];
+          for (const r of surveyResults) {
+            const key = r.result_name || String(r.result_tone) || String(r.id);
+            if (!seen.has(key)) {
+              seen.add(key);
+              out.push(r);
+            }
+            if (out.length >= 3) break;
+          }
+          return out;
+        })()}
+      />
     </div>
   );
 };

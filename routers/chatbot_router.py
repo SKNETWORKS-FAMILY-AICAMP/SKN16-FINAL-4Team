@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, HTTPException, Depends, status
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -6,30 +7,36 @@ from datetime import datetime, timezone
 import models
 from routers.user_router import get_current_user
 from database import SessionLocal
-import os, json
+import os
+import json
 
-
-from schemas import ChatbotRequest, ChatbotHistoryResponse, ChatItemModel, ChatResModel
-# AI 피드백 자동 평가 함수 임포트
-from routers.feedback_router import generate_ai_feedbacks
-# 유틸리티 함수들 임포트
-from utils.shared import (
-    top_k_chunks, 
-    build_rag_index, 
-    analyze_conversation_for_color_tone
+from schemas import (
+    ChatbotRequest,
+    ChatbotHistoryResponse,
+    ChatItemModel,
+    ChatResModel,
+    ReportCreate,
+    ReportResponse,
 )
+from routers.feedback_router import generate_ai_feedbacks
+from utils.shared import top_k_chunks, build_rag_index, analyze_conversation_for_color_tone
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError("환경변수 OPENAI_API_KEY가 설정되지 않았습니다.")
 
-# 감정 분석 Fine-tuned 모델 설정
+# 모델 설정
 EMOTION_MODEL_ID = os.getenv("EMOTION_MODEL_ID")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-4.1-nano-2025-04-14")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 router = APIRouter(prefix="/api/chatbot", tags=["Chatbot"])
+
+
+# 모델 선택 함수 (중복 제거)
+def get_model_to_use():
+    return EMOTION_MODEL_ID if EMOTION_MODEL_ID else DEFAULT_MODEL
 
 # 모델 상태 출력
 print(f"🚀 Chatbot Router 초기화")
@@ -45,61 +52,58 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
     OpenAI API를 통해 완전한 진단 데이터 생성
     """
     try:
-        season_map = {
-            "봄": "Spring",
-            "여름": "Summer", 
-            "가을": "Autumn",
-            "겨울": "Winter"
-        }
-        
+        # 대화 텍스트가 너무 길면 요약
+        if len(conversation_text) > 1000:
+            conversation_text = conversation_text[:1000] + "...(생략)"
         prompt = f"""
-다음은 사용자와 퍼스널 컬러 챗봇의 실제 대화 내용입니다:
-
+사용자와 퍼스널 컬러 전문가의 대화:
 {conversation_text}
 
-이 대화를 바탕으로 사용자가 {season} 타입으로 진단된 결과를 JSON 형식으로 생성해주세요.
+위 대화를 바탕으로 {season} 타입 퍼스널 컬러 진단 결과를 생성해주세요.
 
-다음 형식으로 응답해주세요:
+다음 JSON 형식으로만 응답해주세요 (다른 설명 없이):
 {{
-    "emotional_description": "한 줄의 감성적인 설명 문장 (예: 생기 넘치고 화사한 당신! 밝고 따뜻한 색상이 잘 어울립니다.)",
-    "color_palette": ["#색상코드1", "#색상코드2", "#색상코드3", "#색상코드4", "#색상코드5"],
-    "style_keywords": ["키워드1", "키워드2", "키워드3", "키워드4", "키워드5"],
-    "makeup_tips": ["팁1", "팁2", "팁3", "팁4"],
-    "detailed_analysis": "대화를 바탕으로 한 개인화된 상세 분석 (3-4문단)"
+    "emotional_description": "감성적이고 긍정적인 한 문장 (예: 당신은 따뜻하고 생기 넘치는 {season} 타입입니다!)",
+    "color_palette": ["{season} 타입에 어울리는 5개의 HEX 색상 코드"],
+    "style_keywords": ["{season} 타입의 특성을 나타내는 5개 키워드"],
+    "makeup_tips": ["실용적인 메이크업 팁 4개"],
+    "detailed_analysis": "대화 내용을 반영한 개인화된 분석 (2-3문단, 구체적이고 실용적인 조언 포함)"
 }}
 
-{season} 타입의 특성을 반영하되, 사용자의 대화 내용에서 나타난 개인적 특성을 포함하여 맞춤형으로 생성해주세요.
-
-색상 팔레트는 {season} 타입에 어울리는 실제 HEX 코드로, 스타일 키워드는 짧고 명확하게, 메이크업 팁은 구체적이고 실용적으로 작성해주세요.
+주의사항:
+- detailed_analysis는 반복적인 내용 없이 개인화된 분석으로 작성
+- 대화에서 언급된 개인적 특성을 반영
+- 실용적이고 구체적인 조언 포함
+- 한국어로 작성
 """
-
+        # 모델 선택 함수 사용
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=get_model_to_use(),
             messages=[{
+                "role": "system",
+                "content": "당신은 퍼스널 컬러 전문가입니다. 사용자의 대화를 분석하여 정확하고 개인화된 진단 결과를 제공합니다."
+            }, {
                 "role": "user", 
                 "content": prompt
             }],
-            max_tokens=1200,
-            temperature=0.7
+            max_tokens=1000,
+            temperature=0.3
         )
-        
         ai_response = response.choices[0].message.content.strip()
-        
-        # JSON 파싱 시도
         try:
             import re
-            # JSON 부분만 추출
             json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
             if json_match:
                 json_str = json_match.group()
                 result = json.loads(json_str)
+                if not result.get("detailed_analysis") or len(result.get("detailed_analysis", "")) < 50:
+                    print("⚠️ AI 분석 결과가 너무 짧음, 기본값 사용")
+                    return get_default_diagnosis_data(season)
                 return result
         except Exception as parse_error:
             print(f"❌ AI 응답 JSON 파싱 실패: {parse_error}")
-            
-        # 파싱 실패 시 기본값 반환
+            print(f"AI 응답: {ai_response[:200]}...")
         return get_default_diagnosis_data(season)
-        
     except Exception as e:
         print(f"❌ OpenAI API 호출 실패: {e}")
         return get_default_diagnosis_data(season)
@@ -110,32 +114,32 @@ def get_default_diagnosis_data(season: str) -> dict:
     """
     default_data = {
         "봄": {
-            "emotional_description": "생기 넘치고 화사한 당신! 밝고 따뜻한 색상이 잘 어울립니다.",
+            "emotional_description": "생기 넘치고 화사한 당신은 봄 웜톤 타입입니다! 밝고 따뜻한 색상이 자연스럽게 어울리는 매력적인 분이에요.",
             "color_palette": ["#FFB6C1", "#FFA07A", "#FFFF99", "#98FB98", "#87CEEB"],
-            "style_keywords": ["밝은", "화사한", "생동감", "따뜻한", "자연스러운"],
-            "makeup_tips": ["코랄 계열 립스틱", "피치 블러셔", "골드 아이섀도", "브라운 마스카라"],
-            "detailed_analysis": "대화를 통해 분석해본 결과, 봄 타입의 특성이 잘 나타나고 있습니다. 밝고 화사한 색상을 선호하시며, 자연스러운 아름다움을 추구하는 성향이 보입니다."
+            "style_keywords": ["밝은", "화사한", "생동감 있는", "따뜻한", "자연스러운"],
+            "makeup_tips": ["코랄 계열 립스틱으로 생기 연출", "피치 블러셔로 자연스러운 홍조", "골드 아이섀도로 따뜻한 눈매", "브라운 마스카라로 부드러운 눈매"],
+            "detailed_analysis": "봄 웜톤 타입인 당신은 따뜻하고 밝은 색상이 가장 잘 어울리는 타입입니다.\n\n평소 밝고 경쾌한 인상을 주는 당신에게는 코랄, 피치, 아이보리 계열의 색상이 피부톤을 더욱 생동감 있게 만들어 줍니다. 메이크업 시에는 너무 진하거나 쿨톤 계열보다는 자연스럽고 따뜻한 느낌의 색상을 선택하시면 더욱 매력적인 모습을 연출할 수 있어요.\n\n패션에서도 화이트, 크림, 코랄, 연두색 등을 활용하시면 활기찬 당신의 매력을 한층 더 돋보이게 할 수 있습니다."
         },
         "여름": {
-            "emotional_description": "시원하고 우아한 당신! 부드럽고 차가운 색상이 잘 어울립니다.",
+            "emotional_description": "시원하고 우아한 당신은 여름 쿨톤 타입입니다! 부드럽고 세련된 색상이 당신의 우아함을 더욱 빛나게 해줍니다.",
             "color_palette": ["#E6E6FA", "#B0C4DE", "#FFC0CB", "#DDA0DD", "#F0F8FF"],
             "style_keywords": ["부드러운", "우아한", "세련된", "시원한", "파스텔"],
-            "makeup_tips": ["로즈 핑크 립", "라벤더 아이섀도", "실버 하이라이터", "애쉬 브라운 아이브로우"],
-            "detailed_analysis": "대화를 통해 분석해본 결과, 여름 타입의 특성이 잘 나타나고 있습니다. 부드럽고 우아한 색상을 선호하시며, 세련된 스타일을 추구하는 성향이 보입니다."
+            "makeup_tips": ["로즈 핑크 립으로 상쾌한 인상", "라벤더 아이섀도로 몽환적 눈매", "실버 하이라이터로 투명한 윤기", "애쉬 브라운 아이브로우로 부드러운 인상"],
+            "detailed_analysis": "여름 쿨톤 타입인 당신은 차가운 계열의 부드러운 색상이 가장 잘 어울리는 우아한 타입입니다.\n\n당신의 피부톤에는 로즈, 라벤더, 민트, 스카이블루 등의 파스텔 계열 색상이 완벽하게 조화를 이룹니다. 메이크업 시에는 너무 강렬하거나 따뜻한 톤보다는 쿨하고 부드러운 색상을 선택하시면 자연스럽게 세련된 분위기를 연출할 수 있어요.\n\n의상 선택 시에도 화이트, 실버, 네이비, 그레이 계열을 기본으로 하여 포인트 색상으로 파스텔 톤을 활용하시면 우아하면서도 현대적인 매력을 표현할 수 있습니다."
         },
         "가을": {
-            "emotional_description": "깊이 있고 세련된 당신! 진하고 따뜻한 색상이 잘 어울립니다.",
+            "emotional_description": "깊이 있고 세련된 당신은 가을 웜톤 타입입니다! 진하고 따뜻한 색상이 당신의 성숙한 매력을 완벽하게 표현해줍니다.",
             "color_palette": ["#D2691E", "#CD853F", "#DEB887", "#BC8F8F", "#F4A460"],
-            "style_keywords": ["깊은", "세련된", "따뜻한", "자연스러운", "클래식"],
-            "makeup_tips": ["브라운 계열 립", "골드 브론즈 아이섀도", "따뜻한 블러셔", "다크 브라운 마스카라"],
-            "detailed_analysis": "대화를 통해 분석해본 결과, 가을 타입의 특성이 잘 나타나고 있습니다. 깊이 있고 따뜻한 색상을 선호하시며, 클래식한 아름다움을 추구하는 성향이 보입니다."
+            "style_keywords": ["깊은", "세련된", "따뜻한", "성숙한", "클래식"],
+            "makeup_tips": ["브라운 계열 립으로 지적인 인상", "골드 브론즈 아이섀도로 깊은 눈매", "따뜻한 오렌지 블러셔", "다크 브라운 마스카라로 강조된 속눈썹"],
+            "detailed_analysis": "가을 웜톤 타입인 당신은 깊이 있고 풍부한 색상이 가장 잘 어울리는 성숙하고 세련된 타입입니다.\n\n당신의 피부톤에는 머스타드, 브릭, 올리브, 버건디 등의 깊고 따뜻한 색상들이 자연스럽게 조화를 이룹니다. 메이크업에서는 베이지, 브라운, 골드 계열을 활용하여 자연스러우면서도 세련된 분위기를 연출할 수 있어요.\n\n패션에서는 카멜, 베이지, 브라운, 와인 컬러 등을 기본으로 하여 포인트 색상으로 머스타드나 올리브 그린을 활용하시면 클래식하면서도 트렌디한 스타일을 완성할 수 있습니다."
         },
         "겨울": {
-            "emotional_description": "명확하고 강렬한 당신! 선명하고 차가운 색상이 잘 어울립니다.",
+            "emotional_description": "명확하고 강렬한 당신은 겨울 쿨톤 타입입니다! 선명하고 드라마틱한 색상이 당신의 카리스마를 한층 더 돋보이게 합니다.",
             "color_palette": ["#FF1493", "#4169E1", "#000000", "#FFFFFF", "#8A2BE2"],
-            "style_keywords": ["명확한", "강렬한", "선명한", "차가운", "드라마틱"],
-            "makeup_tips": ["레드 립스틱", "실버 아이섀도", "블랙 아이라이너", "볼드 컨투어링"],
-            "detailed_analysis": "대화를 통해 분석해본 결과, 겨울 타입의 특성이 잘 나타나고 있습니다. 명확하고 강렬한 색상을 선호하시며, 드라마틱한 아름다움을 추구하는 성향이 보입니다."
+            "style_keywords": ["명확한", "강렬한", "선명한", "드라마틱", "모던"],
+            "makeup_tips": ["레드 립스틱으로 강렬한 포인트", "실버 아이섀도로 신비로운 눈매", "블랙 아이라이너로 또렷한 눈매", "볼드한 컨투어링으로 입체감"],
+            "detailed_analysis": "겨울 쿨톤 타입인 당신은 선명하고 강렬한 색상이 가장 잘 어울리는 드라마틱하고 모던한 타입입니다.\n\n당신의 피부톤에는 퓨어 화이트, 블랙, 로얄 블루, 에메랄드 그린 등의 선명하고 차가운 색상들이 완벽하게 어울립니다. 메이크업에서는 명확한 컬러 대비를 활용하여 시크하고 세련된 이미지를 연출할 수 있어요.\n\n의상 선택 시에도 블랙, 화이트, 그레이를 베이스로 하여 포인트 색상으로 비비드한 컬러를 활용하시면 당신만의 독특하고 강인한 매력을 표현할 수 있습니다."
         }
     }
     
@@ -150,11 +154,40 @@ def get_db():
 
 # RAG 인덱스 구축 (서버 시작 시 한 번만 실행)
 fixed_index = build_rag_index(client, "data/RAG/personal_color_RAG.txt")
+trend_index = build_rag_index(client, "data/RAG/beauty_trend_2025_autumn_RAG.txt")
+
+def clean_analysis_text(text: str) -> str:
+    """
+    분석 텍스트를 정리하는 함수
+    """
+    if not text:
+        return ""
+    
+    # 불필요한 공백 제거
+    text = text.strip()
+    
+    # 연속된 줄바꿈을 하나로 정리
+    import re
+    text = re.sub(r'\n\s*\n\s*\n', '\n\n', text)
+    
+    # 중복된 문장 제거 (간단한 중복 체크)
+    sentences = text.split('. ')
+    unique_sentences = []
+    seen = set()
+    
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if sentence and sentence not in seen and len(sentence) > 10:
+            seen.add(sentence)
+            unique_sentences.append(sentence)
+    
+    return '. '.join(unique_sentences) if unique_sentences else text
 
 async def save_chatbot_analysis_result(
-    user_id: int, 
+    user_id: int,
     chat_history_id: int,
-    db: Session
+    db: Session,
+    force: bool = False,
 ):
     """
     🆕 새로운 퍼스널 컬러 진단 기록 생성 🆕
@@ -166,9 +199,34 @@ async def save_chatbot_analysis_result(
     
     호출 시점:
     1. 대화 세션 종료 시 (충분한 대화가 진행된 경우)
-    2. 수동 분석 요청 시 (/analyze/{history_id} API)
     """
     try:
+        # 🔍 중복 방지: force=True이면 중복 체크를 무시하고 항상 새 레코드 생성
+        if not force:
+            existing_result = db.query(models.SurveyResult).filter(
+                models.SurveyResult.user_id == user_id,
+                models.SurveyResult.source_type == "chatbot",
+                models.SurveyResult.is_active == True
+            ).order_by(models.SurveyResult.created_at.desc()).first()
+
+            # 최근 생성된 진단 결과가 5분 이내라면 중복으로 간주
+            if existing_result:
+                from datetime import timedelta
+                # DB에 저장된 created_at이 tz-naive인 경우가 있어 subtraction 에러가 날 수 있음
+                existing_created_at = existing_result.created_at
+                if existing_created_at is None:
+                    # 안전하게 넘어감
+                    existing_created_at = datetime.now(timezone.utc)
+                # if DB returned a naive datetime (no tzinfo), assume UTC
+                if existing_created_at.tzinfo is None:
+                    existing_created_at = existing_created_at.replace(tzinfo=timezone.utc)
+
+                time_diff = datetime.now(timezone.utc) - existing_created_at
+                if time_diff < timedelta(minutes=5):
+                    print(f"🔄 중복 진단 방지: 최근 {time_diff.seconds}초 전에 생성된 결과 재사용")
+                    print(f"   - 기존 결과 ID: {existing_result.id}")
+                    print(f"   - 기존 결과 타입: {existing_result.result_tone}")
+                    return existing_result
         print(f"🔍 새로운 진단 기록 생성 시작: user_id={user_id}, chat_history_id={chat_history_id}")
         
         # 대화 히스토리에서 메시지들 가져오기
@@ -205,11 +263,14 @@ async def save_chatbot_analysis_result(
         print("🤖 OpenAI API를 통한 맞춤형 진단 데이터 생성 중...")
         ai_diagnosis_data = generate_complete_diagnosis_data(conversation_text, sub_tone)
         
+        # 텍스트 정리
+        cleaned_analysis = clean_analysis_text(ai_diagnosis_data["detailed_analysis"])
+        
         # 기본 타입 정보에 AI 생성 데이터 적용
         type_info = {
             "name": f"{sub_tone} {primary_tone}톤",
             "description": ai_diagnosis_data["emotional_description"],
-            "detailed_analysis": ai_diagnosis_data["detailed_analysis"],
+            "detailed_analysis": cleaned_analysis,
             "color_palette": ai_diagnosis_data["color_palette"],
             "style_keywords": ai_diagnosis_data["style_keywords"],
             "makeup_tips": ai_diagnosis_data["makeup_tips"]
@@ -273,7 +334,90 @@ async def save_chatbot_analysis_result(
         print(f"❌ 챗봇 분석 결과 저장 중 오류: {e}")
         db.rollback()
         return None
-trend_index = build_rag_index(client, "data/RAG/beauty_trend_2025_autumn_RAG.txt")
+
+
+@router.post("/report/save", response_model=ReportResponse)
+async def save_report_now(
+    request: ReportCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    프론트엔드에서 3턴마다 호출하는 엔드포인트입니다.
+    force=True로 `save_chatbot_analysis_result`를 호출해 항상 새 진단 기록을 생성합니다.
+    """
+    if not request.history_id:
+        raise HTTPException(status_code=400, detail="history_id가 필요합니다")
+
+    survey_result = await save_chatbot_analysis_result(
+        user_id=current_user.id,
+        chat_history_id=request.history_id,
+        db=db,
+        force=request.force or True,  # 기본 동작은 강제 생성
+    )
+
+    if survey_result:
+        # 생성된 survey_result의 요약/미리보기 데이터를 생성
+        try:
+            from utils.report_generator import PersonalColorReportGenerator
+
+            report_generator = PersonalColorReportGenerator()
+
+            # survey_result에 저장된 JSON 필드 파싱
+            def parse_json_field(val):
+                if not val:
+                    return []
+                if isinstance(val, str):
+                    try:
+                        return json.loads(val)
+                    except:
+                        return []
+                return val
+
+            survey_data = {
+                "result_tone": survey_result.result_tone,
+                "result_name": survey_result.result_name,
+                "confidence": survey_result.confidence,
+                "detailed_analysis": survey_result.detailed_analysis,
+                "color_palette": parse_json_field(survey_result.color_palette),
+                "style_keywords": parse_json_field(survey_result.style_keywords),
+                "makeup_tips": parse_json_field(survey_result.makeup_tips),
+            }
+
+            # 대화 히스토리 조회
+            chat_history = []
+            try:
+                messages = db.query(models.ChatMessage).filter_by(
+                    history_id=request.history_id
+                ).order_by(models.ChatMessage.created_at.asc()).all()
+                chat_history = [
+                    {"role": msg.role, "text": msg.text, "created_at": msg.created_at.isoformat()}
+                    for msg in messages
+                ]
+            except Exception:
+                chat_history = []
+
+            report_data = report_generator.generate_report_data(survey_data, chat_history)
+
+        except Exception as e:
+            print(f"⚠️ 리포트 요약 생성 중 오류: {e}")
+            report_data = None
+
+        # 프론트가 즉시 표시하기 쉬운 미리보기 필드도 함께 반환
+        return ReportResponse(
+            survey_result_id=survey_result.id,
+            message="진단 기록 생성 완료",
+            created_at=survey_result.created_at,
+            result_tone=survey_result.result_tone,
+            result_name=survey_result.result_name,
+            detailed_analysis=survey_result.detailed_analysis,
+            color_palette=(json.loads(survey_result.color_palette) if survey_result.color_palette else []),
+            style_keywords=(json.loads(survey_result.style_keywords) if survey_result.style_keywords else []),
+            makeup_tips=(json.loads(survey_result.makeup_tips) if survey_result.makeup_tips else []),
+            report_data=report_data,
+        )
+    else:
+        raise HTTPException(status_code=500, detail="진단 기록 생성 실패")
 
 @router.post("/analyze", response_model=ChatbotHistoryResponse)
 def analyze(
@@ -293,22 +437,23 @@ def analyze(
             raise HTTPException(status_code=404, detail="해당 history_id 세션 없음")
         if chat_history.ended_at:
             raise HTTPException(status_code=400, detail="이미 종료된 세션입니다.")
-    prev_questions = db.query(models.ChatMessage).filter_by(history_id=chat_history.id, role="user").order_by(models.ChatMessage.id.asc()).all()
-    question_id = len(prev_questions) + 1
     user_msg = models.ChatMessage(history_id=chat_history.id, role="user", text=request.question)
     db.add(user_msg)
     db.commit()
     db.refresh(user_msg)
     # 이전 대화 히스토리에서 사용자 정보 수집
     prev_messages = db.query(models.ChatMessage).filter_by(history_id=chat_history.id).order_by(models.ChatMessage.id.asc()).all()
+    # 닉네임 사용: current_user.nickname이 있으면, 없으면 '사용자'
+    user_display_name = getattr(current_user, "nickname", None)
+    if not user_display_name:
+        user_display_name = "사용자"
     conversation_history = ""
     user_characteristics = []
-    
     if prev_messages:
         # 이전 대화에서 사용자 특성 파악
         for msg in prev_messages[-6:]:  # 최근 6개 메시지만 사용 (3턴 대화)
             if msg.role == "user":
-                conversation_history += f"사용자: {msg.text}\n"
+                conversation_history += f"{user_display_name}: {msg.text}\n"
             else:
                 try:
                     ai_data = json.loads(msg.text)
@@ -325,55 +470,54 @@ def analyze(
     fixed_chunks = top_k_chunks(combined_query, fixed_index, client, k=3)
     trend_chunks = top_k_chunks(combined_query, trend_index, client, k=3)
     # Fine-tuned 감정 모델용 시스템 프롬프트 (퍼스널컬러 전문가 버전)
-    prompt_system = """당신은 경험이 풍부한 퍼스널컬러 전문가입니다. 다음 가이드라인을 따라 상담해주세요:
+        # 사용자 닉네임을 description에 반영하도록 프롬프트 수정
+    prompt_system = f"""당신은 경험이 풍부한 퍼스널컬러 전문가입니다. 다음 가이드라인을 따라 상담해주세요:
 
 🎨 전문성과 친근함의 조화:
 - 퍼스널컬러 전문 지식을 바탕으로 정확한 분석 제공
 - 어려운 전문 용어는 쉽게 풀어서 설명
-- 고객이 편안하게 질문할 수 있도록 친근하고 따뜻한 톤 유지
+- 고객({user_display_name})이 편안하게 질문할 수 있도록 친근하고 따뜻한 톤 유지
 
 � 감정 공감 기반 상담:
-- 고객의 고민과 니즈를 세심하게 파악 ("색깔 때문에 고민이 많으셨겠어요")
+- 고객({user_display_name})의 고민과 니즈를 세심하게 파악 ("색깔 때문에 고민이 많으셨겠어요")
 - 자신감 부족이나 스타일 고민에 공감하며 위로
 - 긍정적인 변화를 위한 격려와 응원 메시지
 
 🌟 실용적이고 개인화된 조언:
-- 고객의 라이프스타일, 직업, 선호도를 종합적으로 고려
+- 고객({user_display_name})의 라이프스타일, 직업, 선호도를 종합적으로 고려
 - 구체적이고 실행 가능한 컬러 추천
 - 예산과 상황에 맞는 현실적인 조언
 
 💬 자연스러운 대화 스타일:
 - 상담실에서 직접 대화하는 듯한 자연스러움
 - "어떠세요?", "~해보시는 건 어떨까요?" 같은 상담 톤
-- 고객이 궁금해할 점을 먼저 예상해서 설명
+- 고객({user_display_name})이 궁금해할 점을 먼저 예상해서 설명
 
-당신의 뛰어난 감정 이해 능력을 활용하여, 고객이 컬러에 대한 자신감을 갖고 아름다워질 수 있도록 도와주세요."""
+당신의 뛰어난 감정 이해 능력을 활용하여, 고객({user_display_name})이 컬러에 대한 자신감을 갖고 아름다워질 수 있도록 도와주세요."""
     prompt_user = f"""대화 맥락:\n{combined_query}\n\n퍼스널컬러 전문 지식:\n{chr(10).join(fixed_chunks)}\n\n최신 트렌드 정보:\n{chr(10).join(trend_chunks)}\n\n다음 가이드라인으로 상담해주세요:
-1. 사용자의 질문에 대해 전문적이면서도 친근하게 응답
+1. 고객({user_display_name})의 질문에 대해 전문적이면서도 친근하게 응답
 2. 필요시 퍼스널컬러 진단을 위한 추가 질문 (피부톤, 선호 스타일, 라이프스타일 등)
 3. 대화 흐름에 맞는 자연스러운 컬러 추천
 4. 실용적이고 구체적인 조언 제공
 
 JSON 형식으로 응답해주세요:
 {{
-  "primary_tone": "웜" 또는 "쿨",
-  "sub_tone": "봄" 또는 "여름" 또는 "가을" 또는 "겨울",
-  "description": "상세한 설명 텍스트 (자연스러운 대화체)",
-  "recommendations": ["구체적인 추천사항1", "구체적인 추천사항2", "구체적인 추천사항3"]
+    "primary_tone": "웜" 또는 "쿨",
+    "sub_tone": "봄" 또는 "여름" 또는 "가을" 또는 "겨울",
+    "description": "상세한 설명 텍스트 (자연스러운 대화체, 고객({user_display_name})을 직접 호명하며 안내)",
+    "recommendations": ["구체적인 추천사항1", "구체적인 추천사항2", "구체적인 추천사항3"]
 }}
 
 주의: recommendations는 반드시 문자열 배열이어야 합니다.
 """
     messages = [{"role": "system", "content": prompt_system}, {"role": "user", "content": prompt_user}]
     
-    # Fine-tuned 감정 모델 사용 (없으면 기본 모델로 fallback)
-    model_to_use = EMOTION_MODEL_ID if EMOTION_MODEL_ID else DEFAULT_MODEL
-    print(f"🤖 Using model: {model_to_use[:30]}***")  # 디버깅용 로그
-    
+    # 모델 선택 함수 사용
+    print(f"🤖 Using model: {get_model_to_use()[:30]}***")  # 디버깅용 로그
     try:
         resp = client.chat.completions.create(
-            model=model_to_use, 
-            messages=messages, 
+            model=get_model_to_use(),
+            messages=messages,
             temperature=0.8,  # 감정 모델에서는 좀 더 자연스러운 응답을 위해 temperature 상향
             max_tokens=600
         )
@@ -427,7 +571,6 @@ JSON 형식으로 응답해주세요:
         recommendations = []
     
     data["recommendations"] = recommendations
-    answer_string = data.get("description","")
     ai_msg = models.ChatMessage(history_id=chat_history.id, role="ai", text=json.dumps(data, ensure_ascii=False))
     db.add(ai_msg)
     db.commit()
@@ -473,6 +616,54 @@ JSON 형식으로 응답해주세요:
             qid += 1
     return {"history_id": chat_history.id, "items": items}
 
+
+@router.post("/start")
+def start_chat_session(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    명시적으로 새 채팅 세션을 생성하고 history_id를 반환합니다.
+    프론트엔드가 페이지 진입 시 이 엔드포인트를 호출하여
+    기존 열린 세션과 관계없이 항상 새로운 세션을 시작하도록 합니다.
+    """
+    # DB-level concurrency handling:
+    # Acquire a FOR UPDATE lock on the user row, then check for an open ChatHistory.
+    # This prevents two concurrent requests from both observing "no open session" and
+    # creating duplicate open sessions. Locking the user row is lightweight and
+    # avoids requiring DB schema changes (partial unique indexes) here.
+    try:
+        # Lock the user row for this transaction
+        db.query(models.User).filter(models.User.id == current_user.id).with_for_update().first()
+
+        # Now check again for an existing open session while holding the lock
+        existing = db.query(models.ChatHistory).filter(
+            models.ChatHistory.user_id == current_user.id,
+            models.ChatHistory.ended_at == None,
+        ).order_by(models.ChatHistory.created_at.desc()).first()
+
+        if existing:
+            user_turns = db.query(models.ChatMessage).filter_by(history_id=existing.id, role='user').count()
+            print(f"🔁 기존 열린 세션 재사용: user_id={current_user.id}, history_id={existing.id}, user_turns={user_turns}")
+            return {"history_id": existing.id, "reused": True, "user_turns": user_turns}
+
+        # No existing open session found while holding the lock: create one
+        chat_history = models.ChatHistory(user_id=current_user.id)
+        db.add(chat_history)
+        db.commit()
+        db.refresh(chat_history)
+        print(f"➕ 새 채팅 세션 생성: user_id={current_user.id}, history_id={chat_history.id}")
+        return {"history_id": chat_history.id, "reused": False, "user_turns": 0}
+
+    except Exception as e:
+        # Roll back on error and return a 500 so clients can retry safely
+        print(f"❌ /start 오류 발생: {e}")
+        try:
+            db.rollback()
+        except:
+            pass
+        raise HTTPException(status_code=500, detail="채팅 세션 생성 중 DB 오류가 발생했습니다")
+
 @router.post("/end/{history_id}")
 async def end_chat_session(
     history_id: int,
@@ -517,46 +708,6 @@ async def end_chat_session(
             "ended_at": chat.ended_at
         }
 
-@router.post("/analyze/{history_id}")
-async def analyze_chat_for_personal_color(
-    history_id: int,
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    특정 채팅 세션을 분석하여 퍼스널 컬러 진단 결과를 즉시 생성
-    (대화 종료와 별개로 분석 결과만 확인하고 싶을 때 사용)
-    """
-    chat = db.query(models.ChatHistory).filter_by(id=history_id, user_id=current_user.id).first()
-    if not chat:
-        raise HTTPException(status_code=404, detail="대화 세션을 찾을 수 없습니다")
-    
-    try:
-        survey_result = await save_chatbot_analysis_result(
-            user_id=current_user.id,
-            chat_history_id=history_id,
-            db=db
-        )
-        
-        if survey_result:
-            # JSON 필드들을 파싱하여 반환
-            return {
-                "message": "분석 완료",
-                "survey_result_id": survey_result.id,
-                "result_tone": survey_result.result_tone,
-                "result_name": survey_result.result_name,
-                "confidence": survey_result.confidence,
-                "detailed_analysis": survey_result.detailed_analysis,
-                "color_palette": json.loads(survey_result.color_palette) if survey_result.color_palette else [],
-                "style_keywords": json.loads(survey_result.style_keywords) if survey_result.style_keywords else [],
-                "makeup_tips": json.loads(survey_result.makeup_tips) if survey_result.makeup_tips else [],
-                "top_types": json.loads(survey_result.top_types) if survey_result.top_types else []
-            }
-        else:
-            raise HTTPException(status_code=400, detail="분석 결과를 생성할 수 없습니다")
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"분석 중 오류가 발생했습니다: {str(e)}")
 
 @router.post("/report/request")
 async def request_personal_color_report(

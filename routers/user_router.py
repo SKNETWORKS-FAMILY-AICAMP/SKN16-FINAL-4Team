@@ -160,9 +160,11 @@ async def get_user_stats(current_user: models.User = Depends(get_current_user), 
             models.SurveyResult.is_active == True
         ).count()
         
-        # 채팅 세션 수 (ChatHistory 테이블에서 해당 사용자의 세션 수)
+        # 채팅 세션 수: '종료된' 세션만 카운트하도록 변경
+        # (요청: end API 호출 후 횟수가 늘어나도록 하기 위함)
         chat_sessions = db.query(models.ChatHistory).filter(
-            models.ChatHistory.user_id == current_user.id
+            models.ChatHistory.user_id == current_user.id,
+            models.ChatHistory.ended_at != None
         ).count()
         
         return {
