@@ -88,6 +88,7 @@ const ChatbotPage: React.FC = () => {
   const [selectedResult, setSelectedResult] =
     useState<SurveyResultDetail | null>(null); // 선택된 진단 결과
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // 대화가 있는지 확인하는 함수
   const hasConversation = () => messages.length > 1;
@@ -115,9 +116,27 @@ const ChatbotPage: React.FC = () => {
 
   // 메시지, 타이핑, 딜레이 상태 변경 시 스크롤 자동 이동
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (!messagesEndRef.current || !messagesContainerRef.current) return;
+
+    // Do not auto-scroll for the initial welcome and the following message.
+    // Only start auto-scrolling once the conversation has more than 2 messages.
+    if (messages.length <= 2) return;
+
+    const container = messagesContainerRef.current as HTMLDivElement;
+
+    // Only scroll when the message list actually overflows the container
+    // to avoid scrolling the whole window when content is short.
+    const isOverflowing = container.scrollHeight > container.clientHeight;
+
+    // Debugging log to help diagnose unexpected scrolls in runtime.
+    // Remove or convert to a proper logger once confirmed.
+    // eslint-disable-next-line no-console
+    console.debug('[chat-scroll] messages=', messages.length, 'isTyping=', isTyping, 'overflowing=', isOverflowing);
+
+    if (!isOverflowing) return;
+
+    // Smoothly scroll the container to the bottom.
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }, [messages, isTyping, delayedDescriptions]);
 
   useEffect(() => {
@@ -1110,7 +1129,7 @@ function isDiagnosisBubble(msg?: any): boolean {
           {/* 메시지 목록 */}
           <div
             className="flex-1 overflow-y-auto mb-3 p-3 bg-gray-50 rounded-lg"
-            style={{ minHeight: '400px' }}
+            style={{ minHeight: '400px', paddingTop: '30px' }}
           >
             {messages.map((msg, idx) => (
               <div
