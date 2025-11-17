@@ -26,6 +26,7 @@ import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
 import FeedbackModal from '@/components/FeedbackModal';
 import type { SurveyResultDetail } from '@/api/survey';
+import AnimatedEmoji from '@/components/AnimatedEmoji';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -72,6 +73,8 @@ const ChatbotPage: React.FC = () => {
   const sessionStartedRef = useRef(false);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // description 버블 딜레이 표시용
+  const [delayedDescriptions, setDelayedDescriptions] = useState<{ [id: string]: boolean }>({});
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
@@ -85,6 +88,7 @@ const ChatbotPage: React.FC = () => {
   const [selectedResult, setSelectedResult] =
     useState<SurveyResultDetail | null>(null); // 선택된 진단 결과
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // 대화가 있는지 확인하는 함수
   const hasConversation = () => messages.length > 1;
@@ -109,10 +113,31 @@ const ChatbotPage: React.FC = () => {
       currentLocation.pathname !== nextLocation.pathname
   );
 
-  // 메시지 스크롤 자동 이동
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+
+  // 메시지, 타이핑, 딜레이 상태 변경 시 스크롤 자동 이동
+  useEffect(() => {
+    if (!messagesEndRef.current || !messagesContainerRef.current) return;
+
+    // Do not auto-scroll for the initial welcome and the following message.
+    // Only start auto-scrolling once the conversation has more than 2 messages.
+    if (messages.length <= 2) return;
+
+    const container = messagesContainerRef.current as HTMLDivElement;
+
+    // Only scroll when the message list actually overflows the container
+    // to avoid scrolling the whole window when content is short.
+    const isOverflowing = container.scrollHeight > container.clientHeight;
+
+    // Debugging log to help diagnose unexpected scrolls in runtime.
+    // Remove or convert to a proper logger once confirmed.
+    // eslint-disable-next-line no-console
+    console.debug('[chat-scroll] messages=', messages.length, 'isTyping=', isTyping, 'overflowing=', isOverflowing);
+
+    if (!isOverflowing) return;
+
+    // Smoothly scroll the container to the bottom.
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+  }, [messages, isTyping, delayedDescriptions]);
 
   useEffect(() => {
     if (analyzeError) {
@@ -133,13 +158,6 @@ const ChatbotPage: React.FC = () => {
       }
     }
   }, [analyzeError, diagnoseError]);
-
-  // 메시지 변경 시 스크롤 이동 (초기 환영 메시지일 때는 스크롤하지 않음)
-  useEffect(() => {
-    if (messages.length > 1) {
-      scrollToBottom();
-    }
-  }, [messages]);
 
   // React Router 네비게이션 차단 시 피드백 모달 표시
   useEffect(() => {
@@ -345,7 +363,8 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
 
   // 메시지 전송 처리
   const handleSendMessage = async () => {
-    if (!inputMessage.trim()) return;
+    // analyze 중복 호출 방지: 로딩 중이면 early return
+    if (!inputMessage.trim() || isTyping || isAnalyzing || isDiagnosing) return;
 
     const isReportRequest = checkReportKeywords(inputMessage.trim());
     const userNickname = `${user?.nickname || '사용자'}님`;
@@ -535,7 +554,14 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
           questionId: latestItem.question_id,
         };
 
+        // 이모티콘 버블 먼저, description 버블은 딜레이 후 표시
         setMessages(prev => [...prev, botMessage]);
+        if (botMessage.chatRes?.emotion && botMessage.content) {
+          setDelayedDescriptions(prev => ({ ...prev, [botMessage.id]: false }));
+          setTimeout(() => {
+            setDelayedDescriptions(prev => ({ ...prev, [botMessage.id]: true }));
+          }, 400); // 400ms 딜레이
+        }
 
         // 사용자 턴 카운트 증가
         const newTurnCount = userTurnCount + 1;
@@ -976,6 +1002,17 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
     }
   };
 
+
+// 진단 챗봇 버블 여부 판별 함수 (예시: description에 '진단', '분석', '추천', '퍼스널컬러', '톤', '결과' 등 포함 시)
+// 진단 완료 요약 customContent가 있는 메시지(진단 완료 버블)만 true 반환
+function isDiagnosisBubble(msg?: any): boolean {
+  // 진단 요약 customContent가 있는 경우만 진단 버블로 간주
+  if (msg && msg.customContent && typeof msg.customContent === 'object') {
+    return true;
+  }
+  return false;
+}
+
   // 로딩 상태
   if (userLoading || surveyLoading) {
     return (
@@ -1091,10 +1128,11 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
         >
           {/* 메시지 목록 */}
           <div
+            ref={messagesContainerRef}
             className="flex-1 overflow-y-auto mb-3 p-3 bg-gray-50 rounded-lg"
-            style={{ minHeight: '400px' }}
+            style={{ minHeight: '400px', paddingTop: '30px' }}
           >
-            {messages.map(msg => (
+            {messages.map((msg, idx) => (
               <div
                 key={msg.id}
                 className={`flex mb-3 ${msg.isUser ? 'justify-end' : 'justify-start'}`}
@@ -1110,7 +1148,7 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
                       );
                       return (
                         <Avatar
-                          className={`!ml-2 ${avatarConfig.className}`}
+                          className={`!ml-3 ${avatarConfig.className}`}
                           style={avatarConfig.style}
                         >
                           {typeof avatarConfig.content === 'string' ? (
@@ -1127,178 +1165,278 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
                     <Avatar
                       icon={<RobotOutlined />}
                       style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
-                      className="!mr-2"
+                      className="!mr-3"
                     />
                   )}
-                  <div
-                    className={`px-4 py-2 rounded-lg ${
-                      msg.isUser
-                        ? 'bg-blue-500 text-white'
-                        : 'bg-white border border-gray-200'
-                    }`}
-                  >
-                    {/* 메시지 내용 렌더링 - customContent 또는 일반 content */}
-                    {msg.customContent ? (
-                      msg.customContent
-                    ) : msg.content.includes('[상세보기]') ? (
-                      <div>
-                        {/* 컬러 팔레트가 포함된 진단 결과 메시지인지 확인 */}
-                        {msg.content.includes('🌈 **추천 컬러 팔레트**') &&
-                        msg.diagnosisData ? (
+                  <div className="flex flex-col gap-1">
+                    {/* 이모티콘 애니메이션 버블 (bot 메시지에만, 먼저 표시) */}
+                    {/* 퍼스널컬러 진단 챗봇 버블(분석/추천/진단 등)에는 이모티콘 미표시 */}
+                    {!msg.isUser && (idx === 0 || (msg.chatRes?.emotion && !isDiagnosisBubble(msg))) && (
+                      <div
+                        className="relative px-4 py-2 rounded-lg bg-white border border-gray-200 mb-1 flex items-center chatbot-balloon"
+                        style={{ maxWidth: 'fit-content' }}
+                      >
+                        {/* 말풍선 꼬리 (챗봇) + border */}
+                        <span
+                          className="absolute left-[-10px] top-4 w-0 h-0"
+                          style={{
+                            borderTop: '8px solid transparent',
+                            borderBottom: '8px solid transparent',
+                            borderRight: '10px solid #fff',
+                            left: '-10px',
+                            top: '16px',
+                            zIndex: 1,
+                          }}
+                        />
+                        {/* border용 꼬리 */}
+                        <span
+                          className="absolute left-[-12px] top-4 w-0 h-0"
+                          style={{
+                            borderTop: '9px solid transparent',
+                            borderBottom: '9px solid transparent',
+                            borderRight: '12px solid #e5e7eb',
+                            left: '-12px',
+                            top: '15px',
+                            zIndex: 0,
+                          }}
+                        />
+                        <AnimatedEmoji emotion={msg?.chatRes?.emotion ?? "neutral"} size={40} />
+                      </div>
+                    )}
+                    {/* description/텍스트 버블 (딜레이 후 표시) */}
+                    {(msg.isUser || !msg.chatRes?.emotion || delayedDescriptions[msg.id] || typeof delayedDescriptions[msg.id] === 'undefined') && (
+                      <div
+                        className={`relative px-4 py-2 rounded-lg ${
+                          msg.isUser
+                            ? 'bg-blue-500 text-white user-balloon'
+                            : 'bg-white chatbot-balloon'
+                        }`}
+                        style={{
+                          marginLeft: msg.isUser ? 0 : '0',
+                          marginRight: msg.isUser ? '0' : 0,
+                          maxWidth: '100%',
+                          border: msg.isUser ? undefined : '1.5px solid #e5e7eb',
+                          boxShadow: msg.isUser ? undefined : '0 2px 8px rgba(0,0,0,0.04)',
+                        }}
+                      >
+                        {/* 말풍선 꼬리 */}
+                        {msg.isUser ? (
+                          <>
+                            <span
+                              className="absolute right-[-10px] top-4 w-0 h-0"
+                              style={{
+                                borderTop: '8px solid transparent',
+                                borderBottom: '8px solid transparent',
+                                borderLeft: '10px solid #3b82f6',
+                                right: '-10px',
+                                top: '16px',
+                                zIndex: 1,
+                              }}
+                            />
+                            {/* border용 꼬리 */}
+                            <span
+                              className="absolute right-[-12px] top-4 w-0 h-0"
+                              style={{
+                                borderTop: '9px solid transparent',
+                                borderBottom: '9px solid transparent',
+                                borderLeft: '12px solid #2563eb',
+                                right: '-12px',
+                                top: '15px',
+                                zIndex: 0,
+                              }}
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <span
+                              className="absolute left-[-10px] top-4 w-0 h-0"
+                              style={{
+                                borderTop: '8px solid transparent',
+                                borderBottom: '8px solid transparent',
+                                borderRight: '10px solid #fff',
+                                left: '-10px',
+                                top: '16px',
+                                zIndex: 1,
+                              }}
+                            />
+                            {/* border용 꼬리 */}
+                            <span
+                              className="absolute left-[-12px] top-4 w-0 h-0"
+                              style={{
+                                borderTop: '9px solid transparent',
+                                borderBottom: '9px solid transparent',
+                                borderRight: '12px solid #e5e7eb',
+                                left: '-12px',
+                                top: '15px',
+                                zIndex: 0,
+                              }}
+                            />
+                          </>
+                        )}
+                        {/* 메시지 내용 렌더링 - customContent 또는 일반 content */}
+                        {msg.customContent ? (
+                          msg.customContent
+                        ) : msg.content.includes('[상세보기]') ? (
                           <div>
-                            {/* 메인 텍스트 (컬러 팔레트 부분 제외) */}
-                            <Text
-                              className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                            >
-                              {msg.content.split('🌈 **추천 컬러 팔레트**')[0]}
-                            </Text>
+                            {/* 컬러 팔레트가 포함된 진단 결과 메시지인지 확인 */}
+                            {msg.content.includes('🌈 **추천 컬러 팔레트**') &&
+                            msg.diagnosisData ? (
+                              <div>
+                                {/* 메인 텍스트 (컬러 팔레트 부분 제외) */}
+                                <Text
+                                  className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                                >
+                                  {msg.content.split('🌈 **추천 컬러 팔레트**')[0]}
+                                </Text>
 
-                            {/* 컬러 팔레트 시각적 표시 */}
-                            <div className="mt-3">
-                              <Text
-                                strong
-                                className="block mb-2 !text-gray-700"
-                              >
-                                🌈 추천 컬러 팔레트
-                              </Text>
-                              <div className="flex flex-wrap gap-2 mb-3">
-                                {msg.diagnosisData.color_palette &&
-                                msg.diagnosisData.color_palette.length > 0 ? (
-                                  msg.diagnosisData.color_palette.map(
-                                    (color: string, index: number) => (
-                                      <div
-                                        key={index}
-                                        className="flex items-center gap-1"
-                                      >
-                                        <div
-                                          className="w-6 h-6 rounded-full border border-gray-300"
-                                          style={{ backgroundColor: color }}
-                                          title={color}
-                                        />
-                                        <Text className="text-xs text-gray-600">
-                                          {color}
-                                        </Text>
-                                      </div>
-                                    )
-                                  )
-                                ) : (
-                                  <>
-                                    <div className="flex items-center gap-1">
-                                      <div
-                                        className="w-6 h-6 rounded-full border border-gray-300"
-                                        style={{ backgroundColor: '#FFB6C1' }}
-                                      />
-                                      <Text className="text-xs text-gray-600">
-                                        #FFB6C1
-                                      </Text>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                      <div
-                                        className="w-6 h-6 rounded-full border border-gray-300"
-                                        style={{ backgroundColor: '#FFA07A' }}
-                                      />
-                                      <Text className="text-xs text-gray-600">
-                                        #FFA07A
-                                      </Text>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                      <div
-                                        className="w-6 h-6 rounded-full border border-gray-300"
-                                        style={{ backgroundColor: '#FFFF99' }}
-                                      />
-                                      <Text className="text-xs text-gray-600">
-                                        #FFFF99
-                                      </Text>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                      <div
-                                        className="w-6 h-6 rounded-full border border-gray-300"
-                                        style={{ backgroundColor: '#98FB98' }}
-                                      />
-                                      <Text className="text-xs text-gray-600">
-                                        #98FB98
-                                      </Text>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                      <div
-                                        className="w-6 h-6 rounded-full border border-gray-300"
-                                        style={{ backgroundColor: '#87CEEB' }}
-                                      />
-                                      <Text className="text-xs text-gray-600">
-                                        #87CEEB
-                                      </Text>
-                                    </div>
-                                  </>
-                                )}
+                                {/* 컬러 팔레트 시각적 표시 */}
+                                <div className="mt-3">
+                                  <Text
+                                    strong
+                                    className="block mb-2 !text-gray-700"
+                                  >
+                                    🌈 추천 컬러 팔레트
+                                  </Text>
+                                  <div className="flex flex-wrap gap-2 mb-3">
+                                    {msg.diagnosisData.color_palette &&
+                                    msg.diagnosisData.color_palette.length > 0 ? (
+                                      msg.diagnosisData.color_palette.map(
+                                        (color: string, index: number) => (
+                                          <div
+                                            key={index}
+                                            className="flex items-center gap-1"
+                                          >
+                                            <div
+                                              className="w-6 h-6 rounded-full border border-gray-300"
+                                              style={{ backgroundColor: color }}
+                                              title={color}
+                                            />
+                                            <Text className="text-xs text-gray-600">
+                                              {color}
+                                            </Text>
+                                          </div>
+                                        )
+                                      )
+                                    ) : (
+                                      <>
+                                        <div className="flex items-center gap-1">
+                                          <div
+                                            className="w-6 h-6 rounded-full border border-gray-300"
+                                            style={{ backgroundColor: '#FFB6C1' }}
+                                          />
+                                          <Text className="text-xs text-gray-600">
+                                            #FFB6C1
+                                          </Text>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <div
+                                            className="w-6 h-6 rounded-full border border-gray-300"
+                                            style={{ backgroundColor: '#FFA07A' }}
+                                          />
+                                          <Text className="text-xs text-gray-600">
+                                            #FFA07A
+                                          </Text>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <div
+                                            className="w-6 h-6 rounded-full border border-gray-300"
+                                            style={{ backgroundColor: '#FFFF99' }}
+                                          />
+                                          <Text className="text-xs text-gray-600">
+                                            #FFFF99
+                                          </Text>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <div
+                                            className="w-6 h-6 rounded-full border border-gray-300"
+                                            style={{ backgroundColor: '#98FB98' }}
+                                          />
+                                          <Text className="text-xs text-gray-600">
+                                            #98FB98
+                                          </Text>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                          <div
+                                            className="w-6 h-6 rounded-full border border-gray-300"
+                                            style={{ backgroundColor: '#87CEEB' }}
+                                          />
+                                          <Text className="text-xs text-gray-600">
+                                            #87CEEB
+                                          </Text>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* 나머지 텍스트 */}
+                                <Text
+                                  className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                                >
+                                  {msg.content
+                                    .split('🌈 **추천 컬러 팔레트**')[1]
+                                    ?.replace(/🎨 #[A-Fa-f0-9]{6}/g, '')
+                                    .replace('[상세보기]', '')
+                                    .trim()}
+                                </Text>
                               </div>
+                            ) : (
+                              <Text
+                                className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                              >
+                                {msg.content.replace('[상세보기]', '')}
+                              </Text>
+                            )}
+                            <div className="mt-3">
+                              <Button
+                                type="primary"
+                                size="small"
+                                onClick={handleViewDiagnosisDetail}
+                                className="bg-purple-500 hover:bg-purple-600 border-purple-500 hover:border-purple-600"
+                              >
+                                📊 상세보기
+                              </Button>
                             </div>
-
-                            {/* 나머지 텍스트 */}
-                            <Text
-                              className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                            >
-                              {msg.content
-                                .split('🌈 **추천 컬러 팔레트**')[1]
-                                ?.replace(/🎨 #[A-Fa-f0-9]{6}/g, '')
-                                .replace('[상세보기]', '')
-                                .trim()}
-                            </Text>
                           </div>
                         ) : (
                           <Text
                             className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
                           >
-                            {msg.content.replace('[상세보기]', '')}
+                            {msg.content}
                           </Text>
                         )}
-                        <div className="mt-3">
-                          <Button
-                            type="primary"
-                            size="small"
-                            onClick={handleViewDiagnosisDetail}
-                            className="bg-purple-500 hover:bg-purple-600 border-purple-500 hover:border-purple-600"
-                          >
-                            📊 상세보기
-                          </Button>
+
+                        <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
+                          {/* 리포트 관련 메시지에 리포트 상세보기 버튼 추가 */}
+                          {shouldShowReportButton(msg) && (
+                        <Button
+                          type="default"
+                          size="small"
+                          onClick={() => {
+                            // previewResultOuter is sometimes undefined in this scope due to closure issues
+                            // Instead, always use selectedResult if available, otherwise fallback
+                            if (selectedResult) {
+                              setIsDetailModalOpen(true);
+                              return;
+                            }
+                            // If recentResults exist, use the first one
+                            if (surveyResults && surveyResults.length > 0) {
+                              setSelectedResult(surveyResults[0] as SurveyResultDetail);
+                              setIsDetailModalOpen(true);
+                              return;
+                            }
+                            // Fallback to handler (may show warning)
+                            handleViewDiagnosisDetail();
+                          }}
+                          className="border-purple-300 text-purple-600 hover:border-purple-500 hover:text-purple-700"
+                        >
+                          🎨 진단 결과
+                        </Button>
+                          )}
+                          {formatKoreanDate(msg.timestamp, true)}
                         </div>
                       </div>
-                    ) : (
-                      <Text
-                        className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                      >
-                        {msg.content}
-                      </Text>
                     )}
-
-                    <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
-                      {/* 리포트 관련 메시지에 리포트 상세보기 버튼 추가 */}
-                      {shouldShowReportButton(msg) && (
-                    <Button
-                      type="default"
-                      size="small"
-                      onClick={() => {
-                        // previewResultOuter is sometimes undefined in this scope due to closure issues
-                        // Instead, always use selectedResult if available, otherwise fallback
-                        if (selectedResult) {
-                          setIsDetailModalOpen(true);
-                          return;
-                        }
-                        // If recentResults exist, use the first one
-                        if (surveyResults && surveyResults.length > 0) {
-                          setSelectedResult(surveyResults[0] as SurveyResultDetail);
-                          setIsDetailModalOpen(true);
-                          return;
-                        }
-                        // Fallback to handler (may show warning)
-                        handleViewDiagnosisDetail();
-                      }}
-                      className="border-purple-300 text-purple-600 hover:border-purple-500 hover:text-purple-700"
-                    >
-                      🎨 진단 결과
-                    </Button>
-                      )}
-                      {formatKoreanDate(msg.timestamp, true)}
-                    </div>
                   </div>
                 </div>
               </div>
@@ -1354,7 +1492,11 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
             <TextArea
               value={inputMessage}
               onChange={e => setInputMessage(e.target.value)}
-              onKeyDown={handleKeyDown}
+              onKeyDown={e => {
+                // analyze 중복 호출 방지: 로딩 중이면 입력 무시
+                if (isTyping || isAnalyzing || isDiagnosing) return;
+                handleKeyDown(e);
+              }}
               placeholder={
                 !surveyResults || surveyResults.length === 0
                   ? '퍼스널컬러에 대해 궁금한 것을 자유롭게 말씀해주세요...'
@@ -1367,7 +1509,11 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
             <Button
               type="primary"
               icon={<SendOutlined />}
-              onClick={handleSendMessage}
+              onClick={() => {
+                // analyze 중복 호출 방지: 로딩 중이면 클릭 무시
+                if (isTyping || isAnalyzing || isDiagnosing) return;
+                handleSendMessage();
+              }}
               disabled={!inputMessage.trim() || isTyping || isAnalyzing || isDiagnosing}
               className="h-auto"
             >

@@ -16,6 +16,7 @@
     "pre-commit": "lint-staged"
   },
   "dependencies": {
+    "@lottiefiles/react-lottie-player": "^3.6.0",
     "@tanstack/react-query": "^5.90.3",
     "@tanstack/react-query-devtools": "^5.90.2",
     "@types/react-router-dom": "^5.3.3",

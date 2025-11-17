@@ -62,6 +62,7 @@ class ChatMessage(Base):
     history_id = Column(Integer, ForeignKey("chat_history.id"), nullable=False)
     role = Column(String(10))  # "user" / "ai"
     text = Column(Text, nullable=False)
+    emotion = Column(String(20), nullable=True)  # 감정 정보
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     history = relationship("ChatHistory", back_populates="messages")
     ai_feedback = relationship("AIFeedback", back_populates="message", uselist=False)

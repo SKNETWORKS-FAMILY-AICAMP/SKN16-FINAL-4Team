@@ -155,12 +155,14 @@ class ChatResModel(BaseModel):
     sub_tone: str
     description: str
     recommendations: List[str]
+    emotion: str
 
 class ChatItemModel(BaseModel):
     question_id: int
     question: str
     answer: str
     chat_res: ChatResModel
+    emotion: str
 
 class ChatbotRequest(BaseModel):
     history_id: Optional[int] = 0
