@@ -1128,6 +1128,7 @@ function isDiagnosisBubble(msg?: any): boolean {
         >
           {/* 메시지 목록 */}
           <div
+            ref={messagesContainerRef}
             className="flex-1 overflow-y-auto mb-3 p-3 bg-gray-50 rounded-lg"
             style={{ minHeight: '400px', paddingTop: '30px' }}
           >
