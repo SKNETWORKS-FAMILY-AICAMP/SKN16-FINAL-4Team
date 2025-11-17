@@ -17,50 +17,57 @@ interface AnimatedEmojiProps {
   size?: number;
 }
 
-const bounceKeyframes = `
-  @keyframes emoji-appear {
-    0% { transform: scale(1.5) translate(-12%, -12%) rotate(0deg); }
-    50% { transform: scale(1.12) translate(-3%, -3%) rotate(-2deg); }
-    70% { transform: scale(1.04) translate(-1%, -1%) rotate(1deg); }
-    85% { transform: scale(1.01) translate(0, 0) rotate(0deg); }
-    100% { transform: scale(1) translate(0, 0) rotate(0deg); }
-  }
-  @keyframes emoji-interactive {
-    0% { transform: scale(1) translate(0, 0) rotate(0deg); }
-    25% { transform: scale(1.13) translate(-3%, -3%) rotate(-2deg); }
-    50% { transform: scale(1.22) translate(-6%, -6%) rotate(2deg); }
-    75% { transform: scale(1.08) translate(-2%, -2%) rotate(-1deg); }
-    100% { transform: scale(1) translate(0, 0) rotate(0deg); }
-  }
-`;
-
-if (typeof window !== 'undefined' && !document.getElementById('emoji-bounce-style')) {
-  const style = document.createElement('style');
-  style.id = 'emoji-bounce-style';
-  style.innerHTML = bounceKeyframes;
-  document.head.appendChild(style);
-}
-
 const AnimatedEmoji: React.FC<AnimatedEmojiProps> = ({ emotion, size = 48 }) => {
   const lottieSrc = emotionToLottie[emotion] || emotionToLottie['neutral'];
-  const [isInteractive, setIsInteractive] = useState(true);
-  const [isAppeared, setIsAppeared] = useState(true);
-  const timeoutRef = useRef<number | null>(null);
+  // stages: 'enter' -> 'hold' -> 'rest'
+  const [stage, setStage] = useState<'enter' | 'hold' | 'rest'>('enter');
+  const [isInteractive, setIsInteractive] = useState(false);
+  const timeouts = useRef<number[]>([]);
 
   useEffect(() => {
-    setIsAppeared(true);
-    const t = setTimeout(() => {
-        setIsAppeared(false)
-        setIsInteractive(false);
-    }, 700);
-    return () => clearTimeout(t);
+    // reset to enter whenever emotion changes
+    setStage('enter');
+    setIsInteractive(false);
+    // enter -> after 600ms -> hold -> after 2000ms -> rest
+    const t1 = window.setTimeout(() => setStage('hold'), 600);
+    const t2 = window.setTimeout(() => setStage('rest'), 600 + 2000);
+    timeouts.current.push(t1 as unknown as number, t2 as unknown as number);
+
+    return () => {
+      timeouts.current.forEach(id => window.clearTimeout(id));
+      timeouts.current = [];
+    };
   }, [emotion]);
 
   const handleInteractive = () => {
     setIsInteractive(true);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => setIsInteractive(false), 700);
+    // clear any existing interactive timeout
+    timeouts.current.forEach(id => window.clearTimeout(id));
+    timeouts.current = [];
+    const t = window.setTimeout(() => setIsInteractive(false), 700);
+    timeouts.current.push(t as unknown as number);
   };
+
+  // compute transform & transition based on stage / interactive
+  let transform = 'scale(1) translate(0,0) rotate(0deg)';
+  let transition = 'transform 600ms cubic-bezier(.42,0,.58,1)';
+
+  if (stage === 'enter') {
+    transform = 'scale(1.6) translate(-14%, -14%) rotate(0deg)';
+    transition = 'transform 600ms cubic-bezier(.42,0,.58,1)';
+  } else if (stage === 'hold') {
+    transform = 'scale(1.18) translate(0,0) rotate(0deg)';
+    transition = 'transform 400ms cubic-bezier(.42,0,.58,1)';
+  } else if (stage === 'rest') {
+    transform = 'scale(1) translate(0,0) rotate(0deg)';
+    transition = 'transform 600ms cubic-bezier(.42,0,.58,1)';
+  }
+
+  if (isInteractive) {
+    // make interactive feel snappy and bouncy
+    transform = 'scale(1.22) translate(-6%, -6%) rotate(2deg)';
+    transition = 'transform 350ms cubic-bezier(.2, .8, .2, 1)';
+  }
 
   return (
     <div
@@ -70,12 +77,8 @@ const AnimatedEmoji: React.FC<AnimatedEmojiProps> = ({ emotion, size = 48 }) => 
         display: 'inline-block',
         cursor: 'pointer',
         transformOrigin: 'bottom left',
-        animation:
-          isInteractive
-            ? 'emoji-interactive 0.9s cubic-bezier(.42,0,.58,1)'
-            : isAppeared
-            ? 'emoji-appear 0.9s cubic-bezier(.42,0,.58,1)'
-            : undefined,
+        transform,
+        transition,
       }}
       onClick={handleInteractive}
     >

@@ -112,10 +112,13 @@ const ChatbotPage: React.FC = () => {
       currentLocation.pathname !== nextLocation.pathname
   );
 
-  // 메시지 스크롤 자동 이동
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+
+  // 메시지, 타이핑, 딜레이 상태 변경 시 스크롤 자동 이동
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, isTyping, delayedDescriptions]);
 
   useEffect(() => {
     if (analyzeError) {
@@ -136,13 +139,6 @@ const ChatbotPage: React.FC = () => {
       }
     }
   }, [analyzeError, diagnoseError]);
-
-  // 메시지 변경 시 스크롤 이동 (초기 환영 메시지일 때는 스크롤하지 않음)
-  useEffect(() => {
-    if (messages.length > 1) {
-      scrollToBottom();
-    }
-  }, [messages]);
 
   // React Router 네비게이션 차단 시 피드백 모달 표시
   useEffect(() => {
@@ -1116,7 +1112,7 @@ function isDiagnosisBubble(msg?: any): boolean {
             className="flex-1 overflow-y-auto mb-3 p-3 bg-gray-50 rounded-lg"
             style={{ minHeight: '400px' }}
           >
-            {messages.map(msg => (
+            {messages.map((msg, idx) => (
               <div
                 key={msg.id}
                 className={`flex mb-3 ${msg.isUser ? 'justify-end' : 'justify-start'}`}
@@ -1155,7 +1151,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                   <div className="flex flex-col gap-1">
                     {/* 이모티콘 애니메이션 버블 (bot 메시지에만, 먼저 표시) */}
                     {/* 퍼스널컬러 진단 챗봇 버블(분석/추천/진단 등)에는 이모티콘 미표시 */}
-                    {!msg.isUser && msg.chatRes?.emotion && !isDiagnosisBubble(msg) && (
+                    {!msg.isUser && (idx === 0 || (msg.chatRes?.emotion && !isDiagnosisBubble(msg))) && (
                       <div
                         className="relative px-4 py-2 rounded-lg bg-white border border-gray-200 mb-1 flex items-center chatbot-balloon"
                         style={{ maxWidth: 'fit-content' }}
@@ -1184,7 +1180,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                             zIndex: 0,
                           }}
                         />
-                        <AnimatedEmoji emotion={msg.chatRes.emotion} size={40} />
+                        <AnimatedEmoji emotion={msg?.chatRes?.emotion ?? "neutral"} size={40} />
                       </div>
                     )}
                     {/* description/텍스트 버블 (딜레이 후 표시) */}
