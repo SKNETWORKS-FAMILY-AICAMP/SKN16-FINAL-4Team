@@ -148,3 +148,6 @@ datasets/
 # Others
 *.swp
 *.swo
+
+#copilot coding agents
+.github/copilot-instructions.md
