@@ -23,7 +23,7 @@ IMMUTABLE_KNOWLEDGE_FILES = {
 BACKUP_DIR = Path(__file__).parent.parent / "data" / "RAG" / "immutable"
 
 # 모델 설정
-MODEL_NAME = "models/gemini-2.5-pro"
+MODEL_NAME = "gemini-2.5-flash"
 
 # RAG 설정
 DEFAULT_TEMPERATURE = 0.3
