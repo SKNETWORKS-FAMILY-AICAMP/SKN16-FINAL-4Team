@@ -60,6 +60,12 @@ class ChatbotApi {
     return response.data;
   }
 
+  /** 서버가 생성한 환영 메시지 가져오기 */
+  async getWelcome(): Promise<{ message: string; influencer?: string; has_previous: boolean; previous_summary?: string }>{
+    const response = await apiClient.get(`/chatbot/welcome`);
+    return response.data;
+  }
+
   /**
    * 채팅 세션 종료
    */
