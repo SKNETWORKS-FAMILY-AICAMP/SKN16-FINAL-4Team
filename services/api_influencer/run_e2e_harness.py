@@ -31,7 +31,7 @@ def fake_create_emotion(*args, **kwargs):
 
 def fake_create_influencer(*args, **kwargs):
     # return a JSON with styled_text
-    styled = {"styled_text": "안녕하세요 귀욤이들! 사용자는 차분하고 따뜻한 분위기예요. 부드러운 색상 추천드려요. 도움 되셨나요?"}
+    styled = {"styled_text": "안녕하세요 귀욤이님! 사용자는 차분하고 따뜻한 분위기예요. 부드러운 색상 추천드려요. 도움 되셨나요?"}
     return DummyResp(json.dumps(styled, ensure_ascii=False))
 
 

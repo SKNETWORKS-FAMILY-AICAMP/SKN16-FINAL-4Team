@@ -13,6 +13,7 @@ import utils.shared as shared
 class InfluencerRequest(BaseModel):
     user_text: str
     influencer_name: Optional[str] = None
+    user_nickname: Optional[str] = None
     conversation_history: Optional[List[Dict[str, Any]]] = None
     emotion_meta: Optional[Dict[str, Any]] = None
 
@@ -66,10 +67,10 @@ def load_influencers_from_excel(path: str):
     except Exception:
         # fallback static influencers
         return [
-            {'name': '원준', 'short_description': '친근하면서도 솔직한 리뷰', 'example_sentences': ['안녕하세요 귀욤이들! 원준입니다!', '정말 이건 추천해요.']},
-            {'name': '세현', 'short_description': '자연스러운 데일리 메이크업 전문', 'example_sentences': ['안녕하세요 포드래곤! 세현이예요!', '살짝만 발라도 예뻐요.']},
-            {'name': '종민', 'short_description': '가성비 중심의 실용적 리뷰', 'example_sentences': ['안녕하세요 트루드래곤들! 종민입니다!', '가성비 좋고 실용적이에요.']},
-            {'name': '혜경', 'short_description': '종합 뷰티 가이드', 'example_sentences': ['안녕하세요 뷰티패밀리들! 혜경입니다!', '상황에 맞게 추천드려요.']},
+            {'name': '원준', 'short_description': '친근하면서도 솔직한 리뷰', 'example_sentences': ['안녕하세요 귀욤이님! 원준입니다!', '정말 이건 추천해요.']},
+            {'name': '세현', 'short_description': '자연스러운 데일리 메이크업 전문', 'example_sentences': ['안녕하세요 포드래곤님! 세현이예요!', '살짝만 발라도 예뻐요.']},
+            {'name': '종민', 'short_description': '가성비 중심의 실용적 리뷰', 'example_sentences': ['안녕하세요 트루드래곤님! 종민입니다!', '가성비 좋고 실용적이에요.']},
+            {'name': '혜경', 'short_description': '종합 뷰티 가이드', 'example_sentences': ['안녕하세요 뷰티패밀리님! 혜경입니다!', '상황에 맞게 추천드려요.']},
         ]
 
 
@@ -116,7 +117,21 @@ def apply_influencer_style(payload: InfluencerRequest):
     if payload.emotion_meta:
         emotion_block = json.dumps(payload.emotion_meta, ensure_ascii=False)
 
-    user_content = f"사용자 요청: {payload.user_text}\n감정 메타: {emotion_block}\n대화 맥락:\n"
+    # Determine salutation: use provided user_nickname (append '님'), otherwise use influencer subscriber default
+    salutation = None
+    try:
+        profile = YOUTUBER_PROFILES.get(influencer['name'], {})
+        subs = profile.get('subscriber_name') or []
+        default_sub = subs[0] if isinstance(subs, (list, tuple)) and len(subs) > 0 else '여러분'
+    except Exception:
+        default_sub = '여러분'
+
+    if getattr(payload, 'user_nickname', None):
+        salutation = f"{payload.user_nickname}님"
+    else:
+        salutation = default_sub
+
+    user_content = f"호칭: {salutation}\n사용자 요청: {payload.user_text}\n감정 메타: {emotion_block}\n대화 맥락:\n"
     if payload.conversation_history:
         user_content += '\n'.join([m.get('text') or m.get('message') or '' for m in payload.conversation_history[-10:]])
 
@@ -168,11 +183,11 @@ def apply_influencer_style(payload: InfluencerRequest):
 # --- 추가: 강화된 유튜버 프로필 및 시스템 프롬프트 (원준, 세현, 종민, 혜경) ---
 YOUTUBER_PROFILES = {
     '원준': {
-        'greeting': '안녕하세요 귀욤이들! 원준입니다!',
+        'greeting': '안녕하세요 귀욤이님! 원준입니다!',
         'emoji': '🌟',
         'color': '#FFE4E6',
         'icon': '👑',
-        'subscriber_name': ['뷰티러버', '여러분'],
+        'subscriber_name': ['뷰티러버', '사용자'],
         'signature_expressions': ['정말', '솔직히', '완전', '개인적으로', '진짜'],
         'closing': '도움이 되셨나요? 더 궁금한 게 있으시면 언제든 물어보세요!',
         'characteristics': '친근하면서도 솔직한 평가, 초보자도 이해하기 쉬운 전문 리뷰',
@@ -181,11 +196,11 @@ YOUTUBER_PROFILES = {
         'strengths': ['friendliness', 'honesty', 'beginner_friendly']
     },
     '세현': {
-        'greeting': '안녕하세요 포드래곤! 세현이예요!',
+        'greeting': '안녕하세요 포드래곤님! 세현이예요!',
         'emoji': '🌿',
         'color': '#E8F5E8',
         'icon': '🍃',
-        'subscriber_name': ['포드래곤'],
+        'subscriber_name': ['포드래곤님'],
         'signature_expressions': ['살짝', '자연스럽게', '완전', '너무', '좀'],
         'closing': '자연스러운 아름다움으로 더 빛나세요! 구독 좋아요!',
         'characteristics': '자연스럽고 친근한 설명, 피부와 데일리 메이크업 전문',
@@ -194,24 +209,24 @@ YOUTUBER_PROFILES = {
         'strengths': ['naturalness', 'friendliness', 'skin_focus']
     },
     '종민': {
-        'greeting': '안녕하세요 트루드래곤들! 종민입니다!',
+        'greeting': '안녕하세요 트루드래곤님! 종민입니다!',
         'emoji': '💰',
         'color': '#FFF2CC',
         'icon': '💎',
-        'subscriber_name': ['트루드래곤들', '가성비러버'],
+        'subscriber_name': ['트루드래곤님', '가성비러버'],
         'signature_expressions': ['솔직히', '개인적으로', '살짝', '가성비', '추천'],
-        'closing': '가성비 최고 제품들로 예뻐지세요! 트루드래곤들 감사해요!',
+        'closing': '가성비 최고 제품들로 예뻐지세요! 트루드래곤님 감사해요!',
         'characteristics': '솔직한 제품 분석과 자연스러운 사용법, 가성비 중심 리뷰',
         'speaking_style': '솔직하면서 편안한 톤, 실용적인 조언',
         'expertise': '가성비 제품 분석 + 자연스러운 활용법',
         'strengths': ['product_analysis', 'cost_effectiveness', 'naturalness']
     },
     '혜경': {
-        'greeting': '안녕하세요 뷰티패밀리들! 혜경입니다!',
+        'greeting': '안녕하세요 뷰티패밀리님! 혜경입니다!',
         'emoji': '🎨',
         'color': '#F0E6FF',
         'icon': '🎪',
-        'subscriber_name': ['뷰티패밀리', '여러분'],
+        'subscriber_name': ['뷰티패밀리님', '사용자'],
         'signature_expressions': ['정말', '솔직히', '자연스럽게', '완전', '개인적으로'],
         'closing': '뷰티패밀리 모두 예뻐지세요! 구독 좋아요 감사합니다!',
         'characteristics': '친근하고 솔직하며 자연스러운 종합 뷰티 가이드',
@@ -225,7 +240,7 @@ SYSTEM_PROMPTS = {
     '원준': """당신은 가상 인플루언서 '원준'의 메이크업 전문 어시스턴트입니다.
 중요: 오직 메이크업, 뷰티, 스킨케어 관련 질문에만 답변하세요. 다른 주제는 절대 답변하지 마세요.
 반드시 지켜야 할 규칙:
-1. 인사말: 반드시 "안녕하세요 귀욤이들! 원준입니다!"로 시작하세요
+1. 인사말: 반드시 "안녕하세요 귀욤이님! 원준입니다!"로 시작하세요
 2. 친근함(정말, 완전)과 솔직함(솔직히, 개인적으로)을 조화롭게 사용하세요
 3. 초보자도 이해하기 쉬운 단계별 설명을 제공하세요
 4. 마무리는 "도움이 되셨나요? 더 궁금한 게 있으시면 언제든 물어보세요!"로 끝내세요
@@ -233,7 +248,7 @@ SYSTEM_PROMPTS = {
     '세현': """당신은 가상 인플루언서 '세현'의 메이크업 전문 어시스턴트입니다.
 중요: 오직 메이크업, 뷰티, 스킨케어 관련 질문에만 답변하세요.
 반드시 지켜야 할 규칙:
-1. 인사말: 반드시 "안녕하세요 포드래곤! 세현이예요!"로 시작하세요
+1. 인사말: 반드시 "안녕하세요 포드래곤님! 세현이예요!"로 시작하세요
 2. 자연스럽고 차분한 톤 유지(살짝, 자연스럽게)
 3. 데일리 메이크업과 피부 케어 중심으로 설명하세요
 4. 마무리는 "자연스러운 아름다움으로 더 빛나세요! 구독 좋아요!"로 끝내세요
@@ -241,15 +256,15 @@ SYSTEM_PROMPTS = {
     '종민': """당신은 가상 인플루언서 '종민'의 메이크업 전문 어시스턴트입니다.
 중요: 오직 메이크업, 뷰티, 스킨케어 관련 질문에만 답변하세요.
 반드시 지켜야 할 규칙:
-1. 인사말: 반드시 "안녕하세요 트루드래곤들! 종민입니다!"로 시작하세요
+1. 인사말: 반드시 "안녕하세요 트루드래곤님! 종민입니다!"로 시작하세요
 2. 솔직하고 실용적인 가성비 중심의 설명 제공
 3. 제품의 장단점과 가격대별 추천 포함
-4. 마무리는 "가성비 최고 제품들로 예뻐지세요! 트루드래곤들 감사해요!"로 끝내세요
+4. 마무리는 "가성비 최고 제품들로 예뻐지세요! 트루드래곤님 감사해요!"로 끝내세요
 """,
     '혜경': """당신은 가상 인플루언서 '혜경'의 메이크업 전문 어시스턴트입니다.
 중요: 오직 메이크업, 뷰티, 스킨케어 관련 질문에만 답변하세요.
 반드시 지켜야 할 규칙:
-1. 인사말: 반드시 "안녕하세요 뷰티패밀리들! 혜경입니다!"로 시작하세요
+1. 인사말: 반드시 "안녕하세요 뷰티패밀리님! 혜경입니다!"로 시작하세요
 2. 친근함과 솔직함, 자연스러움을 균형있게 사용하세요
 3. 초보자 가이드 + 제품 리뷰 + 자연스러운 메이크업을 포함하세요
 4. 마무리는 "뷰티패밀리 모두 예뻐지세요! 구독 좋아요 감사합니다!"로 끝내세요
@@ -260,7 +275,10 @@ SYSTEM_PROMPTS = {
 # Endpoint: api_emotion의 출력(JSON)을 받아 해당 인플루언서 말투로 재작성
 class EmotionChainRequest(BaseModel):
     emotion_result: Dict[str, Any]
+    # allow passing color_result so influencer can weave color recommendations
+    color_result: Optional[Dict[str, Any]] = None
     influencer_name: Optional[str] = None
+    user_nickname: Optional[str] = None
 
 
 class EmotionChainResponse(BaseModel):
@@ -279,9 +297,27 @@ def style_emotion_chain(payload: EmotionChainRequest):
 
     system_prompt = SYSTEM_PROMPTS.get(influencer, '')
 
-    # Build user content: include the emotion JSON and a request to rewrite in influencer tone
+    # Build user content: include the emotion JSON, optional color JSON, and a request to rewrite in influencer tone
     emotion_json = json.dumps(payload.emotion_result, ensure_ascii=False)
-    user_content = f"다음은 감정 분석 결과입니다:\n{emotion_json}\n\n위 내용을 {influencer}의 말투로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+    color_json = json.dumps(payload.color_result, ensure_ascii=False) if payload.color_result else ''
+
+    user_content = f"다음은 감정 분석 결과입니다:\n{emotion_json}\n"
+    if color_json:
+        user_content += f"\n참고 퍼스널컬러 결과:\n{color_json}\n"
+    # Determine salutation for emotion chain: prefer provided nickname, otherwise influencer subscriber default
+    salutation = None
+    try:
+        subs = YOUTUBER_PROFILES.get(influencer, {}).get('subscriber_name') or []
+        default_sub = subs[0] if isinstance(subs, (list, tuple)) and len(subs) > 0 else '여러분'
+    except Exception:
+        default_sub = '여러분'
+
+    if getattr(payload, 'user_nickname', None):
+        salutation = f"{payload.user_nickname}님"
+    else:
+        salutation = default_sub
+
+    user_content += f"\n(호칭: {salutation})\n위 내용을 {influencer}의 말투로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
 
     try:
         resp = shared.client.chat.completions.create(
