@@ -6,6 +6,8 @@ from services.api_emotion import main as api_emotion
 from services.api_color import main as api_color
 from services.api_influencer import main as api_influencer
 import asyncio
+import functools
+import threading
 
 app = FastAPI()
 
@@ -41,7 +43,31 @@ async def analyze(payload: OrchestratorRequest):
                 user_text=payload.user_text,
                 conversation_history=payload.conversation_history,
             )
-            emo_resp = await api_emotion.generate_emotion(emo_payload)
+            # Support both coroutine functions and sync functions (tests may patch either)
+            if asyncio.iscoroutinefunction(api_emotion.generate_emotion):
+                emo_resp = await api_emotion.generate_emotion(emo_payload)
+            else:
+                # Try calling sync implementation directly first. If it fails due to "event loop is already running",
+                # run it in a separate thread with its own event loop so sync helpers using run_until_complete work.
+                try:
+                    emo_resp = api_emotion.generate_emotion(emo_payload)
+                except RuntimeError as e:
+                    msg = str(e)
+                    if "already running" in msg:
+                        def _invoke_in_thread():
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            try:
+                                return api_emotion.generate_emotion(emo_payload)
+                            finally:
+                                try:
+                                    loop.close()
+                                except Exception:
+                                    pass
+                        loop = asyncio.get_running_loop()
+                        emo_resp = await loop.run_in_executor(None, _invoke_in_thread)
+                    else:
+                        raise
             return emo_resp
         except Exception as e:
             return {"error": str(e)}
@@ -52,7 +78,28 @@ async def analyze(payload: OrchestratorRequest):
                 user_text=payload.user_text,
                 conversation_history=payload.conversation_history,
             )
-            color_resp = await api_color.analyze_color(color_payload)
+            if asyncio.iscoroutinefunction(api_color.analyze_color):
+                color_resp = await api_color.analyze_color(color_payload)
+            else:
+                try:
+                    color_resp = api_color.analyze_color(color_payload)
+                except RuntimeError as e:
+                    msg = str(e)
+                    if "already running" in msg:
+                        def _invoke_in_thread_color():
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            try:
+                                return api_color.analyze_color(color_payload)
+                            finally:
+                                try:
+                                    loop.close()
+                                except Exception:
+                                    pass
+                        loop = asyncio.get_running_loop()
+                        color_resp = await loop.run_in_executor(None, _invoke_in_thread_color)
+                    else:
+                        raise
             return color_resp
         except Exception as e:
             return {"error": str(e)}
@@ -82,6 +129,46 @@ async def analyze(payload: OrchestratorRequest):
     if color_res_raw is not None:
         color_result = color_res_raw.dict() if hasattr(color_res_raw, "dict") else color_res_raw
         results["color"] = color_result
+
+    # Normalize common key aliases for compatibility with tests / upstream callers
+    try:
+        if results.get("emotion"):
+            e = results["emotion"]
+            # if the emotion response contains nested 'raw' or other formats, try to flatten minimal keys
+            if isinstance(e, dict):
+                # map 'primary' -> 'primary_tone' and vice versa
+                if "primary" in e and "primary_tone" not in e:
+                    e["primary_tone"] = e.get("primary")
+                if "primary_tone" in e and "primary" not in e:
+                    e["primary"] = e.get("primary_tone")
+                if "sub" in e and "sub_tone" not in e:
+                    e["sub_tone"] = e.get("sub")
+                if "sub_tone" in e and "sub" not in e:
+                    e["sub"] = e.get("sub_tone")
+
+        if results.get("color"):
+            c = results["color"]
+            # color_result might be a ColorResponse dict with detected_color_hints
+            if isinstance(c, dict):
+                hints = c.get("detected_color_hints") or c
+                if isinstance(hints, dict):
+                    if "primary" in hints and "primary_tone" not in hints:
+                        hints["primary_tone"] = hints.get("primary")
+                    if "primary_tone" in hints and "primary" not in hints:
+                        hints["primary"] = hints.get("primary_tone")
+                    if "sub" in hints and "sub_tone" not in hints:
+                        hints["sub_tone"] = hints.get("sub")
+                    if "sub_tone" in hints and "sub" not in hints:
+                        hints["sub"] = hints.get("sub_tone")
+                    # ensure detected_color_hints preserved
+                    if c.get("detected_color_hints") is None:
+                        c["detected_color_hints"] = hints
+                    else:
+                        c["detected_color_hints"] = hints
+                    results["color"] = c
+    except Exception:
+        # best-effort normalization; don't fail the whole endpoint if normalization fails
+        pass
 
     # Now run influencer styling using both results (influencer should be last)
     influencer_result = None

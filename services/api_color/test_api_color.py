@@ -8,6 +8,7 @@ client = TestClient(app)
 
 def test_color_analyze_returns_hints(monkeypatch):
     # Provide deterministic hint
+    # helper returns a dict with 'primary' (legacy); service should map to canonical 'primary_tone'
     monkeypatch.setattr(shared, "analyze_conversation_for_color_tone", lambda text: {"primary": "warm", "notes": "mocked"})
 
     payload = {
@@ -18,5 +19,6 @@ def test_color_analyze_returns_hints(monkeypatch):
     resp = client.post("/api/color/analyze", json=payload)
     assert resp.status_code == 200, resp.text
     data = resp.json()
-    assert data["detected_color_hints"]["primary"] == "warm"
+    # canonical key is 'primary_tone'
+    assert data["detected_color_hints"]["primary_tone"] == "warm"
     assert data["notes"] == "성공"
