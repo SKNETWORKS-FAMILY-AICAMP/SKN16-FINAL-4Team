@@ -20,6 +20,21 @@ from schemas import (
 )
 from routers.feedback_router import generate_ai_feedbacks
 from utils.shared import top_k_chunks, build_rag_index, analyze_conversation_for_color_tone
+import random
+
+# Optional: load influencer personas from the influencer service if available
+try:
+    import services.api_influencer.main as influencer_service
+except Exception:
+    influencer_service = None
+try:
+    import services.api_color.main as api_color_service
+except Exception:
+    api_color_service = None
+try:
+    import services.orchestrator.main as orchestrator_service
+except Exception:
+    orchestrator_service = None
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -252,10 +267,33 @@ async def save_chatbot_analysis_result(
                 except:
                     conversation_text += f"AI: {msg.text}\n"
         
-        # 대화 분석을 통한 퍼스널 컬러 진단
-        primary_tone, sub_tone = analyze_conversation_for_color_tone(
-            conversation_text, ""  # 현재 질문은 빈 문자열로 처리 (전체 대화 기반 분석)
-        )
+        # 먼저 color service를 호출해 퍼스널컬러 기반 톤을 얻어본다 (우선)
+        primary_tone = None
+        sub_tone = None
+        try:
+            if api_color_service:
+                color_payload = api_color_service.ColorRequest(
+                    user_text=conversation_text,
+                    conversation_history=None,
+                )
+                color_resp = await api_color_service.analyze_color(color_payload)
+                # color_resp may be a pydantic model
+                hints = None
+                if hasattr(color_resp, 'detected_color_hints'):
+                    hints = color_resp.detected_color_hints
+                elif isinstance(color_resp, dict):
+                    hints = color_resp.get('detected_color_hints')
+                if isinstance(hints, dict):
+                    primary_tone = hints.get('primary_tone')
+                    sub_tone = hints.get('sub_tone')
+        except Exception as e:
+            print(f"⚠️ color service call failed, falling back to heuristic: {e}")
+
+        # 컬러 기반 톤이 없으면 기존 대화 기반 휴리스틱으로 보완
+        if not primary_tone or not sub_tone:
+            primary_tone, sub_tone = analyze_conversation_for_color_tone(
+                conversation_text, ""  # 현재 질문은 빈 문자열로 처리 (전체 대화 기반 분석)
+            )
         
         print(f"🎨 AI 분석 결과: {primary_tone}톤 {sub_tone}")
         
@@ -460,7 +498,7 @@ def detect_emotion(text: str) -> str:
         return "wink"
 
 @router.post("/analyze", response_model=ChatbotHistoryResponse)
-def analyze(
+async def analyze(
     request: ChatbotRequest,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -506,114 +544,105 @@ def analyze(
     # 사용자 질문 + 대화 히스토리 결합
     combined_query = f"현재 질문: {request.question}\n\n이전 대화 맥락:\n{conversation_history}"
     
-    # RAG 검색
-    fixed_chunks = top_k_chunks(combined_query, fixed_index, client, k=3)
-    trend_chunks = top_k_chunks(combined_query, trend_index, client, k=3)
-    # Fine-tuned 감정 모델용 시스템 프롬프트 (퍼스널컬러 전문가 버전)
-        # 사용자 닉네임을 description에 반영하도록 프롬프트 수정
-    prompt_system = f"""당신은 경험이 풍부한 퍼스널컬러 전문가입니다. 다음 가이드라인을 따라 상담해주세요:
+    # Use the local orchestrator service to run color+emotion -> influencer chain
+    if not orchestrator_service:
+        raise HTTPException(status_code=500, detail="Orchestrator service not available in this runtime")
 
-🎨 전문성과 친근함의 조화:
-- 퍼스널컬러 전문 지식을 바탕으로 정확한 분석 제공
-- 어려운 전문 용어는 쉽게 풀어서 설명
-- 고객({user_display_name})이 편안하게 질문할 수 있도록 친근하고 따뜻한 톤 유지
-
-� 감정 공감 기반 상담:
-- 고객({user_display_name})의 고민과 니즈를 세심하게 파악 ("색깔 때문에 고민이 많으셨겠어요")
-- 자신감 부족이나 스타일 고민에 공감하며 위로
-- 긍정적인 변화를 위한 격려와 응원 메시지
-
-🌟 실용적이고 개인화된 조언:
-- 고객({user_display_name})의 라이프스타일, 직업, 선호도를 종합적으로 고려
-- 구체적이고 실행 가능한 컬러 추천
-- 예산과 상황에 맞는 현실적인 조언
-
-💬 자연스러운 대화 스타일:
-- 상담실에서 직접 대화하는 듯한 자연스러움
-- "어떠세요?", "~해보시는 건 어떨까요?" 같은 상담 톤
-- 고객({user_display_name})이 궁금해할 점을 먼저 예상해서 설명
-
-당신의 뛰어난 감정 이해 능력을 활용하여, 고객({user_display_name})이 컬러에 대한 자신감을 갖고 아름다워질 수 있도록 도와주세요."""
-    prompt_user = f"""대화 맥락:\n{combined_query}\n\n퍼스널컬러 전문 지식:\n{chr(10).join(fixed_chunks)}\n\n최신 트렌드 정보:\n{chr(10).join(trend_chunks)}\n\n다음 가이드라인으로 상담해주세요:
-1. 고객({user_display_name})의 질문에 대해 전문적이면서도 친근하게 응답
-2. 필요시 퍼스널컬러 진단을 위한 추가 질문 (피부톤, 선호 스타일, 라이프스타일 등)
-3. 대화 흐름에 맞는 자연스러운 컬러 추천
-4. 실용적이고 구체적인 조언 제공
-
-JSON 형식으로 응답해주세요:
-{{
-    "primary_tone": "웜" 또는 "쿨",
-    "sub_tone": "봄" 또는 "여름" 또는 "가을" 또는 "겨울",
-    "description": "상세한 설명 텍스트 (자연스러운 대화체, 고객({user_display_name})을 직접 호명하며 안내)",
-    "recommendations": ["구체적인 추천사항1", "구체적인 추천사항2", "구체적인 추천사항3"]
-}}
-
-주의: recommendations는 반드시 문자열 배열이어야 합니다.
-"""
-    messages = [{"role": "system", "content": prompt_system}, {"role": "user", "content": prompt_user}]
-    
-    # 모델 선택 함수 사용
-    print(f"🤖 Using model: {get_model_to_use()[:30]}***")  # 디버깅용 로그
-    try:
-        resp = client.chat.completions.create(
-            model=get_model_to_use(),
-            messages=messages,
-            temperature=0.8,  # 감정 모델에서는 좀 더 자연스러운 응답을 위해 temperature 상향
-            max_tokens=600
-        )
-    except Exception as e:
-        print(f"❌ OpenAI API 호출 실패: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"AI 서비스 일시적 오류: {str(e)}")
-    content = resp.choices[0].message.content
-    start, end = content.find("{"), content.rfind("}")
-    
-    # 대화를 통한 퍼스널컬러 진단 (유틸리티 함수 사용)
-    primary_tone, sub_tone = analyze_conversation_for_color_tone(conversation_history, request.question)
-    
-    # JSON 파싱 시도
-    if start != -1 and end != -1:
+    # Build a structured conversation history for the orchestrator
+    convo_list = []
+    for msg in prev_messages:
         try:
-            data = json.loads(content[start:end+1])
-            # 대화 분석 결과로 톤 정보 설정
-            data["primary_tone"] = primary_tone
-            data["sub_tone"] = sub_tone
-        except json.JSONDecodeError:
-            # JSON 파싱 실패 시 fallback
-            data = {
-                "primary_tone": primary_tone,
-                "sub_tone": sub_tone,
-                "description": content.strip(),
-                "recommendations": ["더 자세한 정보를 위해 피부톤이나 선호하는 색깔에 대해 말씀해주세요.", "평소 어떤 스타일을 좋아하시는지 알려주시면 더 정확한 분석을 도와드릴게요.", "궁금한 컬러나 스타일에 대해 언제든 물어보세요!"]
-            }
-    else:
-        # JSON 형식이 전혀 없는 경우 fallback
-        data = {
-            "primary_tone": primary_tone,
-            "sub_tone": sub_tone, 
-            "description": content.strip() if content.strip() else "안녕하세요! 퍼스널컬러 전문가입니다. 어떤 컬러나 스타일에 대해 궁금한 점이 있으신가요? 피부톤, 좋아하는 색깔, 평소 스타일 등 어떤 것이든 편하게 말씀해주세요!",
-            "recommendations": ["피부톤이나 혈관 색깔에 대해 알려주세요.", "평소 어떤 색깔 옷을 즐겨 입으시는지 말씀해주세요.", "메이크업이나 헤어 컬러 관련해서도 도움드릴 수 있어요."]
-        }
-    # 감정 이모티콘 분석 및 추가
+            if msg.role == 'user':
+                convo_list.append({"role": "user", "text": msg.text})
+            else:
+                # ai messages may contain JSON with a description field
+                try:
+                    ai_data = json.loads(msg.text)
+                    convo_list.append({"role": "ai", "text": ai_data.get("description", msg.text)})
+                except Exception:
+                    convo_list.append({"role": "ai", "text": msg.text})
+        except Exception:
+            continue
+
+    try:
+        orch_payload = orchestrator_service.OrchestratorRequest(
+            user_text=request.question,
+            conversation_history=convo_list,
+            user_nickname=getattr(current_user, 'nickname', None),
+            use_color=True,
+            use_emotion=True,
+        )
+        orch_resp = await orchestrator_service.analyze(orch_payload)
+    except Exception as e:
+        print(f"❌ Orchestrator error: {e}")
+        raise HTTPException(status_code=500, detail=f"Orchestrator failed: {str(e)}")
+
+    # Extract results
+    emotion_res = orch_resp.emotion or {}
+    color_res = orch_resp.color or {}
+
+    # Prefer influencer-styled text when available
+    influencer_info = None
+    if isinstance(emotion_res, dict):
+        influencer_info = emotion_res.get("influencer_styled") or emotion_res.get("influencer")
+
+    # Compose the data payload to store and return (keep structure compatible with frontend)
+    data = {}
+    # primary/sub tones: prefer personal-color hints from color service, fallback to emotion
+    primary = None
+    sub = None
+    if isinstance(color_res, dict):
+        detected = color_res.get("detected_color_hints") or {}
+        primary = detected.get("primary_tone")
+        sub = detected.get("sub_tone")
+    if not primary and isinstance(emotion_res, dict):
+        primary = emotion_res.get("primary_tone")
+    if not sub and isinstance(emotion_res, dict):
+        sub = emotion_res.get("sub_tone")
+
+    data["primary_tone"] = primary or ""
+    data["sub_tone"] = sub or ""
+
+    # description: influencer styled text > emotion.description > color.description
+    desc = None
+    if influencer_info and isinstance(influencer_info, dict):
+        desc = influencer_info.get("styled_text")
+    if not desc:
+        desc = (emotion_res.get("description") if isinstance(emotion_res, dict) else None) or color_res.get("description") if isinstance(color_res, dict) else None
+    data["description"] = desc or "안녕하세요! 퍼스널컬러 전문가입니다. 어떤 부분이 고민이신가요?"
+
+    # recommendations: merge lists from emotion, color, and influencer (if any)
+    recs = []
+    if isinstance(emotion_res, dict):
+        recs.extend(emotion_res.get("recommendations", []) or [])
+    if isinstance(color_res, dict):
+        recs.extend(color_res.get("recommendations", []) or [])
+    # influencer may include explicit recommendations
+    if influencer_info and isinstance(influencer_info, dict):
+        if influencer_info.get("recommendations"):
+            recs.extend(influencer_info.get("recommendations"))
+
+    # flatten and dedupe
+    flat = []
+    for item in recs:
+        if isinstance(item, list):
+            for subit in item:
+                if isinstance(subit, str) and subit not in flat:
+                    flat.append(subit)
+        elif isinstance(item, str):
+            if item not in flat:
+                flat.append(item)
+    if not flat:
+        flat = ["더 자세한 정보를 위해 피부톤이나 선호 색을 알려주세요."]
+    data["recommendations"] = flat
+
+    # attach influencer metadata for frontend
+    if influencer_info:
+        data["influencer"] = influencer_info
+
+    # emotion short tag
     user_emotion = detect_emotion(request.question)
     data["emotion"] = user_emotion
-    
-    # recommendations 필드 정리
-    recommendations = data.get("recommendations", [])
-    if isinstance(recommendations, dict):
-        recommendations = list(recommendations.values())
-    elif isinstance(recommendations, list):
-        # 중첩된 리스트를 평평하게 만들기
-        flattened_recommendations = []
-        for item in recommendations:
-            if isinstance(item, list):
-                flattened_recommendations.extend(item)
-            elif isinstance(item, str):
-                flattened_recommendations.append(item)
-        recommendations = flattened_recommendations
-    else:
-        recommendations = []
-    
-    data["recommendations"] = recommendations
     ai_msg = models.ChatMessage(history_id=chat_history.id, role="ai", text=json.dumps(data, ensure_ascii=False))
     db.add(ai_msg)
     db.commit()
