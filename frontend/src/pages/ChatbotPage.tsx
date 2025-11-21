@@ -9,6 +9,7 @@ import {
   message,
   Avatar,
   Tag,
+  Modal,
 } from 'antd';
 import {
   SendOutlined,
@@ -21,6 +22,7 @@ import { useCurrentUser } from '@/hooks/useUser';
 import { useSurveyResultsLive } from '@/hooks/useSurvey';
 import useChatbot from '@/hooks/useChatbot';
 import type { ChatResModel } from '@/api/chatbot';
+import { chatbotApi } from '@/api/chatbot';
 import { reportApi } from '@/api/report';
 import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
@@ -89,6 +91,13 @@ const ChatbotPage: React.FC = () => {
     useState<SurveyResultDetail | null>(null); // 선택된 진단 결과
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  // Welcome API loading state
+  const [isGettingWelcome, setIsGettingWelcome] = useState(false);
+
+  // Influencer modal state (pre-extraction: inline modal)
+  const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
+  const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<any | null>(null);
+  const autoCloseRef = useRef<number | null>(null);
 
   // 대화가 있는지 확인하는 함수
   const hasConversation = () => messages.length > 1;
@@ -170,6 +179,46 @@ const ChatbotPage: React.FC = () => {
   useEffect(() => {
     let welcomeMessage: ChatMessage;
 
+    // call welcome API (if available) to get server-side welcome message and influencer suggestion
+    let mounted = true;
+    (async () => {
+      try {
+        setIsGettingWelcome(true);
+        const res = await chatbotApi.getWelcome();
+        if (!mounted) return;
+        if (res?.message) {
+          welcomeMessage = {
+            id: 'welcome',
+            content: res.message,
+            isUser: false,
+            timestamp: new Date(),
+          };
+          setMessages(prev => {
+            if (prev.length === 0) return [welcomeMessage];
+            if (prev[0]?.id === 'welcome') return [welcomeMessage, ...prev.slice(1)];
+            return prev;
+          });
+        }
+
+        // if API suggested an influencer, open the modal briefly (auto-close)
+        if (res?.influencer) {
+          const profile = { name: res.influencer };
+          setActiveInfluencerProfile(profile);
+          setInfluencerModalOpen(true);
+          // auto-close after 6s
+          if (autoCloseRef.current) window.clearTimeout(autoCloseRef.current as any);
+          autoCloseRef.current = window.setTimeout(() => {
+            setInfluencerModalOpen(false);
+            autoCloseRef.current = null;
+          }, 6000) as unknown as number;
+        }
+      } catch (e) {
+        // fallback to local welcomeMessage below
+      } finally {
+        setIsGettingWelcome(false);
+      }
+    })();
+
     // 사용자 닉네임 추출 (친밀감 향상)
     const userNickname = `${user?.nickname ?? '사용자'}님`;
 
@@ -219,6 +268,7 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
       };
     }
 
+    // if API did not provide a message, fall back to local welcome generation
     setMessages(prevMessages => {
       if (prevMessages.length === 0) {
         return [welcomeMessage];
@@ -227,6 +277,9 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
       }
       return prevMessages;
     });
+    return () => {
+      mounted = false;
+    };
   }, [surveyResults]);
 
   // 페이지 진입 시 명시적으로 새 채팅 세션을 시작합니다.
@@ -1162,11 +1215,54 @@ function isDiagnosisBubble(msg?: any): boolean {
                       );
                     })()
                   ) : (
-                    <Avatar
-                      icon={<RobotOutlined />}
-                      style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
-                      className="!mr-3"
-                    />
+                    (() => {
+                      // try to render influencer avatar when provided by message
+                      const inflKey = (msg as any).influencer || (msg as any).chatRes?.influencer || (msg as any).chatRes?.raw?.influencer || (msg as any).influencer_id || null;
+                      const getInfluencerAvatarInfo = (s: any) => {
+                        if (!s || typeof s !== 'string') return null;
+                        const key = s.trim().toLowerCase();
+                        const map: Record<string, any> = {
+                          '혜경': { name: '혜경', emoji: '🎨', color: '#F0E6FF' },
+                          '원준': { name: '원준', emoji: '🌟', color: '#FFE4E6' },
+                          '종민': { name: '종민', emoji: '💰', color: '#FFF2CC' },
+                          '세현': { name: '세현', emoji: '🌿', color: '#E8F5E8' },
+                        };
+                        for (const k of Object.keys(map)) {
+                          if (key.includes(k) || key.startsWith(k.toLowerCase())) return map[k];
+                        }
+                        // fallback: return emoji/profile based on prefix
+                        const prefix = key.split(/[_\s-]/)[0] || key;
+                        return { name: s, emoji: '🌟', color: '#e5e7eb', prefix };
+                      };
+
+                      const infl = getInfluencerAvatarInfo(inflKey || activeInfluencerProfile?.name);
+
+                      if (infl) {
+                        return (
+                          <div style={{ cursor: 'pointer' }} onClick={() => {
+                            // open persistent modal on click (manual open disables auto-close)
+                            if (autoCloseRef.current) {
+                              window.clearTimeout(autoCloseRef.current as any);
+                              autoCloseRef.current = null;
+                            }
+                            setActiveInfluencerProfile(infl);
+                            setInfluencerModalOpen(true);
+                          }} aria-label={`Open profile ${infl.name}`} role="button" tabIndex={0}>
+                            <Avatar className="!mr-3" style={{ backgroundColor: infl.color, flexShrink: 0 }}>
+                              <span style={{ fontSize: 18 }}>{infl.emoji}</span>
+                            </Avatar>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <Avatar
+                          icon={<RobotOutlined />}
+                          style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
+                          className="!mr-3"
+                        />
+                      );
+                    })()
                   )}
                   <div className="flex flex-col gap-1">
                     {/* 이모티콘 애니메이션 버블 (bot 메시지에만, 먼저 표시) */}
@@ -1559,6 +1655,53 @@ function isDiagnosisBubble(msg?: any): boolean {
             return out;
           })()}
         />
+
+        {/* Influencer profile modal (inline, pre-extraction) */}
+        <Modal
+          open={influencerModalOpen}
+          onCancel={() => {
+            setInfluencerModalOpen(false);
+            if (autoCloseRef.current) {
+              window.clearTimeout(autoCloseRef.current as any);
+              autoCloseRef.current = null;
+            }
+          }}
+          footer={null}
+          centered
+          width={420}
+          bodyStyle={{ padding: 0 }}
+        >
+          {activeInfluencerProfile ? (
+            <div>
+              <div style={{ height: 110, background: `linear-gradient(135deg, ${activeInfluencerProfile.color || '#f0f0f0'}, ${activeInfluencerProfile.color || '#f0f0f0'}88)` }} />
+              <div style={{ padding: 16, textAlign: 'center', position: 'relative' }}>
+                <div style={{ position: 'relative', marginTop: -48 }}>
+                  <Avatar size={96} style={{ margin: '0 auto', backgroundColor: activeInfluencerProfile.color || '#e5e7eb' }}>
+                    <span style={{ fontSize: 36 }}>{activeInfluencerProfile.emoji || '🌟'}</span>
+                  </Avatar>
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <Title level={4} style={{ margin: 0 }}>{activeInfluencerProfile.name}</Title>
+                  <Text type="secondary">{activeInfluencerProfile.short_description || ''}</Text>
+                </div>
+
+                <div style={{ marginTop: 12, display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {(activeInfluencerProfile.subscriber_name || []).slice(0, 6).map((s: string, i: number) => (
+                    <Tag key={i}>{s}</Tag>
+                  ))}
+                </div>
+
+                <div style={{ marginTop: 12 }}>
+                  <Button onClick={() => setInfluencerModalOpen(false)}>닫기</Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding: 24, textAlign: 'center' }}>
+              <Spin />
+            </div>
+          )}
+        </Modal>
       </div>
     </div>
   );
