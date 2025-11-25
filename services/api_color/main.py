@@ -141,6 +141,8 @@ async def analyze_color(payload: ColorRequest):
     system = (
         "너는 퍼스널컬러/뷰티 트렌드 전문가야. 아래의 정보와 참고 문단들을 바탕으로 사용자에게 적절한 퍼스널컬러 추천과 메이크업/헤어 스타일 제안을 JSON으로 반환해줘.\n"
         "반드시 하나의 JSON 객체만 출력하고, 키는 primary_tone, sub_tone, recommended_palette (문자열 배열), suggested_styles (문자열 배열), reason(설명문장), confidence(0.0-1.0) 를 포함해야해.\n"
+        "가능하면 result_name (예: '가을 웜톤')과 top_types 배열도 포함시켜줘. top_types는 name, type, description, score(0-100) 필드를 가진 객체들의 배열이어야 하며,\n"
+        "특히 top_types[].name과 result_name은 반드시 한국어로 '{계절} {웜/쿨}톤' 형식(예: '가을 웜톤', '겨울 쿨톤')으로 표기해야 해.\n"
     )
 
     user_msg = "사용자 입력:\n" + query_text + "\n\n참고 문단:\n" + "\n---\n".join(rag_chunks[:6])
@@ -216,13 +218,47 @@ async def analyze_color(payload: ColorRequest):
         reason = parsed.get("reason") or parsed.get("description") or ""
         confidence = parsed.get("confidence") or 0.6
 
+        # Server-side correction: ensure canonical primary/sub and provide result_name/top_types
+        try:
+            norm_primary, norm_sub = shared.normalize_personal_color(primary, sub)
+        except Exception:
+            norm_primary, norm_sub = (primary or "웜"), (sub or "봄")
+
+        # canonical display name (Korean): e.g., '가을 웜톤'
+        result_name = f"{norm_sub} {norm_primary}톤"
+
+        # map to internal type id
+        type_mapping = {
+            ("웜", "봄"): "spring",
+            ("웜", "가을"): "autumn",
+            ("쿨", "여름"): "summer",
+            ("쿨", "겨울"): "winter",
+        }
+        primary_type = type_mapping.get((norm_primary, norm_sub), None)
+
+        # Build top_types (at least one) using canonical name and confidence-derived score
+        top_types = []
+        try:
+            score_val = int(float(confidence) * 100)
+        except Exception:
+            score_val = 0
+
+        top_types.append({
+            "name": result_name,
+            "type": primary_type or "",
+            "description": reason,
+            "score": score_val,
+        })
+
         hints = {
-            "primary_tone": primary,
-            "sub_tone": sub,
+            "primary_tone": norm_primary,
+            "sub_tone": norm_sub,
+            "result_name": result_name,
             "recommended_palette": recommended_palette,
             "suggested_styles": suggested_styles,
             "reason": reason,
             "confidence": confidence,
+            "top_types": top_types,
             "source_chunks": rag_chunks,
         }
         return ColorResponse(detected_color_hints=hints, notes="성공")

@@ -19,7 +19,7 @@ from schemas import (
     ReportResponse,
 )
 from routers.feedback_router import generate_ai_feedbacks
-from utils.shared import top_k_chunks, build_rag_index, analyze_conversation_for_color_tone
+from utils.shared import top_k_chunks, build_rag_index, analyze_conversation_for_color_tone, normalize_personal_color
 import random
 
 # Optional: load influencer personas from the influencer service if available
@@ -71,26 +71,39 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
         if len(conversation_text) > 1000:
             conversation_text = conversation_text[:1000] + "...(생략)"
         prompt = f"""
-사용자와 퍼스널 컬러 전문가의 대화:
-{conversation_text}
+    사용자와 퍼스널 컬러 전문가의 대화:
+    {conversation_text}
 
-위 대화를 바탕으로 {season} 타입 퍼스널 컬러 진단 결과를 생성해주세요.
+    위 대화를 바탕으로 {season} 타입 퍼스널 컬러 진단 결과를 생성해주세요.
 
-다음 JSON 형식으로만 응답해주세요 (다른 설명 없이):
-{{
-    "emotional_description": "감성적이고 긍정적인 한 문장 (예: 당신은 따뜻하고 생기 넘치는 {season} 타입입니다!)",
-    "color_palette": ["{season} 타입에 어울리는 5개의 HEX 색상 코드"],
-    "style_keywords": ["{season} 타입의 특성을 나타내는 5개 키워드"],
-    "makeup_tips": ["실용적인 메이크업 팁 4개"],
-    "detailed_analysis": "대화 내용을 반영한 개인화된 분석 (2-3문단, 구체적이고 실용적인 조언 포함)"
-}}
+    다음 유효한 JSON 객체 하나만, 다른 설명 없이 반환해주세요. JSON은 반드시 아래 키들을 포함해야 합니다:
+    {{
+        "result_name": "{season} { {primary_or_sub} } 형식의 한글 문자열 예: '가을 웜톤'",
+        "primary_tone": "'웜' 또는 '쿨' (짧은 문자열)",
+        "sub_tone": "'봄','여름','가을' 또는 '겨울' (짧은 문자열)",
+        "emotional_description": "감성적이고 긍정적인 한 문장",
+        "color_palette": ["{season} 타입에 어울리는 5개의 HEX 색상 코드"],
+        "style_keywords": ["{season} 타입의 특성을 나타내는 5개 키워드"],
+        "makeup_tips": ["실용적인 메이크업 팁 4개"],
+        "detailed_analysis": "대화 내용을 반영한 개인화된 분석 (2-3문단, 구체적이고 실용적인 조언 포함)",
+        "top_types": [
+            {"name": "{계절} {웜/쿨}톤", "type": "spring|summer|autumn|winter", "description": "간단 설명", "score": 0}
+        ]
+    }}
 
-주의사항:
-- detailed_analysis는 반복적인 내용 없이 개인화된 분석으로 작성
-- 대화에서 언급된 개인적 특성을 반영
-- 실용적이고 구체적인 조언 포함
-- 한국어로 작성
-"""
+    중요 요구사항:
+    - `result_name`과 `top_types` 배열의 각 항목 `name`은 반드시 한국어로 "{계절} {웜/쿨}톤" 형식(예: "가을 웜톤", "겨울 쿨톤")이어야 합니다.
+    - `top_types[0].name`은 `result_name`과 동일한 값이어야 합니다.
+    - `primary_tone`은 반드시 '웜' 또는 '쿨'로 표기하고, `sub_tone`은 '봄/여름/가을/겨울' 중 하나로 표기하세요.
+    - 숫자 값(score)은 0~100 사이의 정수로 표기하세요.
+    - 출력은 오직 하나의 JSON 객체여야 하며, 추가 설명 텍스트는 포함하지 마세요.
+
+    주의사항:
+    - detailed_analysis는 반복적인 내용 없이 개인화된 분석으로 작성
+    - 대화에서 언급된 개인적 특성을 반영
+    - 실용적이고 구체적인 조언 포함
+    - 한국어로 작성
+    """
         # 모델 선택 함수 사용
         response = client.chat.completions.create(
             model=get_model_to_use(),
@@ -415,7 +428,13 @@ async def save_chatbot_analysis_result(
             primary_tone, sub_tone = analyze_conversation_for_color_tone(
                 conversation_text, ""  # 현재 질문은 빈 문자열로 처리 (전체 대화 기반 분석)
             )
-        
+
+        # Normalize tones into canonical values before proceeding
+        try:
+            primary_tone, sub_tone = normalize_personal_color(primary_tone, sub_tone)
+        except Exception:
+            pass
+
         print(f"🎨 AI 분석 결과: {primary_tone}톤 {sub_tone}")
         
         # 🆕 OpenAI를 통한 완전한 진단 데이터 생성
@@ -744,6 +763,15 @@ async def analyze(
         primary = emotion_res.get("primary_tone")
     if not sub and isinstance(emotion_res, dict):
         sub = emotion_res.get("sub_tone")
+
+    # Normalize arbitrary model/free-text tones to canonical values
+    try:
+        norm_primary, norm_sub = normalize_personal_color(primary, sub)
+        primary = norm_primary
+        sub = norm_sub
+    except Exception:
+        # if normalization fails for any reason, fall back to raw values
+        pass
 
     data["primary_tone"] = primary or ""
     data["sub_tone"] = sub or ""
