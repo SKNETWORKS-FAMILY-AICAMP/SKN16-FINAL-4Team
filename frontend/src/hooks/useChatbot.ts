@@ -117,18 +117,24 @@ export function useChatbot(options?: UseChatbotOptions) {
   };
 
   const submitFeedback = (payload: FeedbackPayload) => (feedbackMutation.mutateAsync as any)(payload);
+  const getPendingFlag = (m: any) => {
+    if (!m) return false;
+    // prefer isPending if available (per-call pending), otherwise fall back to isLoading
+    if (typeof m.isPending !== 'undefined') return !!m.isPending;
+    return !!m.isLoading;
+  };
 
   return {
     // session control
     startSession,
     // analyze mutation
     analyze,
-    isAnalyzing: (analyzeMutation as any).isLoading || false,
+    isAnalyzing: getPendingFlag(analyzeMutation),
     analyzeError: (analyzeMutation as any).error || null,
 
     // diagnosis (3-turn) mutation
     analyzeChatForDiagnosis,
-    isDiagnosing: (diagnosisMutation as any).isLoading || false,
+    isDiagnosing: getPendingFlag(diagnosisMutation),
     diagnoseError: (diagnosisMutation as any).error || null,
 
     // end session (direct API call)
@@ -136,7 +142,7 @@ export function useChatbot(options?: UseChatbotOptions) {
 
     // feedback
     submitFeedback,
-    isSubmittingFeedback: (feedbackMutation as any).isLoading || false,
+    isSubmittingFeedback: getPendingFlag(feedbackMutation),
     feedbackError: (feedbackMutation as any).error || null,
   };
 }

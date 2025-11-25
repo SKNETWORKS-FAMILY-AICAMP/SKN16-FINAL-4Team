@@ -9,7 +9,6 @@ import {
   message,
   Avatar,
   Tag,
-  Modal,
 } from 'antd';
 import {
   SendOutlined,
@@ -23,12 +22,19 @@ import { useSurveyResultsLive } from '@/hooks/useSurvey';
 import useChatbot from '@/hooks/useChatbot';
 import type { ChatResModel } from '@/api/chatbot';
 import { chatbotApi } from '@/api/chatbot';
+import { useQuery } from '@tanstack/react-query';
+import { getInfluencerProfiles } from '@/api/influencer';
+import localInfluencers from '@/data/influencers';
 import { reportApi } from '@/api/report';
 import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
+import { normalizePersonalColor } from '@/utils/personalColorUtils';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
 import FeedbackModal from '@/components/FeedbackModal';
+import InfluencerProfileModal from '@/components/InfluencerProfileModal';
 import type { SurveyResultDetail } from '@/api/survey';
 import AnimatedEmoji from '@/components/AnimatedEmoji';
+import { Loading } from '@/components';
+import InfluencerImage from '@/components/InfluencerImage';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -79,6 +85,7 @@ const ChatbotPage: React.FC = () => {
   const [delayedDescriptions, setDelayedDescriptions] = useState<{ [id: string]: boolean }>({});
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const isBusy = isTyping || isAnalyzing || isDiagnosing;
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [isLeavingPage, setIsLeavingPage] = useState(false);
   const [currentHistoryId, setCurrentHistoryId] = useState<number | undefined>(
@@ -91,13 +98,12 @@ const ChatbotPage: React.FC = () => {
     useState<SurveyResultDetail | null>(null); // 선택된 진단 결과
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  // Welcome API loading state
-  const [isGettingWelcome, setIsGettingWelcome] = useState(false);
 
-  // Influencer modal state (pre-extraction: inline modal)
   const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
   const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<any | null>(null);
   const autoCloseRef = useRef<number | null>(null);
+  const lastSavedPersonaHistoryRef = useRef<number | null>(null);
+
 
   // 대화가 있는지 확인하는 함수
   const hasConversation = () => messages.length > 1;
@@ -127,24 +133,16 @@ const ChatbotPage: React.FC = () => {
   useEffect(() => {
     if (!messagesEndRef.current || !messagesContainerRef.current) return;
 
-    // Do not auto-scroll for the initial welcome and the following message.
-    // Only start auto-scrolling once the conversation has more than 2 messages.
     if (messages.length <= 2) return;
 
     const container = messagesContainerRef.current as HTMLDivElement;
 
-    // Only scroll when the message list actually overflows the container
-    // to avoid scrolling the whole window when content is short.
     const isOverflowing = container.scrollHeight > container.clientHeight;
 
-    // Debugging log to help diagnose unexpected scrolls in runtime.
-    // Remove or convert to a proper logger once confirmed.
-    // eslint-disable-next-line no-console
     console.debug('[chat-scroll] messages=', messages.length, 'isTyping=', isTyping, 'overflowing=', isOverflowing);
 
     if (!isOverflowing) return;
 
-    // Smoothly scroll the container to the bottom.
     container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }, [messages, isTyping, delayedDescriptions]);
 
@@ -175,112 +173,96 @@ const ChatbotPage: React.FC = () => {
     }
   }, [blocker.state]);
 
-  // 초기 환영 메시지 설정
+  const welcomeQuery = useQuery<{
+    message?: string;
+    influencer?: any;
+    has_previous?: boolean;
+    previous_summary?: string;
+  }>({
+    queryKey: ['welcome'],
+    queryFn: async () => await chatbotApi.getWelcome(),
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const welcomeData = welcomeQuery.data;
+  const welcomeIsPending = welcomeQuery.isFetching || welcomeQuery.isLoading;
+
+  // Load influencer profiles (server first, fallback to local)
+  const { data: influencers = localInfluencers } = useQuery({
+    queryKey: ['influencers'],
+    queryFn: () => getInfluencerProfiles(),
+    staleTime: 1000 * 60 * 60,
+    retry: 1,
+  });
+
   useEffect(() => {
+    if (!welcomeData) return;
+    if ((welcomeData as any).message) {
+      const welcomeMessage: ChatMessage = {
+        id: 'welcome',
+        content: (welcomeData as any).message,
+        isUser: false,
+        timestamp: new Date(),
+      };
+      setMessages(prev => {
+        if (prev.length === 0) return [welcomeMessage];
+        if (prev[0]?.id === 'welcome') return [welcomeMessage, ...prev.slice(1)];
+        return prev;
+      });
+    }
+
+    if ((welcomeData as any).influencer) {
+      const infl = (welcomeData as any).influencer;
+      const profile = typeof infl === 'string' ? { name: infl } : infl;
+      setActiveInfluencerProfile(profile as any);
+    }
+  }, [welcomeData]);
+
+  const prevWelcomePendingRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    const prev = prevWelcomePendingRef.current;
+    if (prev === true && !welcomeIsPending) {
+      if (welcomeData && (welcomeData as any).influencer) {
+        setInfluencerModalOpen(true);
+        if (autoCloseRef.current) window.clearTimeout(autoCloseRef.current as any);
+        autoCloseRef.current = window.setTimeout(() => {
+          setInfluencerModalOpen(false);
+          autoCloseRef.current = null;
+        }, 3500) as unknown as number;
+      }
+    }
+    prevWelcomePendingRef.current = welcomeIsPending;
+  }, [welcomeIsPending, welcomeData]);
+
+  useEffect(() => {
+    if (welcomeData?.message) return; // server provided message, do nothing
+
+    const userNickname = `${user?.nickname ?? '사용자'}님`;
     let welcomeMessage: ChatMessage;
 
-    // call welcome API (if available) to get server-side welcome message and influencer suggestion
-    let mounted = true;
-    (async () => {
-      try {
-        setIsGettingWelcome(true);
-        const res = await chatbotApi.getWelcome();
-        if (!mounted) return;
-        if (res?.message) {
-          welcomeMessage = {
-            id: 'welcome',
-            content: res.message,
-            isUser: false,
-            timestamp: new Date(),
-          };
-          setMessages(prev => {
-            if (prev.length === 0) return [welcomeMessage];
-            if (prev[0]?.id === 'welcome') return [welcomeMessage, ...prev.slice(1)];
-            return prev;
-          });
-        }
-
-        // if API suggested an influencer, open the modal briefly (auto-close)
-        if (res?.influencer) {
-          const profile = { name: res.influencer };
-          setActiveInfluencerProfile(profile);
-          setInfluencerModalOpen(true);
-          // auto-close after 6s
-          if (autoCloseRef.current) window.clearTimeout(autoCloseRef.current as any);
-          autoCloseRef.current = window.setTimeout(() => {
-            setInfluencerModalOpen(false);
-            autoCloseRef.current = null;
-          }, 6000) as unknown as number;
-        }
-      } catch (e) {
-        // fallback to local welcomeMessage below
-      } finally {
-        setIsGettingWelcome(false);
-      }
-    })();
-
-    // 사용자 닉네임 추출 (친밀감 향상)
-    const userNickname = `${user?.nickname ?? '사용자'}님`;
-
     if (surveyResults && surveyResults.length > 0) {
-      // 과거 진단 내역이 있는 경우
       const latestResult = surveyResults[0];
       welcomeMessage = {
         id: 'welcome',
-        content: `안녕하세요, ${userNickname}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다!
-
-이전 진단 결과를 확인해보니 "${latestResult.result_name || latestResult.result_tone.toUpperCase()} 타입"이시네요! 
-
-${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와드릴 수도 있고, 
-새롭게 대화를 통해 진단을 다시 받아보셔도 좋습니다! 
-
-퍼스널컬러와 관련된 어떤 것이든 편하게 말씀해 주세요:
-✨ 색상 고민이나 궁금한 점
-💄 메이크업 팁이나 제품 추천  
-👗 옷 색깔이나 스타일링 조언
-🌈 새로운 퍼스널컬러 진단
-
-어떤 이야기부터 시작해볼까요, ${userNickname}?`,
+        content: `안녕하세요, ${userNickname}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다!\n\n이전 진단 결과를 확인해보니 "${latestResult.result_name || latestResult.result_tone.toUpperCase()} 타입"이시네요! \n\n${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와드릴 수도 있고, \n새롭게 대화를 통해 진단을 다시 받아보셔도 좋습니다! \n\n퍼스널컬러와 관련된 어떤 것이든 편하게 말씀해 주세요:\n✨ 색상 고민이나 궁금한 점\n💄 메이크업 팁이나 제품 추천  \n👗 옷 색깔이나 스타일링 조언\n🌈 새로운 퍼스널컬러 진단\n\n어떤 이야기부터 시작해볼까요, ${userNickname}?`,
         isUser: false,
         timestamp: new Date(),
       };
     } else {
-      // 진단 내역이 없는 경우 - 대화형 진단 안내
       welcomeMessage = {
         id: 'welcome',
-        content: `안녕하세요, ${userNickname}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다!
-
-처음 방문해주셨네요! 반가워요 🎨
-
-저와 자연스러운 대화를 통해 ${userNickname}만의 퍼스널컬러를 찾아보세요!
-복잡한 설문지 없이도, 편안한 대화만으로 충분합니다.
-
-이런 것들에 대해 얘기해보면 도움이 될 거예요:
-✨ 평소 어떤 색깔 옷을 즐겨 입으시는지
-💄 어떤 립스틱이나 블러셔가 잘 어울리는지  
-👀 피부톤이나 혈관색에 대한 생각
-🌟 좋아하는 스타일이나 색감 취향
-
-어떤 이야기부터 시작해볼까요, ${userNickname}? 
-편하게 말씀해 주세요! 😄`,
+        content: `안녕하세요, ${userNickname}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다!\n\n처음 방문해주셨네요! 반가워요 🎨\n\n저와 자연스러운 대화를 통해 ${userNickname}만의 퍼스널컬러를 찾아보세요!\n복잡한 설문지 없이도, 편안한 대화만으로 충분합니다.\n\n이런 것들에 대해 얘기해보면 도움이 될 거예요:\n✨ 평소 어떤 색깔 옷을 즐겨 입으시는지\n💄 어떤 립스틱이나 블러셔가 잘 어울리는지  \n👀 피부톤이나 혈관색에 대한 생각\n🌟 좋아하는 스타일이나 색감 취향\n\n어떤 이야기부터 시작해볼까요, ${userNickname}? \n편하게 말씀해 주세요! 😄`,
         isUser: false,
         timestamp: new Date(),
       };
     }
 
-    // if API did not provide a message, fall back to local welcome generation
     setMessages(prevMessages => {
-      if (prevMessages.length === 0) {
-        return [welcomeMessage];
-      } else if (prevMessages[0]?.id === 'welcome') {
-        return [welcomeMessage, ...prevMessages.slice(1)];
-      }
+      if (prevMessages.length === 0) return [welcomeMessage];
+      if (prevMessages[0]?.id === 'welcome') return [welcomeMessage, ...prevMessages.slice(1)];
       return prevMessages;
     });
-    return () => {
-      mounted = false;
-    };
-  }, [surveyResults]);
+  }, [surveyResults, welcomeData, user]);
 
   // 페이지 진입 시 명시적으로 새 채팅 세션을 시작합니다.
   // 이렇게 하면 이전 세션의 기록이 현재 세션에 섞이지 않고,
@@ -302,6 +284,22 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
           }
         }
         console.log('새 채팅 세션 시작, history_id=', res.history_id, 'reused=', res.reused);
+        try {
+          if (res.history_id && activeInfluencerProfile) {
+            const name = typeof activeInfluencerProfile === 'string' ? activeInfluencerProfile : activeInfluencerProfile.name;
+            if (name) {
+              // avoid duplicate saves
+              if (lastSavedPersonaHistoryRef.current !== res.history_id) {
+                chatbotApi.setSessionPersona(res.history_id, name).then(() => {
+                  lastSavedPersonaHistoryRef.current = res.history_id;
+                  console.log('[persona] saved on session start:', name, res.history_id);
+                }).catch(err => console.warn('[persona] save failed on start:', err));
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('persona 저장 시도 중 오류', e);
+        }
       } catch (e) {
         console.error('세션 시작 실패:', e);
         // 실패 시 재시도 가능하게 플래그 리셋
@@ -313,6 +311,23 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
       mounted = false;
     };
   }, [startSession]);
+
+  useEffect(() => {
+    if (!currentHistoryId || !activeInfluencerProfile) return;
+    if (lastSavedPersonaHistoryRef.current === currentHistoryId) return;
+
+    const name = typeof activeInfluencerProfile === 'string' ? activeInfluencerProfile : activeInfluencerProfile.name;
+    if (!name) return;
+
+    chatbotApi.setSessionPersona(currentHistoryId, name)
+      .then(() => {
+        lastSavedPersonaHistoryRef.current = currentHistoryId;
+        console.log('[persona] saved:', name, currentHistoryId);
+      })
+      .catch(err => {
+        console.warn('[persona] save failed:', err);
+      });
+  }, [currentHistoryId, activeInfluencerProfile]);
 
   // 리포트 키워드 확인 함수
   const checkReportKeywords = (message: string): boolean => {
@@ -343,69 +358,50 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
 
   // 진단 결과 상세보기 모달 열기
   const handleViewDiagnosisDetail = () => {
-    // 만약 이미 preview/selectedResult가 있으면 바로 모달을 연다.
     if (selectedResult) {
       setIsDetailModalOpen(true);
       return;
     }
-    if (surveyResults && surveyResults.length > 0) {
-      // 기존 진단 결과
-      setSelectedResult(surveyResults[0] as SurveyResultDetail);
-      setIsDetailModalOpen(true);
-    } else if (userTurnCount >= 3 && messages.length > 0) {
-      // 3턴 후 임시 진단 결과 생성
-      const lastBotMessage = messages
-        .filter(msg => !msg.isUser && msg.chatRes)
-        .pop();
 
-      if (lastBotMessage?.chatRes) {
-        const tempResult: SurveyResultDetail = {
-          id: Date.now(),
-          result_tone: (lastBotMessage.chatRes.primary_tone || 'spring') as any,
-          result_name: `${lastBotMessage.chatRes.sub_tone || '봄'} ${lastBotMessage.chatRes.primary_tone || '웜'}톤`,
-          confidence: 0.85,
-          total_score: 85,
-          detailed_analysis:
-            lastBotMessage.chatRes.description ||
-            '3턴 대화를 통한 분석 결과입니다.',
-          color_palette: [],
-          style_keywords: lastBotMessage.chatRes.recommendations || [],
-          makeup_tips: [],
-          answers: [],
-          created_at: new Date().toISOString(),
-          user_id: user?.id || 0,
-          top_types: [
-            {
-              type: (lastBotMessage.chatRes.sub_tone?.toLowerCase() ||
-                'spring') as any,
-              name: `${lastBotMessage.chatRes.sub_tone || '봄'} ${lastBotMessage.chatRes.primary_tone || '웜'}톤`,
-              description:
-                lastBotMessage.chatRes.description || '3턴 대화 분석 결과',
-              score: 0.85,
-              color_palette: [
-                '#FFB6C1',
-                '#FFA07A',
-                '#FFFF99',
-                '#98FB98',
-                '#87CEEB',
-              ],
-              style_keywords: lastBotMessage.chatRes.recommendations?.slice(
-                0,
-                3
-              ) || ['밝은', '화사한', '생동감'],
-              makeup_tips: ['자연스러운 톤', '코랄 계열 립', '피치 블러셔'],
-            },
-          ],
-        };
+    const lastBotMessage = messages.filter(msg => !msg.isUser && msg.chatRes).pop();
 
-        setSelectedResult(tempResult);
-        setIsDetailModalOpen(true);
-      } else {
-        message.warning('진단 데이터를 찾을 수 없습니다.');
-      }
-    } else {
-      message.warning('아직 충분한 진단 정보가 없습니다. 더 대화해보세요!');
+    if (!lastBotMessage || !lastBotMessage.chatRes) {
+      message.warning('진단 데이터를 찾을 수 없습니다.');
+      return;
     }
+
+    const cr = lastBotMessage.chatRes;
+
+    const normalized = normalizePersonalColor(cr.primary_tone, cr.sub_tone);
+
+    const tempResult: SurveyResultDetail = {
+      id: Date.now(),
+      result_tone: (cr.primary_tone || 'spring') as any,
+      result_name: normalized.displayName,
+      confidence: 0.85,
+      total_score: 85,
+      detailed_analysis: cr.description || '3턴 대화를 통한 분석 결과입니다.',
+      color_palette: [],
+      style_keywords: cr.recommendations || [],
+      makeup_tips: [],
+      answers: [],
+      created_at: new Date().toISOString(),
+      user_id: user?.id || 0,
+      top_types: [
+        {
+          type: (cr.sub_tone?.toLowerCase() || 'spring') as any,
+          name: normalized.displayName,
+          description: cr.description || '3턴 대화 분석 결과',
+          score: 0.85,
+          color_palette: ['#FFB6C1', '#FFA07A', '#FFFF99', '#98FB98', '#87CEEB'],
+          style_keywords: cr.recommendations?.slice(0, 3) || ['밝은', '화사한', '생동감'],
+          makeup_tips: ['자연스러운 톤', '코랄 계열 립', '피치 블러셔'],
+        },
+      ],
+    };
+
+    setSelectedResult(tempResult);
+    setIsDetailModalOpen(true);
   };
 
   // 진단 상세보기 모달 닫기
@@ -417,7 +413,7 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
   // 메시지 전송 처리
   const handleSendMessage = async () => {
     // analyze 중복 호출 방지: 로딩 중이면 early return
-    if (!inputMessage.trim() || isTyping || isAnalyzing || isDiagnosing) return;
+    if (!inputMessage.trim() || isBusy) return;
 
     const isReportRequest = checkReportKeywords(inputMessage.trim());
     const userNickname = `${user?.nickname || '사용자'}님`;
@@ -656,7 +652,6 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
                       diagnosisResult.survey_result_id || Date.now()
                     );
                   } catch (e) {
-                    // Fallback to best-effort mapping if conversion fails
                     console.warn('convertReportDataToSurveyDetail 실패, 폴백 사용', e);
                     return {
                       id: diagnosisResult.survey_result_id || Date.now(),
@@ -1067,11 +1062,9 @@ function isDiagnosisBubble(msg?: any): boolean {
 }
 
   // 로딩 상태
-  if (userLoading || surveyLoading) {
+  if (userLoading || surveyLoading || welcomeIsPending) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 flex items-center justify-center pt-20">
-        <Spin size="large" />
-      </div>
+      <Loading />
     );
   }
 
@@ -1183,7 +1176,7 @@ function isDiagnosisBubble(msg?: any): boolean {
           <div
             ref={messagesContainerRef}
             className="flex-1 overflow-y-auto mb-3 p-3 bg-gray-50 rounded-lg"
-            style={{ minHeight: '400px', paddingTop: '30px' }}
+            style={{ minHeight: '400px', paddingTop: '30px', position: 'relative' }}
           >
             {messages.map((msg, idx) => (
               <div
@@ -1221,15 +1214,27 @@ function isDiagnosisBubble(msg?: any): boolean {
                       const getInfluencerAvatarInfo = (s: any) => {
                         if (!s || typeof s !== 'string') return null;
                         const key = s.trim().toLowerCase();
+
+                        // prefer server-provided influencer profiles when available
+                        if (Array.isArray(influencers) && influencers.length > 0) {
+                          for (const p of influencers) {
+                            const n = (p.name || '').toString().toLowerCase();
+                            if (!n) continue;
+                            if (key === n || key.includes(n) || key.startsWith(n)) return p;
+                          }
+                        }
+
+                        // fallback hard-coded map (kept for safety)
                         const map: Record<string, any> = {
-                          '혜경': { name: '혜경', emoji: '🎨', color: '#F0E6FF' },
-                          '원준': { name: '원준', emoji: '🌟', color: '#FFE4E6' },
-                          '종민': { name: '종민', emoji: '💰', color: '#FFF2CC' },
-                          '세현': { name: '세현', emoji: '🌿', color: '#E8F5E8' },
+                          '혜경': { name: '혜경', emoji: '🎨', color: '#F0E6FF', profile: '/profiles/혜경.png' },
+                          '원준': { name: '원준', emoji: '🌟', color: '#FFE4E6', profile: '/profiles/원준.png' },
+                          '종민': { name: '종민', emoji: '💰', color: '#FFF2CC', profile: '/profiles/종민.png' },
+                          '세현': { name: '세현', emoji: '🌿', color: '#E8F5E8', profile: '/profiles/세현.png' },
                         };
                         for (const k of Object.keys(map)) {
                           if (key.includes(k) || key.startsWith(k.toLowerCase())) return map[k];
                         }
+
                         // fallback: return emoji/profile based on prefix
                         const prefix = key.split(/[_\s-]/)[0] || key;
                         return { name: s, emoji: '🌟', color: '#e5e7eb', prefix };
@@ -1238,18 +1243,34 @@ function isDiagnosisBubble(msg?: any): boolean {
                       const infl = getInfluencerAvatarInfo(inflKey || activeInfluencerProfile?.name);
 
                       if (infl) {
+                        const profileForAvatar = (activeInfluencerProfile && (activeInfluencerProfile as any).profile)
+                          ? activeInfluencerProfile
+                          : ((infl as any).profile ? infl : null);
+
                         return (
-                          <div style={{ cursor: 'pointer' }} onClick={() => {
-                            // open persistent modal on click (manual open disables auto-close)
-                            if (autoCloseRef.current) {
-                              window.clearTimeout(autoCloseRef.current as any);
-                              autoCloseRef.current = null;
-                            }
-                            setActiveInfluencerProfile(infl);
-                            setInfluencerModalOpen(true);
-                          }} aria-label={`Open profile ${infl.name}`} role="button" tabIndex={0}>
-                            <Avatar className="!mr-3" style={{ backgroundColor: infl.color, flexShrink: 0 }}>
-                              <span style={{ fontSize: 18 }}>{infl.emoji}</span>
+                          <div
+                            className={`influencer-avatar-clickable !mr-3 ${
+                              (activeInfluencerProfile && ((typeof activeInfluencerProfile === 'string' && activeInfluencerProfile.toLowerCase() === ((infl as any).name || '').toLowerCase()) || (activeInfluencerProfile as any).name && ((activeInfluencerProfile as any).name || '').toLowerCase() === ((infl as any).name || '').toLowerCase())) ? 'influencer-avatar-active' : ''
+                            }`}
+                            onClick={() => {
+                              if (autoCloseRef.current) {
+                                window.clearTimeout(autoCloseRef.current as any);
+                                autoCloseRef.current = null;
+                              }
+                              const profileToShow = (activeInfluencerProfile && (activeInfluencerProfile as any).profile) ? activeInfluencerProfile : infl;
+                              setActiveInfluencerProfile(profileToShow);
+                              setInfluencerModalOpen(true);
+                            }}
+                            aria-label={`Open profile ${(infl as any).name}`}
+                            role="button"
+                            tabIndex={0}
+                            style={{ display: 'inline-flex', alignItems: 'center' }}
+                          >
+                            <Avatar
+                              size={50}
+                              style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff' }}
+                            >
+                              <InfluencerImage profile={profileForAvatar} name={(infl as any).name} emoji={infl.emoji} />
                             </Avatar>
                           </div>
                         );
@@ -1509,19 +1530,15 @@ function isDiagnosisBubble(msg?: any): boolean {
                           type="default"
                           size="small"
                           onClick={() => {
-                            // previewResultOuter is sometimes undefined in this scope due to closure issues
-                            // Instead, always use selectedResult if available, otherwise fallback
                             if (selectedResult) {
                               setIsDetailModalOpen(true);
                               return;
                             }
-                            // If recentResults exist, use the first one
                             if (surveyResults && surveyResults.length > 0) {
                               setSelectedResult(surveyResults[0] as SurveyResultDetail);
                               setIsDetailModalOpen(true);
                               return;
                             }
-                            // Fallback to handler (may show warning)
                             handleViewDiagnosisDetail();
                           }}
                           className="border-purple-300 text-purple-600 hover:border-purple-500 hover:text-purple-700"
@@ -1542,11 +1559,13 @@ function isDiagnosisBubble(msg?: any): boolean {
             {isTyping && (
               <div className="flex justify-start mb-3">
                 <div className="flex items-start">
-                  <Avatar
-                    icon={<RobotOutlined />}
-                    style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
-                    className="!mr-2"
-                  />
+                      <div className={`chatbot-avatar-container !mr-2 ${isTyping ? 'chatbot-active' : ''}`}>
+                        <Avatar
+                          icon={<RobotOutlined />}
+                          style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
+                        />
+                        {(isTyping) && <span className="chatbot-active-badge" aria-hidden="true" />}
+                      </div>
                   <div className="bg-white border border-gray-200 px-4 py-2 rounded-lg">
                     <Spin size="small" />
                     <Text className="ml-2 !text-gray-500">
@@ -1590,7 +1609,7 @@ function isDiagnosisBubble(msg?: any): boolean {
               onChange={e => setInputMessage(e.target.value)}
               onKeyDown={e => {
                 // analyze 중복 호출 방지: 로딩 중이면 입력 무시
-                if (isTyping || isAnalyzing || isDiagnosing) return;
+                if (isBusy) return;
                 handleKeyDown(e);
               }}
               placeholder={
@@ -1599,7 +1618,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                   : '퍼스널컬러에 대해 궁금한 것을 물어보세요...'
               }
               autoSize={{ minRows: 1, maxRows: 2 }}
-              disabled={isTyping || isAnalyzing || isDiagnosing}
+              disabled={isBusy}
               style={{ fontSize: '14px' }}
             />
             <Button
@@ -1607,10 +1626,10 @@ function isDiagnosisBubble(msg?: any): boolean {
               icon={<SendOutlined />}
               onClick={() => {
                 // analyze 중복 호출 방지: 로딩 중이면 클릭 무시
-                if (isTyping || isAnalyzing || isDiagnosing) return;
+                if (isBusy) return;
                 handleSendMessage();
               }}
-              disabled={!inputMessage.trim() || isTyping || isAnalyzing || isDiagnosing}
+              disabled={!inputMessage.trim() || isBusy}
               className="h-auto"
             >
               전송
@@ -1656,8 +1675,8 @@ function isDiagnosisBubble(msg?: any): boolean {
           })()}
         />
 
-        {/* Influencer profile modal (inline, pre-extraction) */}
-        <Modal
+        {/* Influencer profile modal */}
+        <InfluencerProfileModal
           open={influencerModalOpen}
           onCancel={() => {
             setInfluencerModalOpen(false);
@@ -1666,42 +1685,8 @@ function isDiagnosisBubble(msg?: any): boolean {
               autoCloseRef.current = null;
             }
           }}
-          footer={null}
-          centered
-          width={420}
-          bodyStyle={{ padding: 0 }}
-        >
-          {activeInfluencerProfile ? (
-            <div>
-              <div style={{ height: 110, background: `linear-gradient(135deg, ${activeInfluencerProfile.color || '#f0f0f0'}, ${activeInfluencerProfile.color || '#f0f0f0'}88)` }} />
-              <div style={{ padding: 16, textAlign: 'center', position: 'relative' }}>
-                <div style={{ position: 'relative', marginTop: -48 }}>
-                  <Avatar size={96} style={{ margin: '0 auto', backgroundColor: activeInfluencerProfile.color || '#e5e7eb' }}>
-                    <span style={{ fontSize: 36 }}>{activeInfluencerProfile.emoji || '🌟'}</span>
-                  </Avatar>
-                </div>
-                <div style={{ marginTop: 8 }}>
-                  <Title level={4} style={{ margin: 0 }}>{activeInfluencerProfile.name}</Title>
-                  <Text type="secondary">{activeInfluencerProfile.short_description || ''}</Text>
-                </div>
-
-                <div style={{ marginTop: 12, display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  {(activeInfluencerProfile.subscriber_name || []).slice(0, 6).map((s: string, i: number) => (
-                    <Tag key={i}>{s}</Tag>
-                  ))}
-                </div>
-
-                <div style={{ marginTop: 12 }}>
-                  <Button onClick={() => setInfluencerModalOpen(false)}>닫기</Button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div style={{ padding: 24, textAlign: 'center' }}>
-              <Spin />
-            </div>
-          )}
-        </Modal>
+          profile={activeInfluencerProfile}
+        />
       </div>
     </div>
   );
