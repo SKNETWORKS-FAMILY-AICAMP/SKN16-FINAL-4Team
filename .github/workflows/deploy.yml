@@ -1,0 +1,64 @@
+name: Deploy to EC2 via Docker Compose
+
+# 💡 main 브랜치에 푸시될 때마다 워크플로우 실행
+on:
+  push:
+    branches:
+      - main
+      - master 
+
+jobs:
+  deploy:
+    # 워크플로우가 실행될 환경 (GitHub Runner)
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. 소스코드 체크아웃
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 2. Docker Hub 로그인 (빌드된 이미지를 Docker Hub에 푸시하기 위함)
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          
+      # 3. Docker 이미지 빌드 및 Docker Hub에 푸시
+      # (CI/CD 서버에서 이미지를 빌드하여 Docker Hub에 저장합니다.)
+      - name: Build and Push Docker Images
+        run: |
+          # 백엔드 이미지 빌드 및 푸시 (FastAPI)
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest-f Dockerfile .
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest
+          
+          # 프론트엔드 이미지 빌드 및 푸시 (Nginx)
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/skn16-frontend:latest ./frontend
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/skn16-frontend:latest
+        env:
+          DOCKER_BUILDKIT: 1
+
+      # 4. SSH를 사용하여 EC2 서버에 접속 및 배포 명령 실행
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            # 5. EC2 서버에서 실행할 배포 스크립트
+            # 프로젝트 디렉토리로 이동 (디렉토리 이름 확인 필수: SKN16-FINAL-4Team)
+            cd SKN16-FINAL-4Team
+            
+            # Docker Hub에 다시 로그인 (EC2에서 pull 받기 위함)
+            docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+            
+            # 최신 이미지 다운로드 및 Docker Compose 환경 재시작
+            # --pull always: Docker Hub에서 최신 이미지를 강제로 다운로드
+            docker-compose pull
+            
+            # --no-build: 이미 Docker Hub에서 최신 이미지를 받았으므로 EC2에서 빌드 생략
+            docker-compose up -d --no-build
+            
+            # DB 마이그레이션 실행 (새로운 테이블/컬럼 반영 시)
+            docker exec fastapi-prod python -m alembic upgrade head
