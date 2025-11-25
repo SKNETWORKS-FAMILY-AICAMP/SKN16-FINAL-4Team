@@ -167,6 +167,127 @@ def get_db():
     finally:
         db.close()
 
+
+@router.get("/welcome")
+async def welcome(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """
+    Simple welcome endpoint used by frontend to provide a server-side welcome message
+    and an optional influencer suggestion. This is intentionally lightweight so the
+    frontend can fall back to local text if unavailable.
+    """
+    try:
+        user_nick = getattr(current_user, 'nickname', None) or '사용자'
+    except Exception:
+        user_nick = '사용자'
+
+    has_prev = False
+    prev_summary = None
+    try:
+        if current_user and getattr(current_user, 'id', None):
+            prev = (
+                db.query(models.SurveyResult)
+                .filter(models.SurveyResult.user_id == current_user.id, models.SurveyResult.is_active == True)
+                .order_by(models.SurveyResult.created_at.desc())
+                .first()
+            )
+            if prev:
+                has_prev = True
+                prev_summary = getattr(prev, 'result_name', None) or getattr(prev, 'result_tone', None)
+    except Exception:
+        # silently ignore DB failures here; frontend has a local fallback
+        has_prev = False
+
+    # Try to pick an influencer (prefer returning the full object if available)
+    influencer_obj = None
+    try:
+        if influencer_service and hasattr(influencer_service, 'list_influencers'):
+            infl_list = influencer_service.list_influencers()
+            if infl_list:
+                import random
+                chosen = random.choice(infl_list)
+                if isinstance(chosen, dict):
+                    influencer_obj = chosen
+                else:
+                    influencer_obj = {"name": str(chosen)}
+    except Exception:
+        influencer_obj = None
+
+    # Build a contextual welcome message using the LLM when possible.
+    # If we have a previous diagnosis, ask the LLM to mention it; otherwise ask gentle diagnostic questions.
+    try:
+        infl_name = None
+        infl_excerpt = None
+        persona_notes = None
+        if influencer_obj:
+            infl_name = influencer_obj.get('name') or influencer_obj.get('id')
+            infl_excerpt = (influencer_obj.get('short_description') if isinstance(influencer_obj.get('short_description'), str) else None) or influencer_obj.get('expertise') or influencer_obj.get('tag')
+            # optional speaking style or tone hint from influencer metadata
+            persona_notes = influencer_obj.get('speaking_style') if isinstance(influencer_obj.get('speaking_style'), str) else None
+
+        # Build system + user prompt for the LLM
+        system_prompt = "당신은 퍼스널컬러 분야의 친절한 상담자이며, 주어진 인플루언서 페르소나의 말투와 스타일을 모방하여 한국어로 자연스럽고 친근한 환영 인사를 작성합니다. 응답은 사용자에게 바로 표시할 텍스트 한 덩어리(문단)로만 출력하세요."
+
+        user_prompt_lines = []
+        if infl_name:
+            user_prompt_lines.append(f"페르소나 이름: {infl_name}")
+        if infl_excerpt:
+            user_prompt_lines.append(f"간단 소개: {infl_excerpt}")
+        if persona_notes:
+            user_prompt_lines.append(f"말투 힌트: {persona_notes}")
+
+        if has_prev and prev_summary:
+            user_prompt_lines.append(f"이 사용자는 이전에 '{prev_summary}' 타입으로 진단된 기록이 있습니다. 환영 인사에서 이를 자연스럽게 언급하고, 이전 결과를 참고해 어떤 도움을 줄 수 있는지 알려주세요. 인플루언서의 말투로 작성하세요.")
+        else:
+            user_prompt_lines.append("이 사용자는 이전 진단 기록이 없습니다. 자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 2~3개의 짧은 질문을 인플루언서의 말투로 해주세요. 질문은 대화형으로 자연스럽게 이어지도록 작성하세요.")
+
+        user_prompt_lines.append("응답은 2~4개의 짧은 문단(또는 문장들)으로 요약해주고, 추가 지시나 메타 정보는 출력하지 마세요. 오직 환영 텍스트만 출력하세요.")
+
+        user_prompt = "\n".join(user_prompt_lines)
+
+        # Call LLM
+        try:
+            resp = client.chat.completions.create(
+                model=get_model_to_use(),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=250,
+                temperature=0.7,
+            )
+            ai_message = resp.choices[0].message.content.strip()
+            message = ai_message
+        except Exception as e:
+            # LLM failed — fall back to safe messages
+            print(f"[welcome] LLM 호출 실패, 폴백 메시지 사용: {e}")
+            if has_prev and prev_summary:
+                if infl_name:
+                    message = f"안녕하세요, {user_nick}! 이전 진단은 \"{prev_summary}\" 타입입니다. {infl_name}님 스타일을 참고해 이전 결과를 바탕으로 도와드릴게요. 원하시면 바로 추천을 시작할게요."
+                else:
+                    message = f"안녕하세요, {user_nick}! 이전 진단은 \"{prev_summary}\" 타입입니다. 이전 결과를 참고해 도움을 드릴게요. 무엇을 먼저 도와드릴까요?"
+            else:
+                if infl_name:
+                    if infl_excerpt:
+                        message = (
+                            f"안녕하세요, {user_nick}! {infl_name}님 스타일로 퍼스널컬러를 도와드릴게요 — {infl_excerpt} 전문가입니다. "
+                            "먼저 몇 가지 질문 드릴게요: 평소 자주 입는 옷 색상은 무엇인가요? 피부톤은 밝은 편인가요, 어두운 편인가요? 평소 선호하는 메이크업 스타일은 어떤가요?"
+                        )
+                    else:
+                        message = (
+                            f"안녕하세요, {user_nick}! {infl_name}님 스타일로 퍼스널컬러 진단을 도와드릴게요. "
+                            "먼저 간단한 질문 몇 개만 드릴게요: 평소 자주 입는 색상은요? 피부톤은 밝은 편인가요, 어두운 편인가요? 메이크업이나 스타일 선호가 있으신가요?"
+                        )
+                else:
+                    message = (
+                        f"안녕하세요, {user_nick}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다. "
+                        "퍼스널컬러를 알아보려면 간단한 질문 몇 가지가 필요해요 — 평소 자주 입는 색상, 피부톤(밝음/어두움), 선호하는 메이크업 스타일을 알려주실래요?"
+                    )
+    except Exception as e:
+        print(f"[welcome] 메시지 생성 중 오류: {e}")
+        message = f"안녕하세요, {user_nick}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다! 무엇을 도와드릴까요?"
+
+    return {"message": message, "influencer": influencer_obj, "has_previous": has_prev, "previous_summary": prev_summary}
+
 # RAG 인덱스 구축 (서버 시작 시 한 번만 실행)
 fixed_index = build_rag_index(client, "data/RAG/personal_color_RAG.txt")
 trend_index = build_rag_index(client, "data/RAG/beauty_trend_2025_autumn_RAG.txt")
@@ -565,26 +686,50 @@ async def analyze(
             continue
 
     try:
+        # include any persona stored on the chat history so the orchestrator and influencer chain
+        # can adapt responses to the selected persona
+        persona_name = getattr(chat_history, 'influencer_name', None)
         orch_payload = orchestrator_service.OrchestratorRequest(
             user_text=request.question,
             conversation_history=convo_list,
             user_nickname=getattr(current_user, 'nickname', None),
+            personal_color=None,
             use_color=True,
             use_emotion=True,
         )
+        # attach influencer persona if available (some orchestrator implementations accept this)
+        if persona_name and hasattr(orch_payload, 'dict'):
+            # safest approach: set attribute when present
+            try:
+                setattr(orch_payload, 'influencer_name', persona_name)
+            except Exception:
+                pass
         orch_resp = await orchestrator_service.analyze(orch_payload)
     except Exception as e:
         print(f"❌ Orchestrator error: {e}")
         raise HTTPException(status_code=500, detail=f"Orchestrator failed: {str(e)}")
 
-    # Extract results
-    emotion_res = orch_resp.emotion or {}
-    color_res = orch_resp.color or {}
+    # Extract results (orchestrator now returns namespaced structures)
+    raw_emotion = orch_resp.emotion or {}
+    raw_color = orch_resp.color or {}
 
-    # Prefer influencer-styled text when available
+    # unwrap parsed parts if present
+    def _unwrap(parsed_like):
+        if isinstance(parsed_like, dict) and parsed_like.get("parsed") is not None:
+            return parsed_like.get("parsed"), parsed_like
+        return (parsed_like if isinstance(parsed_like, dict) else {}, parsed_like)
+
+    emotion_res, emotion_wrapped = _unwrap(raw_emotion)
+    color_res, color_wrapped = _unwrap(raw_color)
+
+    # Prefer influencer-styled text when available; it may be wrapped as well
     influencer_info = None
-    if isinstance(emotion_res, dict):
-        influencer_info = emotion_res.get("influencer_styled") or emotion_res.get("influencer")
+    if isinstance(raw_emotion, dict):
+        inf = raw_emotion.get("influencer_styled") or raw_emotion.get("influencer")
+        if isinstance(inf, dict) and inf.get("parsed") is not None:
+            influencer_info = inf.get("parsed")
+        else:
+            influencer_info = inf
 
     # Compose the data payload to store and return (keep structure compatible with frontend)
     data = {}
@@ -643,7 +788,24 @@ async def analyze(
     # emotion short tag
     user_emotion = detect_emotion(request.question)
     data["emotion"] = user_emotion
-    ai_msg = models.ChatMessage(history_id=chat_history.id, role="ai", text=json.dumps(data, ensure_ascii=False))
+    # Store a human-readable message in the `text` field so the frontend
+    # doesn't render a raw JSON blob. Prefer the `description` (influencer-styled
+    # text) when available; fall back to the full JSON payload string.
+    human_text = data.get("description") or json.dumps(data, ensure_ascii=False)
+    # Store both human-friendly text and the structured payload as `raw`.
+    ai_msg = models.ChatMessage(
+        history_id=chat_history.id,
+        role="ai",
+        text=human_text,
+        raw=json.dumps({
+            "primary_tone": data.get("primary_tone"),
+            "sub_tone": data.get("sub_tone"),
+            "description": data.get("description"),
+            "recommendations": data.get("recommendations"),
+            "influencer": data.get("influencer"),
+            "emotion": data.get("emotion"),
+        }, ensure_ascii=False),
+    )
     db.add(ai_msg)
     db.commit()
     db.refresh(ai_msg)
@@ -659,8 +821,30 @@ async def analyze(
     qid = 1
     for i in range(0,len(msgs)-1,2):
         if msgs[i].role=="user" and msgs[i+1].role=="ai":
-            d = json.loads(msgs[i+1].text)
+            # msgs[i+1].text may be plain text (we store human-readable description)
+            # or a JSON string for older records. Try to parse JSON, otherwise
+            # wrap the text into a minimal dict so downstream code can operate.
+            raw_text = (msgs[i+1].text or "")
+            try:
+                d = json.loads(raw_text)
+            except Exception:
+                d = {"description": raw_text}
             # 기존 데이터의 recommendations 필드도 정리
+            # normalize structure: description may itself be a JSON string produced
+            # by older flows. If so, parse and merge.
+            if isinstance(d.get("description"), str):
+                desc_text = d.get("description", "").strip()
+                if desc_text.startswith("{") or desc_text.startswith("["):
+                    try:
+                        parsed_desc = json.loads(desc_text)
+                        if isinstance(parsed_desc, dict):
+                            # merge keys from parsed_desc into d without overwriting existing top-level fields
+                            for k, v in parsed_desc.items():
+                                if k not in d or (k == 'description'):
+                                    d[k] = v
+                    except Exception:
+                        pass
+
             recommendations = d.get("recommendations", [])
             if isinstance(recommendations, dict):
                 recommendations = list(recommendations.values())
@@ -675,6 +859,11 @@ async def analyze(
             else:
                 recommendations = []
             d["recommendations"] = recommendations
+            # Ensure required ChatResModel fields exist with safe defaults
+            d.setdefault('primary_tone', '')
+            d.setdefault('sub_tone', '')
+            d.setdefault('emotion', d.get('emotion', 'wink') or 'wink')
+            d.setdefault('description', d.get('description') or '')
             items.append(ChatItemModel(
                 question_id=qid,
                 question=msgs[i].text,
@@ -732,6 +921,37 @@ def start_chat_session(
         except:
             pass
         raise HTTPException(status_code=500, detail="채팅 세션 생성 중 DB 오류가 발생했습니다")
+
+
+@router.post('/session/{history_id}/persona')
+def set_session_persona(
+    history_id: int,
+    payload: dict,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set or update the influencer persona for an existing chat history.
+
+    Payload example: { "influencer_name": "원준" }
+    """
+    infl_name = payload.get('influencer_name') or payload.get('name')
+    if not infl_name:
+        raise HTTPException(status_code=400, detail='influencer_name is required')
+
+    chat = db.query(models.ChatHistory).filter_by(id=history_id, user_id=current_user.id).first()
+    if not chat:
+        raise HTTPException(status_code=404, detail='대화 세션 없음')
+
+    chat.influencer_name = infl_name
+    try:
+        db.add(chat)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"❌ set_session_persona DB 오류: {e}")
+        raise HTTPException(status_code=500, detail='DB 저장 실패')
+
+    return {"message": "persona saved", "influencer_name": infl_name}
 
 @router.post("/end/{history_id}")
 async def end_chat_session(

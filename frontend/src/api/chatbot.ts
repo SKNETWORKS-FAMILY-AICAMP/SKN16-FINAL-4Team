@@ -109,6 +109,14 @@ class ChatbotApi {
     });
     return response.data;
   }
+
+  /** Persist influencer persona for a chat session */
+  async setSessionPersona(historyId: number, influencerName: string) {
+    const response = await apiClient.post(`/chatbot/session/${historyId}/persona`, {
+      influencer_name: influencerName,
+    });
+    return response.data;
+  }
 }
 
 // API 인스턴스 생성
