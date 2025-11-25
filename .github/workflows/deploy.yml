@@ -29,7 +29,7 @@ jobs:
       - name: Build and Push Docker Images
         run: |
           # 백엔드 이미지 빌드 및 푸시 (FastAPI)
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest-f Dockerfile .
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest .
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest
           
           # 프론트엔드 이미지 빌드 및 푸시 (Nginx)
