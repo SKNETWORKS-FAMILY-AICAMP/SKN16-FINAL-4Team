@@ -165,3 +165,67 @@ def analyze_conversation_for_color_tone(conversation_history: str, current_quest
         return ("웜", "가을") if autumn_score >= spring_score else ("웜", "봄")
     
     return default_tone
+
+
+def normalize_personal_color(primary: str | None, sub: str | None) -> tuple[str, str]:
+    """
+    Normalize arbitrary model/free-text personal color hints into canonical Korean values.
+
+    Returns (primary_tone, sub_tone) where primary_tone in {'웜','쿨'} and
+    sub_tone in {'봄','여름','가을','겨울'}.
+    """
+    if not primary and not sub:
+        return ("웜", "봄")
+
+    p = (primary or "").strip().lower()
+    s = (sub or "").strip().lower()
+
+    # Determine primary (웜/쿨)
+    primary_norm = None
+    if any(x in p for x in ["쿨", "cool", "blue", "bluebase", "silver", "차가운"]):
+        primary_norm = "쿨"
+    if any(x in p for x in ["웜", "warm", "yellow", "gold", "따뜻한"]):
+        primary_norm = "웜"
+
+    # If primary not found, try to infer from sub
+    if not primary_norm and s:
+        if any(x in s for x in ["봄", "spring", "bright", "clear", "coral", "peach"]):
+            primary_norm = "웜"
+        if any(x in s for x in ["여름", "summer", "pastel", "soft", "lavender"]):
+            primary_norm = "쿨"
+        if any(x in s for x in ["가을", "autumn", "deep", "brown", "khaki"]):
+            primary_norm = "웜"
+        if any(x in s for x in ["겨울", "winter", "vivid", "clear", "진한", "강렬"]):
+            primary_norm = "쿨"
+
+    if not primary_norm:
+        primary_norm = "웜"
+
+    # Determine sub (season)
+    sub_norm = None
+    if any(x in s for x in ["봄", "spring", "bright", "clear", "coral", "peach"]):
+        sub_norm = "봄"
+    elif any(x in s for x in ["여름", "summer", "pastel", "soft", "lavender"]):
+        sub_norm = "여름"
+    elif any(x in s for x in ["가을", "autumn", "deep", "brown", "khaki", "warm"]):
+        sub_norm = "가을"
+    elif any(x in s for x in ["겨울", "winter", "vivid", "clear", "진한", "강렬"]):
+        sub_norm = "겨울"
+
+    # If sub not found, try heuristics from primary or primary string
+    if not sub_norm:
+        # check primary token for season-like clues
+        if any(x in p for x in ["spring", "봄", "bright"]):
+            sub_norm = "봄"
+        elif any(x in p for x in ["summer", "여름", "pastel"]):
+            sub_norm = "여름"
+        elif any(x in p for x in ["autumn", "가을", "deep"]):
+            sub_norm = "가을"
+        elif any(x in p for x in ["winter", "겨울", "vivid"]):
+            sub_norm = "겨울"
+
+    # Final fallback using primary
+    if not sub_norm:
+        sub_norm = "봄" if primary_norm == "웜" else "여름"
+
+    return (primary_norm, sub_norm)
