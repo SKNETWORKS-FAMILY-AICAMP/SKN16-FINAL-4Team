@@ -31,6 +31,7 @@ import RouterPaths from '@/routes/Router';
 import { useSurveyResultsLive, useDeleteSurvey } from '@/hooks/useSurvey';
 import type { SurveyResultDetail } from '@/api/survey';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
+import { Loading } from '@/components';
 
 const { Title, Text } = Typography;
 
@@ -39,8 +40,8 @@ const { Title, Text } = Typography;
  */
 const MyPage: React.FC = () => {
   const { data: user, isLoading } = useCurrentUser();
-  const { data: userStats, isLoading: isLoadingStats } = useUserStats();
-  const { data: surveyResults, isLoading: isLoadingSurveys } =
+  const { data: userStats, isPending: isLoadingStats } = useUserStats();
+  const { data: surveyResults, isPending: isLoadingSurveys } =
     useSurveyResultsLive();
   const navigate = useNavigate();
   const deleteCurrentUser = useDeleteCurrentUser();
@@ -142,12 +143,9 @@ const MyPage: React.FC = () => {
   };
 
   // 아바타 렌더링: getAvatarRenderInfo를 직접 사용
-
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center pt-20">
-        <div>로딩 중...</div>
-      </div>
+      <Loading />
     );
   }
 
