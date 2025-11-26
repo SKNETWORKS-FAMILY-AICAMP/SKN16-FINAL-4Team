@@ -212,6 +212,36 @@ async def analyze(payload: OrchestratorRequest):
             "parsed": influencer_result,
             "raw_model_output": influencer_result.get("raw") if isinstance(influencer_result, dict) else None,
         }
+        # If influencer returned a styled text, set it as the emotion description
+        try:
+            # styled_text may be at top-level or under 'parsed'
+            styled = None
+            if isinstance(influencer_result, dict):
+                # common places to look
+                styled = (
+                    influencer_result.get('styled_text')
+                    or (influencer_result.get('parsed') or {}).get('styled_text')
+                    or influencer_result.get('text')
+                    or influencer_result.get('response')
+                )
+
+            if styled:
+                # ensure emotion wrapper exists and has parsed dict
+                if results.get('emotion') is None:
+                    results['emotion'] = {}
+
+                # if parsed dict exists, prefer placing description there
+                try:
+                    if isinstance(results['emotion'], dict) and isinstance(results['emotion'].get('parsed'), dict):
+                        results['emotion']['parsed']['description'] = styled
+                    else:
+                        # fallback to a top-level description field
+                        results['emotion']['description'] = styled
+                except Exception:
+                    # best-effort only; do not fail the request
+                    results['emotion']['description'] = styled
+        except Exception:
+            pass
         # if ENV development, log service outputs for debugging
         if ENV and ENV.lower() == "development":
             try:
