@@ -30,7 +30,11 @@ jobs:
         run: |
           # 백엔드 이미지 빌드 및 푸시 (FastAPI)
 
+
           docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest -f./Dockerfile .
+
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest -f Dockerfile .
+
 
           docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest .
 
