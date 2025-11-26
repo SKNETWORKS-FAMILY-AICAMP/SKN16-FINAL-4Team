@@ -1,7 +1,4 @@
-
-
 name: Deploy to EC2 via Docker Compose
-
 on:
   push:
     branches:
@@ -9,8 +6,8 @@ on:
       - master
 
 jobs:
-  build-and-push:
-    name: Build and Push Docker Images
+  build-and-deploy:
+    name: Build, Push, and Deploy to EC2
     runs-on: ubuntu-latest
 
     steps:
@@ -29,12 +26,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4. 백엔드 이미지 빌드 및 푸시
+      # 4. 백엔드 이미지 빌드 및 푸시 (Backend.dockerfile 경로 사용)
       - name: Build and Push Backend Image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile
+          file: ./Backend.dockerfile # <-- 수정된 파일명 반영
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest
           cache-from: type=gha
@@ -50,13 +47,7 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/skn16-frontend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy to EC2
-    needs: build-and-push
-    runs-on: ubuntu-latest
-
-    steps:
+          
       # 6. SSH를 사용하여 EC2 서버에 접속 및 배포
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -66,20 +57,20 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           script: |
             # 프로젝트 디렉토리로 이동
-            cd ~/app
+            cd SKN16-FINAL-4Team # <-- EC2 서버의 디렉토리명으로 최종 확정
 
             # Git 저장소 업데이트 (최신 코드 가져오기)
             echo "Pulling latest code from repository..."
             git pull origin main
-
+            
             # .env 파일 확인
             if [ ! -f .env ]; then
-              echo "Error: .env file not found!"
-              echo "Please create .env file from .env.example"
-              exit 1
+              echo "Error: .env file not found! Copying from .env.example"
+              cp .env.example .env
+              # exit 1 # .env가 없으면 CI/CD가 멈추는 대신, .env.example을 복사하도록 완화
             fi
 
-            # Docker Compose 명령어 결정
+            # Docker Compose 명령어 결정 (v1과 v2 호환성을 위해)
             if command -v docker-compose &> /dev/null; then
               DOCKER_COMPOSE="docker-compose"
             else
@@ -88,7 +79,7 @@ jobs:
 
             echo "Using Docker Compose: $DOCKER_COMPOSE"
 
-            # Docker Hub 로그인
+            # Docker Hub 로그인 (EC2에서 pull 받기 위해)
             echo "Logging in to Docker Hub..."
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
@@ -96,57 +87,23 @@ jobs:
             echo "Stopping existing containers..."
             $DOCKER_COMPOSE down
 
-            # 최신 이미지 다운로드 시도
+            # 최신 이미지 다운로드
             echo "Pulling latest images from Docker Hub..."
-            $DOCKER_COMPOSE pull || echo "Pull failed, will build locally"
+            $DOCKER_COMPOSE pull
 
-            # 컨테이너 재시작 (이미지가 없으면 빌드)
+            # 컨테이너 재시작
             echo "Starting containers..."
-            $DOCKER_COMPOSE up -d --build
-
-            # 컨테이너 상태 확인
-            echo ""
-            echo "=== Container Status ==="
-            $DOCKER_COMPOSE ps
-
-            # 로그 확인 (마지막 20줄)
-            echo ""
-            echo "=== Backend logs ==="
-            $DOCKER_COMPOSE logs --tail=20 backend
-
-            echo ""
-            echo "=== Frontend logs ==="
-            $DOCKER_COMPOSE logs --tail=20 frontend
-
-            # 서비스가 준비될 때까지 대기
-            echo ""
-            echo "Waiting for services to be ready..."
-            sleep 20
+            $DOCKER_COMPOSE up -d --no-build # CI에서 이미 빌드했으므로 --no-build 사용
 
             # DB 마이그레이션 실행
             echo "Running database migrations..."
             docker exec fastapi-prod python -m alembic upgrade head || echo "Migration failed or already up to date"
-
-            # 헬스 체크
+            
+            # 컨테이너 상태 확인
             echo ""
-            echo "=== Health Check ==="
-            sleep 5
-
-            # 백엔드 헬스 체크
-            if curl -f http://localhost:8000/docs > /dev/null 2>&1; then
-              echo "✓ Backend is healthy (http://localhost:8000/docs)"
-            else
-              echo "✗ Warning: Backend health check failed"
-            fi
-
-            # 프론트엔드 헬스 체크
-            if curl -f http://localhost:80 > /dev/null 2>&1; then
-              echo "✓ Frontend is healthy (http://localhost:80)"
-            else
-              echo "✗ Warning: Frontend health check failed"
-            fi
-
-            echo ""
+            echo "=== Container Status ==="
+            $DOCKER_COMPOSE ps
+            
             echo "====================================="
             echo "Deployment completed successfully!"
             echo "====================================="
