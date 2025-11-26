@@ -27,6 +27,7 @@ jobs:
       # 3. Docker 이미지 빌드 및 Docker Hub에 푸시
       # (CI/CD 서버에서 이미지를 빌드하여 Docker Hub에 저장합니다.)
       - name: Build and Push Docker Images
+
         run: |
           # 백엔드 이미지 빌드 및 푸시 (FastAPI)
           docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest --file Dockerfile .
@@ -37,6 +38,7 @@ jobs:
           docker push ${{ secrets.DOCKERHUB_USERNAME }}/skn16-frontend:latest
         env:
           DOCKER_BUILDKIT: 1
+
 
       # 4. SSH를 사용하여 EC2 서버에 접속 및 배포 명령 실행
       - name: Deploy via SSH
