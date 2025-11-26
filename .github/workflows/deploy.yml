@@ -1,7 +1,4 @@
 - name: Deploy to EC2 via Docker Compose
-#main 브랜치에 푸시될 때마다 워크플로우 실행
-
-
 on:
   push:
     branches:
