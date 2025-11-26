@@ -47,15 +47,27 @@ echo ""
 echo "Stopping existing containers..."
 $DOCKER_COMPOSE down
 
-# 이미지 빌드
+# 환경변수 로드
+if [ -f .env ]; then
+    export $(cat .env | grep -v '^#' | xargs)
+fi
+
+# 이미지 직접 빌드 (buildx 문제 우회)
 echo ""
 echo "Building Docker images..."
-$DOCKER_COMPOSE build --no-cache
+
+# 백엔드 이미지 빌드
+echo "Building backend image..."
+docker build --no-cache -t ${DOCKERHUB_USERNAME:-local}/skn16-fastapi:latest .
+
+# 프론트엔드 이미지 빌드
+echo "Building frontend image..."
+docker build --no-cache -t ${DOCKERHUB_USERNAME:-local}/skn16-frontend:latest ./frontend
 
 # 컨테이너 시작
 echo ""
 echo "Starting containers..."
-$DOCKER_COMPOSE up -d
+$DOCKER_COMPOSE up -d --no-build
 
 # 컨테이너 상태 확인
 echo ""
