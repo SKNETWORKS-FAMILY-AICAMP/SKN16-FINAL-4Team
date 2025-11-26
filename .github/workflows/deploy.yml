@@ -68,54 +68,85 @@ jobs:
             # 프로젝트 디렉토리로 이동
             cd ~/app
 
+            # Git 저장소 업데이트 (최신 코드 가져오기)
+            echo "Pulling latest code from repository..."
+            git pull origin main
+
             # .env 파일 확인
             if [ ! -f .env ]; then
               echo "Error: .env file not found!"
+              echo "Please create .env file from .env.example"
               exit 1
             fi
 
+            # Docker Compose 명령어 결정
+            if command -v docker-compose &> /dev/null; then
+              DOCKER_COMPOSE="docker-compose"
+            else
+              DOCKER_COMPOSE="docker compose"
+            fi
+
+            echo "Using Docker Compose: $DOCKER_COMPOSE"
+
             # Docker Hub 로그인
+            echo "Logging in to Docker Hub..."
             echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
             # 기존 컨테이너 중지 및 제거
-            docker-compose down
+            echo "Stopping existing containers..."
+            $DOCKER_COMPOSE down
 
-            # 최신 이미지 다운로드
-            docker-compose pull
+            # 최신 이미지 다운로드 시도
+            echo "Pulling latest images from Docker Hub..."
+            $DOCKER_COMPOSE pull || echo "Pull failed, will build locally"
 
-            # 컨테이너 재시작
-            docker-compose up -d
+            # 컨테이너 재시작 (이미지가 없으면 빌드)
+            echo "Starting containers..."
+            $DOCKER_COMPOSE up -d --build
 
             # 컨테이너 상태 확인
-            docker-compose ps
+            echo ""
+            echo "=== Container Status ==="
+            $DOCKER_COMPOSE ps
 
             # 로그 확인 (마지막 20줄)
+            echo ""
             echo "=== Backend logs ==="
-            docker-compose logs --tail=20 backend
+            $DOCKER_COMPOSE logs --tail=20 backend
 
+            echo ""
             echo "=== Frontend logs ==="
-            docker-compose logs --tail=20 frontend
+            $DOCKER_COMPOSE logs --tail=20 frontend
+
+            # 서비스가 준비될 때까지 대기
+            echo ""
+            echo "Waiting for services to be ready..."
+            sleep 20
 
             # DB 마이그레이션 실행
             echo "Running database migrations..."
             docker exec fastapi-prod python -m alembic upgrade head || echo "Migration failed or already up to date"
 
             # 헬스 체크
-            echo "Waiting for services to be healthy..."
-            sleep 10
+            echo ""
+            echo "=== Health Check ==="
+            sleep 5
 
             # 백엔드 헬스 체크
             if curl -f http://localhost:8000/docs > /dev/null 2>&1; then
-              echo "Backend is healthy"
+              echo "✓ Backend is healthy (http://localhost:8000/docs)"
             else
-              echo "Warning: Backend health check failed"
+              echo "✗ Warning: Backend health check failed"
             fi
 
             # 프론트엔드 헬스 체크
             if curl -f http://localhost:80 > /dev/null 2>&1; then
-              echo "Frontend is healthy"
+              echo "✓ Frontend is healthy (http://localhost:80)"
             else
-              echo "Warning: Frontend health check failed"
+              echo "✗ Warning: Frontend health check failed"
             fi
 
+            echo ""
+            echo "====================================="
             echo "Deployment completed successfully!"
+            echo "====================================="
