@@ -74,22 +74,43 @@ DEFAULT_MODEL=gpt-4.1-nano-2025-04-14
 
 ## 4. 배포 실행
 
-### 방법 1: 배포 스크립트 사용 (권장)
+### 방법 1: 간단한 배포 스크립트 사용 (권장 - buildx 불필요)
+```bash
+chmod +x deploy-simple.sh
+./deploy-simple.sh
+```
+
+### 방법 2: 고급 배포 스크립트 (buildx 필요)
 ```bash
 chmod +x deploy.sh
 ./deploy.sh
 ```
 
-### 방법 2: Docker Compose 직접 사용
+### 방법 3: 수동 빌드 및 배포
 ```bash
-# 빌드 및 시작
-docker-compose build
-docker-compose up -d
+# 환경변수 로드
+export $(cat .env | grep -v '^#' | xargs)
+
+# 이미지 빌드
+docker build -t ${DOCKERHUB_USERNAME}/skn16-fastapi:latest .
+docker build -t ${DOCKERHUB_USERNAME}/skn16-frontend:latest ./frontend
+
+# Docker Compose 명령어 확인
+docker compose version || docker-compose --version
+
+# 컨테이너 시작 (docker compose 사용)
+docker compose up -d --no-build
+
+# 또는 docker-compose 사용
+docker-compose up -d --no-build
 
 # 로그 확인
+docker compose logs -f
+# 또는
 docker-compose logs -f
 
-# 마이그레이션
+# 마이그레이션 (30초 후)
+sleep 30
 docker exec fastapi-prod python -m alembic upgrade head
 ```
 
