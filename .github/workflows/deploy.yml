@@ -1,6 +1,6 @@
 name: Deploy to EC2 via Docker Compose
 
-# 💡 main 브랜치에 푸시될 때마다 워크플로우 실행
+# main 브랜치에 푸시될 때마다 워크플로우 실행
 on:
   push:
     branches:
@@ -27,7 +27,7 @@ jobs:
       # 3. Docker 이미지 빌드 및 Docker Hub에 푸시
       # (CI/CD 서버에서 이미지를 빌드하여 Docker Hub에 저장합니다.)
       - name: Build and Push Docker Images
-        # ⭐ 수정 사항: run 다음에 '|' 추가 (멀티라인 스크립트 실행)
+        # 수정 사항: run 다음에 '|' 추가 (멀티라인 스크립트 실행)
         run: |
           # 백엔드 이미지 빌드 및 푸시 (FastAPI)
           docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest .
