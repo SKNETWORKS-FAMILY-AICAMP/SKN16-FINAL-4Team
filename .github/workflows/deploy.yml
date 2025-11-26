@@ -1,4 +1,7 @@
-- name: Deploy to EC2 via Docker Compose
+
+
+name: Deploy to EC2 via Docker Compose
+
 on:
   push:
     branches:
