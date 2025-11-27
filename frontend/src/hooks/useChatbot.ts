@@ -1,6 +1,7 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { chatbotApi } from '@/api/chatbot';
+import type { InfluencerProfile } from '@/api/chatbot';
 import { userFeedbackApi } from '@/api/feedback';
 import { useCurrentUser } from './useUser';
 import { message } from 'antd';
@@ -31,9 +32,9 @@ export function useChatbot(options?: UseChatbotOptions) {
   const { data: user } = useCurrentUser();
 
   // start a new chat session explicitly
-  const startSession = useCallback(async () => {
+  const startSession = useCallback(async (influencerId?: string) => {
     try {
-      const res = await chatbotApi.startSession();
+      const res = await chatbotApi.startSession(influencerId);
       return res as { history_id: number; reused: boolean; user_turns: number };
     } catch (e) {
       console.error('채팅 세션 시작 실패', e);
@@ -116,6 +117,27 @@ export function useChatbot(options?: UseChatbotOptions) {
     return chatbotApi.endChatSession(historyId as any);
   };
 
+  // ------------------ influencer profiles (react-query) ------------------
+  const {
+    data: influencerProfilesData,
+    isLoading: isLoadingInfluencerProfiles,
+    isError: isErrorInfluencerProfiles,
+    refetch: refetchInfluencerProfiles,
+  } = useQuery<InfluencerProfile[]>({
+    queryKey: ['influencerProfiles'],
+    queryFn: () => chatbotApi.getInfluencerProfiles(),
+    staleTime: 1000 * 60 * 5,
+  });
+
+  // 호출용 래퍼: 캐시된 값 반환(없으면 빈 배열). 강제 갱신이 필요하면 forceRefresh=true 전달.
+  const getInfluencerProfiles = async (forceRefresh = false) => {
+    if (forceRefresh) {
+      const result = await refetchInfluencerProfiles();
+      return result.data || [];
+    }
+    return influencerProfilesData || [];
+  };
+
   const submitFeedback = (payload: FeedbackPayload) => (feedbackMutation.mutateAsync as any)(payload);
   const getPendingFlag = (m: any) => {
     if (!m) return false;
@@ -139,6 +161,13 @@ export function useChatbot(options?: UseChatbotOptions) {
 
     // end session (direct API call)
     endChatSession,
+
+    // influencer profiles
+    getInfluencerProfiles,
+    influencerProfiles: influencerProfilesData || [],
+    isLoadingInfluencerProfiles,
+    influencerProfilesError: isErrorInfluencerProfiles,
+    refetchInfluencerProfiles,
 
     // feedback
     submitFeedback,

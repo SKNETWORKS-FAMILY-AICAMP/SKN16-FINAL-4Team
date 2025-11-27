@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, Avatar, Tag, Typography, Button, Spin, Row, Col } from 'antd';
+import { Modal, Avatar, Tag, Typography, Button, Spin } from 'antd';
+import { useNavigate } from 'react-router-dom';
 import InfluencerImage from './InfluencerImage';
 const { Title, Text } = Typography;
 
@@ -10,6 +11,8 @@ interface Props {
 }
 
 const InfluencerProfileModal: React.FC<Props> = ({ open, onCancel, profile }) => {
+  const navigate = useNavigate();
+
   // debug: log resolved image path when modal opens
   React.useEffect(() => {
     if (open && profile) {
@@ -23,63 +26,73 @@ const InfluencerProfileModal: React.FC<Props> = ({ open, onCancel, profile }) =>
     }
   }, [open, profile]);
 
+  const startChat = () => {
+    const inflId = profile?.id || profile?.name || '';
+    navigate(`/chatbot?infl_id=${encodeURIComponent(inflId)}`, { state: { influencerProfile: profile } });
+    if (onCancel) onCancel();
+  };
+
   return (
-    <Modal open={open} onCancel={onCancel} footer={null} centered width={460} styles={{
-        body: { padding: 0, borderRadius: 12 }
-    }}>
+    <Modal open={open} onCancel={onCancel} footer={null} centered width={720} styles={{body: { padding: 0, borderRadius: 12 }}}>
       {profile ? (
-        <div style={{ borderRadius: 16, background: '#fff', boxShadow: '0 8px 28px rgba(15,23,42,0.08)', overflow: 'hidden', borderLeft: '4px solid ' + (profile.color || '#7c3aed') }}>
-          <div style={{ padding: 18 }}>
-            {/* 프로필 사진과 오른쪽 이모지 */}
-            <Row align="middle" gutter={16}>
-              <Col>
-                <Avatar size={84} style={{ border: '4px solid #fff' }}>
-                  <InfluencerImage profile={profile} name={profile?.name} emoji={profile?.emoji || '🌟'} imgStyle={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </Avatar>
-              </Col>
-              <Col flex="auto">
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <Avatar size={48} style={{ background: profile.color, fontSize: 22, lineHeight: '48px' }}>{profile.emoji || '🌟'}</Avatar>
-                </div>
-              </Col>
-            </Row>
-
-            {/* 이름과 characteristics(secondary) */}
-            <div style={{ marginTop: 12 }}>
-              <Title level={4} style={{ margin: 0 }}>{profile.name}</Title>
-              {profile.characteristics && <div style={{ marginTop: 6 }}><Text type="secondary">{profile.characteristics}</Text></div>}
-            </div>
-
-            {/* greeting */}
-            {profile.greeting && (
-              <div style={{ marginTop: 20 }}>
-                <Title level={5}>{profile.greeting}</Title>
+        <div style={{ borderRadius: 16, background: '#fff', boxShadow: '0 8px 28px rgba(15,23,42,0.08)', overflow: 'hidden' }}>
+          {/* Large image header */}
+          <div style={{ width: '100%', height: 220, background: profile.color || '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 180, height: 180, borderRadius: 12, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', border: '6px solid rgba(255,255,255,0.9)', background: '#fff', position: 'relative' }}>
+              <InfluencerImage profile={profile} name={profile?.name} emoji={profile?.emoji || '🌟'} imgStyle={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              {/* small emoji badge */}
+              <div style={{ position: 'absolute', right: -22, top: -22 }}>
+                <Avatar size={48} style={{ background: 'rgba(255,255,255,0.5)', fontSize: 22 }}>{profile.emoji || '🌟'}</Avatar>
               </div>
-            )}
+            </div>
+          </div>
 
-            {/* subscriber_name, expertise 태그 */}
-            <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {(Array.isArray(profile.subscriber_name) ? profile.subscriber_name : (profile.subscriber_name ? [profile.subscriber_name] : [])).map((s: string, i: number) => (
-                <Tag key={`sub-${i}`} color="cyan" style={{ fontWeight: 600 }}>{s}</Tag>
-              ))}
-              {(Array.isArray(profile.expertise) ? profile.expertise : (profile.expertise ? [profile.expertise] : [])).map((t: string, i: number) => (
-                <Tag key={`exp-${i}`} color="green" style={{ fontWeight: 600 }}>{t}</Tag>
-              ))}
+          <div style={{ padding: 20, display: 'flex', gap: 20 }}>
+            {/* Left: intro and tags */}
+            <div style={{ flex: 1 }}>
+              <Title level={3} style={{ marginBottom: 6 }}>{profile.name}</Title>
+              {profile.characteristics && <Text type="secondary">{profile.characteristics}</Text>}
+
+              {profile.greeting && (
+                <div style={{ marginTop: 12 }}>
+                  <Text strong>{profile.greeting}</Text>
+                </div>
+              )}
+
+              <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {(Array.isArray(profile.subscriber_name) ? profile.subscriber_name : (profile.subscriber_name ? [profile.subscriber_name] : [])).map((s: string, i: number) => (
+                  <Tag key={`sub-${i}`} color="cyan" style={{ fontWeight: 600 }}>{s}</Tag>
+                ))}
+                {(Array.isArray(profile.expertise) ? profile.expertise : (profile.expertise ? [profile.expertise] : [])).map((t: string, i: number) => (
+                  <Tag key={`exp-${i}`} color="green" style={{ fontWeight: 600 }}>{t}</Tag>
+                ))}
+              </div>
+
+              {profile.closing && (
+                <div style={{ marginTop: 16, padding: 12, borderRadius: 8, background: '#fafafa' }}>
+                  <Text type="secondary">{profile.closing}</Text>
+                </div>
+              )}
             </div>
 
-            {/* closing + 닫기 버튼 */}
-            <Row style={{ display: 'flex', flexDirection: 'column', marginTop: 14 }}>
-              <Col flex="auto">
-                {profile.closing && (
-                  <div style={{ padding: '10px 12px', borderRadius: 8, background: '#fafafa' }}>
-                    <Text type="secondary">{profile.closing}</Text>
-                  </div>
-                )}
-              </Col>
-              <Col flex="auto" className='text-right'>
-                <Button onClick={onCancel} type='primary' style={{ borderRadius: 20 }}>닫기</Button>
-              </Col>
-            </Row>
+            {/* Right: stats & actions */}
+            <div style={{ width: 220, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ background: '#fafafa', padding: 12, borderRadius: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Text type="secondary">평점</Text>
+                  <Text strong>{profile.rating || '-'}</Text>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Button type="primary" block onClick={startChat}>상담 시작</Button>
+                <Button onClick={onCancel} block>닫기</Button>
+              </div>
+
+              {profile.website && (
+                <div style={{ marginTop: 6 }}><a href={profile.website} target="_blank" rel="noreferrer">프로필 페이지 열기</a></div>
+              )}
+            </div>
           </div>
         </div>
       ) : (

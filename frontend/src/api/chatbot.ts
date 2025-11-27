@@ -19,6 +19,18 @@ export interface ChatResModel {
   emotion: EmotionType;
 }
 
+export interface InfluencerProfile {
+  id?: string;
+  name?: string;
+  greeting: string;
+  emoji: string;
+  color: string;
+  subscriber_name: string[];
+  closing: string;
+  characteristics: string;
+  expertise: string[];
+}
+
 export interface ChatItemModel {
   question_id: number;
   question: string;
@@ -52,11 +64,23 @@ class ChatbotApi {
     return response.data;
   }
 
+  /** Get existing history items for a given history id */
+  async getHistory(historyId: number): Promise<ChatbotHistoryResponse> {
+    const response = await apiClient.get<ChatbotHistoryResponse>(`/chatbot/history/${historyId}`);
+    return response.data;
+  }
+
   /**
    * 명시적으로 새 채팅 세션을 생성하고 history_id를 반환합니다.
    */
-  async startSession(): Promise<{ history_id: number; reused: boolean; user_turns: number }> {
-    const response = await apiClient.post(`/chatbot/start`, {});
+  async startSession(influencerId?: string): Promise<{ history_id: number; reused: boolean; user_turns: number }> {
+    const body: any = {};
+    if (influencerId) {
+      // include both keys for backward compatibility: some backend checks influencer_name
+      body.influencer_id = influencerId;
+      body.influencer_name = influencerId;
+    }
+    const response = await apiClient.post(`/chatbot/start`, body);
     return response.data;
   }
 
@@ -64,6 +88,22 @@ class ChatbotApi {
   async getWelcome(): Promise<{ message: string; influencer?: string; has_previous: boolean; previous_summary?: string }>{
     const response = await apiClient.get(`/chatbot/welcome`);
     return response.data;
+  }
+
+  /** 등록된 인플루언서 프로필 목록을 가져옵니다. 실패 시 빈 배열을 반환합니다. */
+  async getInfluencerProfiles(): Promise<InfluencerProfile[]> {
+    try {
+      const response = await apiClient.get(`/chatbot/influencer/profiles`);
+      return response.data;
+    } catch (e) {
+      // 실패 시 빈 배열로 안전하게 폴백
+      // 에러는 콘솔에 로그합니다.
+      // 호출 쪽에서 빈 배열을 받을 것을 기대하도록 구현합니다.
+      // (네트워크/서버 오류 등)
+      // eslint-disable-next-line no-console
+      console.error('Failed to fetch influencer profiles', e);
+      return [];
+    }
   }
 
   /**
@@ -106,14 +146,6 @@ class ChatbotApi {
   {
     const response = await apiClient.post(`/chatbot/report/save`, {
       history_id: historyId,
-    });
-    return response.data;
-  }
-
-  /** Persist influencer persona for a chat session */
-  async setSessionPersona(historyId: number, influencerName: string) {
-    const response = await apiClient.post(`/chatbot/session/${historyId}/persona`, {
-      influencer_name: influencerName,
     });
     return response.data;
   }

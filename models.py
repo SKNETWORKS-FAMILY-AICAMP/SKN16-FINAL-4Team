@@ -52,6 +52,8 @@ class ChatHistory(Base):
     user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
     # Optional influencer persona applied to this chat session
     influencer_name = Column(String(100), nullable=True)
+    # New: influencer unique id (external service id or slug). Prefer using this for reliable matching.
+    influencer_id = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     ended_at = Column(DateTime, nullable=True)
     user = relationship("User", backref="chat_histories")

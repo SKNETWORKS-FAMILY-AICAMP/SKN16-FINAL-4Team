@@ -29,11 +29,89 @@ import {
 import { getAvatarRenderInfo } from '@/utils/genderUtils';
 import RouterPaths from '@/routes/Router';
 import { useSurveyResultsLive, useDeleteSurvey } from '@/hooks/useSurvey';
+import useChatbot from '@/hooks/useChatbot';
 import type { SurveyResultDetail } from '@/api/survey';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
+import InfluencerProfileModal from '@/components/InfluencerProfileModal';
 import { Loading } from '@/components';
 
 const { Title, Text } = Typography;
+
+// 작은 하위 컴포넌트: 인플루언서 리스트를 렌더하고 클릭 시 챗봇으로 이동
+const InfluencerList: React.FC = () => {
+  const navigate = useNavigate();
+  const { influencerProfiles } = useChatbot();
+  const profiles = Array.isArray(influencerProfiles) && influencerProfiles.length > 0 ? influencerProfiles : [];
+
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [activeProfile, setActiveProfile] = useState<any | null>(null);
+
+  const openProfile = (p: any) => {
+    setActiveProfile(p);
+    setProfileModalOpen(true);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      {profiles.length === 0 ? (
+        <div className="text-sm text-gray-500">등록된 인플루언서가 없습니다.</div>
+      ) : (
+        profiles.map((p: any, idx: number) => {
+          // Determine image source: prefer explicit profile/image url, then public /profiles/<id|name>.png
+          const slug = encodeURIComponent((p.id || p.name || '').toString().trim());
+          const imageSrc = p.profile || p.image || (slug ? `/profiles/${slug}.png` : undefined);
+
+          return (
+            <div key={idx} className="flex items-center p-3 bg-white rounded shadow-sm w-full">
+              <div role="button" tabIndex={0} onClick={() => openProfile(p)} onKeyDown={() => openProfile(p)}>
+                <Avatar
+                  size={64}
+                  src={imageSrc}
+                  style={{ backgroundColor: p.color || '#f3f4f6', flexShrink: 0 }}
+                >
+                  {/* fallback content when image not available */}
+                  {p.emoji || p.icon || '🎨'}
+                </Avatar>
+              </div>
+
+              <div className="ml-4 flex-1 min-w-0">
+                <div className="text-sm font-medium">{(p as any).name || p.subscriber_name?.[0] || (p.greeting?.slice ? p.greeting.slice(0,6) : '') || '인플루언서'}</div>
+                <div className="mt-1 text-xs text-gray-500">{p.characteristics || (p.expertise ? p.expertise.join(', ') : '') || ''}</div>
+
+                {p.recent_snippet ? (
+                  <div className="mt-2 text-xs text-gray-600 w-full">
+                    <div className="truncate" title={p.recent_snippet}>
+                      {p.recent_snippet}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 text-xs text-gray-400">최근 대화 없음</div>
+                )}
+              </div>
+
+              <div className="ml-4 flex items-end w-28 flex-shrink-0">
+                <Button
+                  block
+                  type="primary"
+                  size="small"
+                  onClick={() => navigate(`/chatbot?infl_id=${slug || encodeURIComponent(p.name || '')}`, { state: { influencerProfile: p } })}
+                >
+                  상담하기
+                </Button>
+              </div>
+            </div>
+          );
+        })
+      )}
+
+      <InfluencerProfileModal
+        open={profileModalOpen}
+        onCancel={() => setProfileModalOpen(false)}
+        profile={activeProfile}
+      />
+    </div>
+  );
+};
 
 /**
  * 마이페이지 컴포넌트
@@ -301,6 +379,23 @@ const MyPage: React.FC = () => {
           </Col>
         </Row>
 
+        {/* 인플루언서 상담 섹션 */}
+        <Row className="mt-8">
+          <Col span={24}>
+            <Card className="shadow-sm border border-gray-200" style={{ borderRadius: '8px' }}>
+              <div className="px-6 py-2">
+                <div className="flex items-center justify-between">
+                  <Title level={4} className="mb-6 text-gray-800">AI 전문가</Title>
+                  <Text className="!text-gray-500 !text-sm">원하시는 인플루언서를 선택해 상담을 시작하세요</Text>
+                </div>
+
+                {/* 인플루언서 리스트 (useChatbot에서 제공) */}
+                <InfluencerList />
+              </div>
+            </Card>
+          </Col>
+        </Row>
+
         {/* 최근 진단 기록 섹션 */}
         <Row className="mt-8">
           <Col span={24}>
@@ -350,7 +445,7 @@ const MyPage: React.FC = () => {
                   <div className="space-y-4">
                     <List
                       itemLayout="vertical"
-                      size="large"
+                      size="small"
                       pagination={{
                         current: currentPage,
                         pageSize: pageSize,

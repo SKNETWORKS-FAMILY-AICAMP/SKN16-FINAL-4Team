@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 import os
 import json
 import re
+import hashlib
 
 app = FastAPI()
 
@@ -19,6 +20,7 @@ class InfluencerRequest(BaseModel):
 
 
 class InfluencerListItem(BaseModel):
+    id: Optional[str] = None
     name: str
     short_description: Optional[str] = None
     example_sentences: Optional[List[str]] = None
@@ -79,6 +81,32 @@ _INFLUENCERS_PATH = os.path.join(os.getcwd(), 'popular_youtubers.xlsx')
 _INFLUENCERS = load_influencers_from_excel(_INFLUENCERS_PATH) if os.path.exists(_INFLUENCERS_PATH) else load_influencers_from_excel('')
 
 
+def make_id(n: str) -> str:
+    """Create a stable slug-like id from a name.
+
+    - Preserve Unicode word characters (so Korean names remain readable).
+    - Replace spaces with underscore and strip extra underscores/hyphens.
+    - If resulting slug is empty, fall back to a stable short hash.
+    """
+    try:
+        s = (n or '').strip().lower().replace(' ', '_')
+        s = re.sub(r"[^\w\-]", '', s, flags=re.UNICODE)
+        s = re.sub(r'_+', '_', s).strip('_-')
+        if not s:
+            s = hashlib.sha1((n or '').encode('utf-8')).hexdigest()[:8]
+        return s
+    except Exception:
+        return hashlib.sha1((n or '').encode('utf-8')).hexdigest()[:8]
+
+
+# Ensure loaded influencer list items include a stable `id` field
+for it in _INFLUENCERS:
+    try:
+        it.setdefault('id', make_id(it.get('name', '')))
+    except Exception:
+        # best-effort; don't crash module import
+        it.setdefault('id', hashlib.sha1(repr(it).encode('utf-8')).hexdigest()[:8])
+
 @app.get('/api/influencer/list', response_model=List[InfluencerListItem])
 def list_influencers():
     return _INFLUENCERS
@@ -89,28 +117,30 @@ def apply_influencer_style(payload: InfluencerRequest):
     if not payload or not payload.user_text:
         raise HTTPException(status_code=400, detail='user_text가 필요합니다')
 
-    # choose influencer
+    # choose influencer if explicitly provided; do NOT auto-assign a default
     influencer = None
     if payload.influencer_name:
         for it in _INFLUENCERS:
             if it['name'].strip().lower() == payload.influencer_name.strip().lower():
                 influencer = it
                 break
-    if not influencer:
-        # simple fallback: pick first
-        influencer = _INFLUENCERS[0] if _INFLUENCERS else {'name': 'unknown', 'short_description': None, 'example_sentences': []}
+    # If influencer is not provided or not found, proceed without applying a persona
+    # (neutral behavior) rather than falling back to the first influencer.
 
-    # build system prompt with influencer persona
-    persona = influencer.get('short_description') or ''
-    examples = '\n'.join(influencer.get('example_sentences') or [])
-
-    system_prompt = f"""
+    # build system prompt with influencer persona if available
+    if influencer:
+        persona = influencer.get('short_description') or ''
+        examples = '\n'.join(influencer.get('example_sentences') or [])
+        system_prompt = f"""
 당신은 다음 인플루언서의 말투로 답변하는 역할을 합니다.
 인플루언서: {influencer['name']}
 설명: {persona}
 예시 문장:
 {examples}
 """
+    else:
+        # neutral advisor system prompt when no influencer persona is requested
+        system_prompt = "당신은 퍼스널컬러 및 뷰티 분야에 친절한 상담자입니다. 전문적이고 친근한 어조로 질문에 답변하세요."
 
     # Build user content including emotion metadata if provided
     emotion_block = ''
@@ -243,7 +273,18 @@ def influencer_profiles():
     out = []
     for name, meta in YOUTUBER_PROFILES.items():
         # shallow copy to avoid accidental mutation
-        obj = {'name': name, **(meta or {})}
+        # add stable id (slug) for each influencer
+        obj = {**(meta or {}), 'name': name}
+        # only set id if meta didn't provide one
+        obj.setdefault('id', make_id(name))
+
+        # Normalize recent_snippet to the last message text without role prefixes
+        try:
+            raw_snip = (meta or {}).get('recent_snippet') if isinstance(meta, dict) else None
+            if raw_snip is not None:
+                obj['recent_snippet'] = raw_snip
+        except Exception:
+            pass
         out.append(obj)
     return out
 
@@ -300,13 +341,16 @@ class EmotionChainResponse(BaseModel):
 
 @app.post('/api/influencer/style_emotion', response_model=EmotionChainResponse)
 def style_emotion_chain(payload: EmotionChainRequest):
-    # pick influencer (default: first allowed)
+    # pick influencer only if explicitly provided and allowed
     allowed = ['원준', '세현', '종민', '혜경']
     influencer = payload.influencer_name if payload.influencer_name in allowed else None
-    if not influencer:
-        influencer = allowed[0]
 
-    system_prompt = SYSTEM_PROMPTS.get(influencer, '')
+    # Use influencer-specific system prompt only when influencer is provided.
+    # Otherwise use a neutral advisor prompt (no persona).
+    if influencer:
+        system_prompt = SYSTEM_PROMPTS.get(influencer, '')
+    else:
+        system_prompt = "당신은 퍼스널컬러 및 뷰티 분야에 친절한 상담자입니다. 전문적이고 친근한 어조로 질문에 답변하세요."
 
     # Build user content: include the emotion JSON, optional color JSON, and a request to rewrite in influencer tone
     emotion_json = json.dumps(payload.emotion_result, ensure_ascii=False)
@@ -328,7 +372,10 @@ def style_emotion_chain(payload: EmotionChainRequest):
     else:
         salutation = default_sub
 
-    user_content += f"\n(호칭: {salutation})\n위 내용을 {influencer}의 말투로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+    if influencer:
+        user_content += f"\n(호칭: {salutation})\n위 내용을 {influencer}의 말투로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+    else:
+        user_content += f"\n(호칭: {salutation})\n위 내용을 친근하고 전문적인 어조로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
 
     try:
         resp = shared.client.chat.completions.create(
