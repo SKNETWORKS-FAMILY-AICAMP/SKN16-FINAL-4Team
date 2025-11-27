@@ -6,6 +6,7 @@ import json
 import re
 
 import utils.shared as shared
+from utils.emotion_lottie import to_canonical
 
 app = FastAPI()
 
@@ -26,6 +27,8 @@ class EmotionResponse(BaseModel):
     tone_tags: Optional[List[str]] = None
     emojis: Optional[List[str]] = None
     raw: Optional[Dict[str, Any]] = None
+    # canonical 6-class label (one of: happy, sad, angry, love, fearful, neutral)
+    canonical_label: Optional[str] = None
 
 
 def _get_model_to_use() -> str:
@@ -98,6 +101,42 @@ def _detect_emotion_label(text: str) -> str:
         return "neutral"
 
 
+def _query_for_canonical(text: str) -> str:
+    """
+    Ask the model in a very constrained way to return exactly one canonical label.
+    Returns one of the valid labels or 'neutral' on failure.
+    This is used as a single retry when the main JSON output lacks a valid canonical_label.
+    """
+    try:
+        valid = ["happy", "sad", "angry", "love", "fearful", "neutral"]
+        prompt = f"다음 발화의 감정을 정확히 한 단어로만 아래 목록 중에서 골라서 반환하세요(다른 텍스트 금지): {', '.join(valid)}\n발화: {text}\n라벨:"
+        resp = shared.client.chat.completions.create(
+            model=_get_model_to_use(),
+            messages=[
+                {"role": "system", "content": "응답은 반드시 목록 중 하나의 단어만 한 단어로 반환하세요."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+            max_tokens=6,
+        )
+        content = None
+        if resp and getattr(resp, "choices", None):
+            ch = resp.choices[0]
+            if isinstance(ch, dict):
+                content = ch.get("message", {}).get("content") or ch.get("text")
+            else:
+                content = getattr(ch.message, "content", None) or getattr(ch, "text", None)
+        if not content:
+            return "neutral"
+        lab = str(content).strip().lower()
+        for v in valid:
+            if lab == v or v in lab:
+                return v
+        return "neutral"
+    except Exception:
+        return "neutral"
+
+
 @app.post("/api/emotion/generate", response_model=EmotionResponse)
 async def generate_emotion(payload: EmotionRequest):
     if not payload or not payload.user_text:
@@ -142,22 +181,39 @@ async def generate_emotion(payload: EmotionRequest):
     json_instructions = (
         "\n\n중요: 설명 없이 단 하나의 유효한 JSON 객체만 반환하세요. "
         "JSON은 다음 키들을 반드시 포함해야 합니다: primary_tone (짧은 문자열), sub_tone (선택, 문자열 또는 null), description (한 단락으로 된 설명), "
-        "recommendations (짧은 문자열들의 배열). 선택적으로 추가할 수 있는 메타 필드: confidence (0.0-1.0), tone_tags (감정 태그 배열), emojis (추천 이모지 배열). "
-        "예시: {\"primary_tone\":\"calm\", \"sub_tone\": null, \"description\":\"사용자는 차분해 보입니다.\", \"recommendations\":[\"부드러운 색상 사용\"], \"confidence\":0.92, \"tone_tags\":[\"calm\"], \"emojis\":[\"neutral\"] }"
+        "recommendations (짧은 문자열들의 배열). 또한 반드시 하나의 `canonical_label` 필드를 포함하세요. 이 값은 정확히 하나의 단어여야 하며 다음 중 하나여야 합니다: [happy, sad, angry, love, fearful, neutral]. "
+        "선택적으로 추가할 수 있는 메타 필드: confidence (0.0-1.0), tone_tags (감정 태그 배열), emojis (추천 이모지 배열). "
+        "예시: {\"primary_tone\":\"calm\", \"sub_tone\": null, \"description\":\"사용자는 차분해 보입니다.\", \"recommendations\":[\"부드러운 색상 사용\"], \"confidence\":0.92, \"tone_tags\":[\"calm\"], \"emojis\":[\"neutral\"], \"canonical_label\": \"neutral\" }"
     )
+
+    # Additional few-shot examples to bias the model towards the canonical 6 labels
+    few_shot_examples = """
+예시 매핑:
+- "정말 고마워요, 덕분에 행복한 하루였어요." -> canonical_label: happy
+- "요즘 우울해서 아무것도 하기 싫어요." -> canonical_label: sad
+- "그 사람 태도 때문에 열이 받아요." -> canonical_label: angry
+- "내 노력을 무시하는 태도에 분노가 치밀어요." -> canonical_label: angry
+- "그와 함께 있으면 행복하고 사랑을 느껴." -> canonical_label: love
+- "무서워서 혼자 있을 수가 없어요." -> canonical_label: fearful
+- "별 감정이 없어요." -> canonical_label: neutral
+
+규칙: canonical_label은 반드시 위 6개 중 하나여야 하며, 불확실하면 'neutral'을 사용하세요.
+"""
 
     # Choose system prompt based on model selection
     model = _get_model_to_use()
+    # Include few-shot examples to bias model outputs toward the canonical 6-label set
     if model and os.getenv("EMOTION_MODEL_ID") and model == os.getenv("EMOTION_MODEL_ID"):
-        system = fine_tuned_system_prompt + json_instructions
+        system = fine_tuned_system_prompt + "\n" + few_shot_examples + json_instructions
     else:
-        system = base_system_prompt + json_instructions
+        system = base_system_prompt + "\n" + few_shot_examples + json_instructions
 
     user_msg = f"대화:\n{conv_text}\n\n사용자 메시지:\n{payload.user_text}"
 
     # Choose generation params tuned for structured emotion output
     # Prefer lower temperature for deterministic JSON, allow slightly higher for base models
-    temp = 0.15 if (os.getenv("EMOTION_MODEL_ID") and model == os.getenv("EMOTION_MODEL_ID")) else 0.25
+    # Make generation more deterministic to encourage consistent canonical output
+    temp = 0.0
     max_tokens = 480
 
     try:
@@ -217,23 +273,77 @@ async def generate_emotion(payload: EmotionRequest):
         if confidence is None:
             confidence = 0.9 if primary else 0.4
 
-        # tone_tags: prefer model-provided, otherwise derive from primary/sub
+        # canonical label: prefer explicit canonical_label if provided by model
+        canonical = parsed.get("canonical_label") or parsed.get("canonical") or None
+
+        # If canonical is missing or invalid, attempt a deterministic derivation
+        valid_emotions = ["happy", "sad", "angry", "love", "fearful", "neutral"]
+        def derive_canonical(parsed, description_text):
+            # 1) check tone_tags
+            tags = parsed.get('tone_tags') or parsed.get('tags') or []
+            if isinstance(tags, str):
+                tags = [tags]
+            if isinstance(tags, list):
+                for t in tags:
+                    try:
+                        c = to_canonical(t)
+                        if c and c in valid_emotions and c != 'neutral':
+                            return c
+                    except Exception:
+                        pass
+            # 2) check emojis field if present
+            ems = parsed.get('emojis') or []
+            if isinstance(ems, str):
+                ems = [ems]
+            if isinstance(ems, list):
+                for e in ems:
+                    try:
+                        c = to_canonical(e)
+                        if c and c in valid_emotions and c != 'neutral':
+                            return c
+                    except Exception:
+                        pass
+            # 3) scan description with stronger regexes for anger/fear
+            if description_text and isinstance(description_text, str):
+                txt = description_text.lower()
+                # anger cues
+                if re.search(r"\b(화가|분노|열받|짜증|불쾌|성냄|격분)\b", txt):
+                    return 'angry'
+                # fear/anxiety cues
+                if re.search(r"\b(무서|두렵|공포|겁|불안|막막|숨이 막히)\b", txt):
+                    return 'fearful'
+                # sadness cues
+                if re.search(r"\b(슬프|우울|눈물|상처|외롭)\b", txt):
+                    return 'sad'
+            # 4) fallback neutral
+            return 'neutral'
+
+        if not (isinstance(canonical, str) and canonical in valid_emotions):
+            # derive from parsed content and description
+            canonical = derive_canonical(parsed, description)
+            # If derivation didn't yield a strong non-neutral label, do a single deterministic retry
+            if not (isinstance(canonical, str) and canonical in valid_emotions and canonical != 'neutral'):
+                retry = _query_for_canonical(payload.user_text)
+                if retry and retry in valid_emotions:
+                    canonical = retry
+
+        # tone_tags: prefer model-provided, otherwise derive from canonical/primary/sub
         tone_tags = parsed.get("tone_tags")
         if not tone_tags:
             tone_tags = []
-            if primary:
+            if canonical:
+                tone_tags.append(canonical)
+            if primary and primary not in tone_tags:
                 tone_tags.append(primary)
             if sub and sub not in tone_tags:
                 tone_tags.append(sub)
             if not tone_tags:
                 tone_tags = None
 
-        # emojis: prefer model-provided, otherwise return emotion labels
-        # The frontend will map these emotion labels to animated icons.
+        # emojis: prefer model-provided, otherwise return canonical_label or detected label
         emojis = parsed.get("emojis")
         valid_emotions = ["happy", "sad", "angry", "love", "fearful", "neutral"]
         if emojis:
-            # Normalize model-provided emojis to valid emotion labels if possible
             normalized = []
             for e in (emojis if isinstance(emojis, list) else [emojis]):
                 if not e:
@@ -243,15 +353,17 @@ async def generate_emotion(payload: EmotionRequest):
                     normalized.append(el)
             emojis = normalized or None
         else:
-            # Fallback: use the model to detect a single canonical emotion label
-            try:
-                label = _detect_emotion_label(payload.user_text if payload and getattr(payload, 'user_text', None) else description)
-                emojis = [label] if label else None
-            except Exception:
-                emojis = None
+            if canonical and canonical in valid_emotions:
+                emojis = [canonical]
+            else:
+                try:
+                    label = _detect_emotion_label(payload.user_text if payload and getattr(payload, 'user_text', None) else description)
+                    emojis = [label] if label else None
+                except Exception:
+                    emojis = None
 
         return EmotionResponse(
-            primary_tone=primary or "neutral",
+            primary_tone=primary or (canonical if canonical else "neutral"),
             sub_tone=sub,
             description=description.strip(),
             recommendations=recommendations,
@@ -259,6 +371,7 @@ async def generate_emotion(payload: EmotionRequest):
             tone_tags=tone_tags,
             emojis=emojis,
             raw={"model_output": parsed},
+            canonical_label=canonical,
         )
 
     except HTTPException:

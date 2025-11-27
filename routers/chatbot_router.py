@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends
 from openai import OpenAI
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -19,8 +19,10 @@ from schemas import (
     ReportResponse,
 )
 from routers.feedback_router import generate_ai_feedbacks
-from utils.shared import top_k_chunks, build_rag_index, analyze_conversation_for_color_tone, normalize_personal_color
+from utils.shared import build_rag_index, analyze_conversation_for_color_tone, normalize_personal_color
+from utils.emotion_lottie import lottie_filename, to_canonical
 import random
+import asyncio
 
 # Optional: load influencer personas from the influencer service if available
 try:
@@ -35,6 +37,10 @@ try:
     import services.orchestrator.main as orchestrator_service
 except Exception:
     orchestrator_service = None
+try:
+    import services.api_emotion.main as api_emotion_service
+except Exception:
+    api_emotion_service = None
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -78,7 +84,7 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
 
     다음 유효한 JSON 객체 하나만, 다른 설명 없이 반환해주세요. JSON은 반드시 아래 키들을 포함해야 합니다:
     {{
-        "result_name": "{season} { {primary_or_sub} } 형식의 한글 문자열 예: '가을 웜톤'",
+        "result_name": "{season} {{primary_or_sub}} 형식의 한글 문자열 예: '가을 웜톤'",
         "primary_tone": "'웜' 또는 '쿨' (짧은 문자열)",
         "sub_tone": "'봄','여름','가을' 또는 '겨울' (짧은 문자열)",
         "emotional_description": "감성적이고 긍정적인 한 문장",
@@ -87,12 +93,12 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
         "makeup_tips": ["실용적인 메이크업 팁 4개"],
         "detailed_analysis": "대화 내용을 반영한 개인화된 분석 (2-3문단, 구체적이고 실용적인 조언 포함)",
         "top_types": [
-            {"name": "{계절} {웜/쿨}톤", "type": "spring|summer|autumn|winter", "description": "간단 설명", "score": 0}
+            {{"name": "{{계절}} {{웜/쿨}}톤", "type": "spring|summer|autumn|winter", "description": "간단 설명", "score": 0}}
         ]
     }}
 
     중요 요구사항:
-    - `result_name`과 `top_types` 배열의 각 항목 `name`은 반드시 한국어로 "{계절} {웜/쿨}톤" 형식(예: "가을 웜톤", "겨울 쿨톤")이어야 합니다.
+    - `result_name`과 `top_types` 배열의 각 항목 `name`은 반드시 한국어로 "{{계절}} {{웜/쿨}}톤" 형식(예: "가을 웜톤", "겨울 쿨톤")이어야 합니다.
     - `top_types[0].name`은 `result_name`과 동일한 값이어야 합니다.
     - `primary_tone`은 반드시 '웜' 또는 '쿨'로 표기하고, `sub_tone`은 '봄/여름/가을/겨울' 중 하나로 표기하세요.
     - 숫자 값(score)은 0~100 사이의 정수로 표기하세요.
@@ -216,7 +222,6 @@ async def welcome(db: Session = Depends(get_db), current_user: models.User = Dep
         if influencer_service and hasattr(influencer_service, 'list_influencers'):
             infl_list = influencer_service.list_influencers()
             if infl_list:
-                import random
                 chosen = random.choice(infl_list)
                 if isinstance(chosen, dict):
                     influencer_obj = chosen
@@ -605,11 +610,22 @@ def detect_emotion(text: str) -> str:
 다음 사용자 발화의 감정을 아래 목록 중 하나로만 분류하세요. 반드시 한 단어만 답하세요. 다른 단어, 설명 없이.
 목록: happy, sad, angry, love, fearful, neutral
 예시:
+발화: "{text}"
+감정 (목록 중 하나, 한 단어만):
+"""
+    prompt = f"""
+다음 사용자 발화의 감정을 아래 목록 중 하나로만 분류하세요. 반드시 한 단어만 답하세요. 다른 단어, 설명 없이.
+목록: happy, sad, angry, love, fearful, neutral
+예시 (한국어 다양한 표현 포함):
 - "오늘 너무 힘들었어요" → sad
 - "정말 고마워요!" → happy
 - "화가 나요" → angry
+- "내 노력을 무시하는 태도에 분노가 치밀어요" → angry
+- "그 사람 태도 때문에 열이 받아요" → angry
 - "사랑해요" → love
-- "무서워요" → fearful
+- "그와 함께 있으면 행복하고 사랑을 느껴" → love
+- "무서워서 혼자 있을 수가 없어요" → fearful
+- "높은 곳에 서면 다리가 떨리고 무서워요" → fearful
 - "별 감정이 없어요" → neutral
 발화: "{text}"
 감정 (목록 중 하나, 한 단어만):
@@ -635,7 +651,231 @@ def detect_emotion(text: str) -> str:
         return "neutral"
     except Exception as e:
         print(f"[detect_emotion] OpenAI 감정 분석 오류: {e}")
-        return "wink"
+        return "neutral"
+
+
+def _normalize_emotion_label(label: str) -> str:
+    """Normalize arbitrary labels to the canonical set or return empty string."""
+    if not label or not isinstance(label, str):
+        return ""
+    l = label.strip().lower()
+    # emoji mapping: map common emoji characters to canonical labels
+    emoji_map = {
+        "😄": "happy",
+        "😊": "happy",
+        "🙂": "happy",
+        "😁": "happy",
+        "😂": "happy",
+        "😭": "sad",
+        "😢": "sad",
+        "😞": "sad",
+        "😠": "angry",
+        "😡": "angry",
+        "💔": "sad",
+        "💖": "love",
+        "❤️": "love",
+        "😍": "love",
+        "😨": "fearful",
+        "😱": "fearful",
+    }
+    # if the label itself is an emoji or contains one, map it
+    for emj, mapped in emoji_map.items():
+        if emj == l or emj in label:
+            return mapped
+    # allowed canonical emotions
+    valid = ["happy", "sad", "angry", "love", "fearful", "neutral"]
+    # direct match
+    if l in valid:
+        return l
+    # common synonyms mapping
+    synonyms = {
+        "joy": "happy",
+        "happiness": "happy",
+        "depressed": "sad",
+        "anger": "angry",
+        "fear": "fearful",
+        "afraid": "fearful",
+        "love": "love",
+        "liked": "love",
+    }
+    if l in synonyms:
+        return synonyms[l]
+    # if label contains a valid token, pick first
+    for v in valid:
+        if v in l:
+            return v
+    return ""
+
+
+def _precheck_strong_anger_fear(user_text: str, convo_text: str | None = None) -> str:
+    """
+    Lightweight pre-check for strong anger/fear lexical cues in Korean.
+    Returns 'angry' or 'fearful' if a strong cue is found, otherwise empty string.
+    """
+    try:
+        import re
+        txt = (user_text or "") + "\n" + (convo_text or "")
+        txt = txt.lower()
+        # Anger cues (Korean stems)
+        if re.search(r"(열이 받|열받|분노|화가 나|성냄|짜증|분개|격분|참을 수 없)", txt):
+            return 'angry'
+        # Fear/anxiety cues
+        if re.search(r"(무서|두렵|공포|겁|불안|막막|숨이 막히|오싹)", txt):
+            return 'fearful'
+    except Exception:
+        return ""
+    return ""
+
+
+async def _call_api_emotion_service(question: str, conversation_history: list | None = None):
+    """Call the external api_emotion service if available and return the parsed response or None.
+
+    Handles both coroutine and sync implementations by running sync calls in a thread executor.
+    """
+    if not api_emotion_service:
+        return None
+    try:
+        # build payload if the service exposes the request model
+        if hasattr(api_emotion_service, 'EmotionRequest'):
+            payload = api_emotion_service.EmotionRequest(user_text=question, conversation_history=conversation_history)
+        else:
+            payload = {"user_text": question, "conversation_history": conversation_history}
+
+        gen = getattr(api_emotion_service, 'generate_emotion', None)
+        if gen is None:
+            return None
+
+        if asyncio.iscoroutinefunction(gen):
+            resp = await gen(payload)
+        else:
+            # run sync function in executor to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+            resp = await loop.run_in_executor(None, lambda: gen(payload))
+
+        # convert pydantic model to dict if needed
+        if hasattr(resp, 'dict'):
+            return resp.dict()
+        return resp if isinstance(resp, dict) else None
+    except Exception as e:
+        print(f"[analyze] api_emotion call failed: {e}")
+        return None
+
+
+def _extract_emotion_from_orchestrator(emotion_res: dict) -> str:
+    """Try to extract a canonical emotion label from the orchestrator's parsed emotion dict."""
+    if not emotion_res or not isinstance(emotion_res, dict):
+        return ""
+    # 1) normalized emojis field (list)
+    emojis = emotion_res.get('emojis') or emotion_res.get('emoji')
+    if emojis:
+        if isinstance(emojis, list) and emojis:
+            lab = _normalize_emotion_label(emojis[0])
+            if lab:
+                return lab
+        elif isinstance(emojis, str):
+            lab = _normalize_emotion_label(emojis)
+            if lab:
+                return lab
+
+    # 2) tone_tags
+    tags = emotion_res.get('tone_tags') or emotion_res.get('tags')
+    if tags and isinstance(tags, list):
+        # Prefer explicit anger tokens if present (increase sensitivity)
+        for t in tags:
+            lab = _normalize_emotion_label(t)
+            if lab == 'angry':
+                return 'angry'
+        for t in tags:
+            lab = _normalize_emotion_label(t)
+            if lab:
+                return lab
+
+    # 3) direct fields
+    for key in ('primary_tone', 'primary', 'label', 'tag', 'emotion'):
+        val = emotion_res.get(key)
+        if isinstance(val, str):
+            lab = _normalize_emotion_label(val)
+            if lab:
+                return lab
+
+    return ""
+
+
+async def _resolve_emotion_tag(emotion_res: dict, conversation_history: list | None, question: str) -> str:
+    """High-level resolver: orchestrator -> api_emotion -> local detector."""
+    # 1) orchestrator
+    try:
+        val = _extract_emotion_from_orchestrator(emotion_res)
+        if val:
+            return val
+    except Exception:
+        pass
+
+    # 2) external service
+    try:
+        api_resp = await _call_api_emotion_service(question, conversation_history)
+        if isinstance(api_resp, dict):
+            # Prefer explicit canonical_label from api_emotion if present
+            canon_label = api_resp.get('canonical_label') or api_resp.get('canonical')
+            if isinstance(canon_label, str) and canon_label:
+                try:
+                    return to_canonical(canon_label)
+                except Exception:
+                    return _normalize_emotion_label(canon_label) or ''
+            # Prefer tone_tags/emojis (they often contain more specific tokens)
+            tokens = api_resp.get('tone_tags') or api_resp.get('emojis') or api_resp.get('tags')
+            if tokens:
+                if isinstance(tokens, str):
+                    tokens = [tokens]
+                if isinstance(tokens, list):
+                    # normalize all tokens then prefer 'angry' if any
+                    canons = []
+                    for t in tokens:
+                        try:
+                            canon = to_canonical(t)
+                        except Exception:
+                            canon = _normalize_emotion_label(t)
+                        if canon:
+                            canons.append(canon)
+                    if 'angry' in canons:
+                        return 'angry'
+                    for canon in canons:
+                        if canon and canon != 'neutral':
+                            return canon
+
+            # Try scanning description/summary for lexical cues (Korean stems included in SYNONYMS)
+            desc = api_resp.get('description') or api_resp.get('summary') or ''
+            if isinstance(desc, str) and desc:
+                try:
+                    desc_canon = to_canonical(desc)
+                except Exception:
+                    desc_canon = _normalize_emotion_label(desc)
+                if desc_canon and desc_canon != 'neutral':
+                    return desc_canon
+
+            # Fallback to primary fields (canonicalize)
+            for key in ('primary_tone', 'primary', 'label', 'tag', 'emotion'):
+                v = api_resp.get(key)
+                if isinstance(v, str):
+                    try:
+                        lab = to_canonical(v)
+                    except Exception:
+                        lab = _normalize_emotion_label(v)
+                    if lab:
+                        return lab
+    except Exception:
+        pass
+
+    # 3) local fallback
+    try:
+        local = detect_emotion(question)
+        local_norm = _normalize_emotion_label(local) or local
+        if local_norm:
+            return local_norm
+    except Exception:
+        pass
+
+    return "neutral"
 
 @router.post("/analyze", response_model=ChatbotHistoryResponse)
 async def analyze(
@@ -665,24 +905,7 @@ async def analyze(
     user_display_name = getattr(current_user, "nickname", None)
     if not user_display_name:
         user_display_name = "사용자"
-    conversation_history = ""
-    user_characteristics = []
-    if prev_messages:
-        # 이전 대화에서 사용자 특성 파악
-        for msg in prev_messages[-6:]:  # 최근 6개 메시지만 사용 (3턴 대화)
-            if msg.role == "user":
-                conversation_history += f"{user_display_name}: {msg.text}\n"
-            else:
-                try:
-                    ai_data = json.loads(msg.text)
-                    conversation_history += f"전문가: {ai_data.get('description', '')}\n"
-                    if ai_data.get('primary_tone'):
-                        user_characteristics.append(f"추정 톤: {ai_data.get('primary_tone')} {ai_data.get('sub_tone')}")
-                except:
-                    conversation_history += f"전문가: {msg.text}\n"
-    
-    # 사용자 질문 + 대화 히스토리 결합
-    combined_query = f"현재 질문: {request.question}\n\n이전 대화 맥락:\n{conversation_history}"
+    # 최근 메시지는 later used to build `convo_list`; no separate summary needed here.
     
     # Use the local orchestrator service to run color+emotion -> influencer chain
     if not orchestrator_service:
@@ -727,7 +950,6 @@ async def analyze(
     except Exception as e:
         print(f"❌ Orchestrator error: {e}")
         raise HTTPException(status_code=500, detail=f"Orchestrator failed: {str(e)}")
-
     # Extract results (orchestrator now returns namespaced structures)
     raw_emotion = orch_resp.emotion or {}
     raw_color = orch_resp.color or {}
@@ -813,9 +1035,20 @@ async def analyze(
     if influencer_info:
         data["influencer"] = influencer_info
 
-    # emotion short tag
-    user_emotion = detect_emotion(request.question)
+    # Resolve emotion tag (orchestrator -> api_emotion -> local detector)
+    # Fast pre-check: if the user's message or recent convo contains strong anger/fear cues,
+    # short-circuit and use that label before calling external services.
+    convo_text = "\n".join([c.get("text", "") for c in convo_list]) if convo_list else ""
+    precheck_label = _precheck_strong_anger_fear(request.question, convo_text)
+    if precheck_label:
+        user_emotion = precheck_label
+    else:
+        user_emotion = await _resolve_emotion_tag(emotion_res, convo_list, request.question)
+    # canonicalize and attach emotion + lottie filename for frontend
+    user_emotion = to_canonical(user_emotion)
     data["emotion"] = user_emotion
+    # provide the frontend with the exact lottie filename it should load
+    data["emotion_lottie"] = lottie_filename(user_emotion)
     # Store a human-readable message in the `text` field so the frontend
     # doesn't render a raw JSON blob. Prefer the `description` (influencer-styled
     # text) when available; fall back to the full JSON payload string.
@@ -832,6 +1065,7 @@ async def analyze(
             "recommendations": data.get("recommendations"),
             "influencer": data.get("influencer"),
             "emotion": data.get("emotion"),
+            "emotion_lottie": data.get("emotion_lottie"),
         }, ensure_ascii=False),
     )
     db.add(ai_msg)
@@ -890,14 +1124,14 @@ async def analyze(
             # Ensure required ChatResModel fields exist with safe defaults
             d.setdefault('primary_tone', '')
             d.setdefault('sub_tone', '')
-            d.setdefault('emotion', d.get('emotion', 'wink') or 'wink')
+            d.setdefault('emotion', d.get('emotion', 'neutral') or 'neutral')
             d.setdefault('description', d.get('description') or '')
             items.append(ChatItemModel(
                 question_id=qid,
                 question=msgs[i].text,
                 answer=d.get("description",""),
                 chat_res=ChatResModel.model_validate(d),
-                emotion=d.get("emotion", "wink")
+                emotion=d.get("emotion", "neutral")
             ))
             qid += 1
     return {"history_id": chat_history.id, "items": items}
