@@ -16,16 +16,14 @@ import {
   ArrowLeftOutlined,
 } from '@ant-design/icons';
 import { getAvatarRenderInfo } from '@/utils/genderUtils';
-import { useNavigate, useBeforeUnload, useBlocker } from 'react-router-dom';
+import { useNavigate, useBeforeUnload, useBlocker, useLocation } from 'react-router-dom';
 import { useCurrentUser } from '@/hooks/useUser';
 import { useSurveyResultsLive } from '@/hooks/useSurvey';
 import useChatbot from '@/hooks/useChatbot';
 import type { ChatResModel } from '@/api/chatbot';
 import { chatbotApi } from '@/api/chatbot';
 import { useQuery } from '@tanstack/react-query';
-import { getInfluencerProfiles } from '@/api/influencer';
 import localInfluencers from '@/data/influencers';
-import { reportApi } from '@/api/report';
 import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
 import { normalizePersonalColor } from '@/utils/personalColorUtils';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
@@ -77,6 +75,7 @@ const ChatbotPage: React.FC = () => {
     analyzeError,
     diagnoseError,
     startSession,
+    influencerProfiles,
   } = useChatbot();
   const sessionStartedRef = useRef(false);
 
@@ -102,8 +101,20 @@ const ChatbotPage: React.FC = () => {
   const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
   const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<any | null>(null);
   const autoCloseRef = useRef<number | null>(null);
-  const lastSavedPersonaHistoryRef = useRef<number | null>(null);
 
+  const location = useLocation();
+
+  // 라우터 state로 전달된 인플루언서 프로필(예: MyPage에서 클릭으로 전달)을 수신
+  useEffect(() => {
+    try {
+      const maybe = (location as any).state?.influencerProfile;
+      if (maybe) {
+        setActiveInfluencerProfile(maybe);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [location]);
 
   // 대화가 있는지 확인하는 함수
   const hasConversation = () => messages.length > 1;
@@ -187,13 +198,8 @@ const ChatbotPage: React.FC = () => {
   const welcomeData = welcomeQuery.data;
   const welcomeIsPending = welcomeQuery.isFetching || welcomeQuery.isLoading;
 
-  // Load influencer profiles (server first, fallback to local)
-  const { data: influencers = localInfluencers } = useQuery({
-    queryKey: ['influencers'],
-    queryFn: () => getInfluencerProfiles(),
-    staleTime: 1000 * 60 * 60,
-    retry: 1,
-  });
+  // influencer profiles: hook에서 제공하는 캐시 우선, 없으면 로컬 폴백
+  const influencers = (influencerProfiles && influencerProfiles.length > 0) ? influencerProfiles : localInfluencers;
 
   useEffect(() => {
     if (!welcomeData) return;
@@ -210,29 +216,7 @@ const ChatbotPage: React.FC = () => {
         return prev;
       });
     }
-
-    if ((welcomeData as any).influencer) {
-      const infl = (welcomeData as any).influencer;
-      const profile = typeof infl === 'string' ? { name: infl } : infl;
-      setActiveInfluencerProfile(profile as any);
-    }
   }, [welcomeData]);
-
-  const prevWelcomePendingRef = useRef<boolean | null>(null);
-  useEffect(() => {
-    const prev = prevWelcomePendingRef.current;
-    if (prev === true && !welcomeIsPending) {
-      if (welcomeData && (welcomeData as any).influencer) {
-        setInfluencerModalOpen(true);
-        if (autoCloseRef.current) window.clearTimeout(autoCloseRef.current as any);
-        autoCloseRef.current = window.setTimeout(() => {
-          setInfluencerModalOpen(false);
-          autoCloseRef.current = null;
-        }, 3500) as unknown as number;
-      }
-    }
-    prevWelcomePendingRef.current = welcomeIsPending;
-  }, [welcomeIsPending, welcomeData]);
 
   useEffect(() => {
     if (welcomeData?.message) return; // server provided message, do nothing
@@ -274,7 +258,12 @@ const ChatbotPage: React.FC = () => {
     let mounted = true;
     (async () => {
       try {
-        const res = await startSession();
+        const params = new URLSearchParams((location as any).search || window.location.search);
+        const inflIdFromQuery = params.get('infl_id');
+        const inflNameFromState = (location as any).state?.influencerProfile?.name || activeInfluencerProfile?.name;
+        // prefer explicit query param infl_id (slug) if provided
+        const startWith = inflIdFromQuery || inflNameFromState;
+        const res = await startSession(startWith as any);
         if (mounted) {
           setCurrentHistoryId(res.history_id);
           // 복원 가능한 기존 열린 세션이면 이미 진행된 사용자 턴 수를 복원
@@ -282,24 +271,46 @@ const ChatbotPage: React.FC = () => {
             setUserTurnCount(res.user_turns);
             console.log('재사용 세션의 기존 사용자 턴 수 복원:', res.user_turns);
           }
-        }
-        console.log('새 채팅 세션 시작, history_id=', res.history_id, 'reused=', res.reused);
-        try {
-          if (res.history_id && activeInfluencerProfile) {
-            const name = typeof activeInfluencerProfile === 'string' ? activeInfluencerProfile : activeInfluencerProfile.name;
-            if (name) {
-              // avoid duplicate saves
-              if (lastSavedPersonaHistoryRef.current !== res.history_id) {
-                chatbotApi.setSessionPersona(res.history_id, name).then(() => {
-                  lastSavedPersonaHistoryRef.current = res.history_id;
-                  console.log('[persona] saved on session start:', name, res.history_id);
-                }).catch(err => console.warn('[persona] save failed on start:', err));
+          // If this session reuses existing history, fetch the previous messages
+          if (res.reused) {
+            try {
+              const hist = await chatbotApi.getHistory(res.history_id);
+              if (hist && Array.isArray(hist.items) && hist.items.length > 0) {
+                // convert items to ChatMessage array (chronological)
+                const loaded: ChatMessage[] = [];
+                let baseTs = Date.now() - hist.items.length * 2000;
+                for (const it of hist.items) {
+                  const userMsg: ChatMessage = {
+                    id: `h-${res.history_id}-${it.question_id}-u`,
+                    content: it.question || '',
+                    isUser: true,
+                    timestamp: new Date(baseTs),
+                  };
+                  loaded.push(userMsg);
+                  baseTs += 1000;
+                  const botMsg: ChatMessage = {
+                    id: `h-${res.history_id}-${it.question_id}-b`,
+                    content: it.answer || '',
+                    isUser: false,
+                    timestamp: new Date(baseTs),
+                    chatRes: it.chat_res,
+                  };
+                  loaded.push(botMsg);
+                  baseTs += 1000;
+                }
+                // merge with existing welcome message if present
+                setMessages(prev => {
+                  // if prev already has welcome at index 0, keep it, otherwise prepend nothing
+                  if (prev.length > 0 && prev[0]?.id === 'welcome') return [prev[0], ...loaded];
+                  return loaded;
+                });
               }
+            } catch (e) {
+              console.warn('히스토리 불러오기 실패:', e);
             }
           }
-        } catch (e) {
-          console.warn('persona 저장 시도 중 오류', e);
         }
+        console.log('새 채팅 세션 시작, history_id=', res.history_id, 'reused=', res.reused);
       } catch (e) {
         console.error('세션 시작 실패:', e);
         // 실패 시 재시도 가능하게 플래그 리셋
@@ -311,40 +322,6 @@ const ChatbotPage: React.FC = () => {
       mounted = false;
     };
   }, [startSession]);
-
-  useEffect(() => {
-    if (!currentHistoryId || !activeInfluencerProfile) return;
-    if (lastSavedPersonaHistoryRef.current === currentHistoryId) return;
-
-    const name = typeof activeInfluencerProfile === 'string' ? activeInfluencerProfile : activeInfluencerProfile.name;
-    if (!name) return;
-
-    chatbotApi.setSessionPersona(currentHistoryId, name)
-      .then(() => {
-        lastSavedPersonaHistoryRef.current = currentHistoryId;
-        console.log('[persona] saved:', name, currentHistoryId);
-      })
-      .catch(err => {
-        console.warn('[persona] save failed:', err);
-      });
-  }, [currentHistoryId, activeInfluencerProfile]);
-
-  // 리포트 키워드 확인 함수
-  const checkReportKeywords = (message: string): boolean => {
-    if (!message) return false;
-    const normalized = message.toLowerCase();
-    const keywords = [
-      '리포트',
-      '리포트 생성',
-      '보고서',
-      '분석 리포트',
-      '리포트 요청',
-      '리포트요청',
-      '리포트 생성해',
-      '리포트 만들어',
-    ];
-    return keywords.some(k => normalized.includes(k));
-  };
 
   // 메시지에 리포트(진단) 상세보기 버튼을 보여야 하는지 판단
   const shouldShowReportButton = (msg: ChatMessage): boolean => {
@@ -415,7 +392,6 @@ const ChatbotPage: React.FC = () => {
     // analyze 중복 호출 방지: 로딩 중이면 early return
     if (!inputMessage.trim() || isBusy) return;
 
-    const isReportRequest = checkReportKeywords(inputMessage.trim());
     const userNickname = `${user?.nickname || '사용자'}님`;
 
     // 현재 상태 디버깅 로그
@@ -423,7 +399,6 @@ const ChatbotPage: React.FC = () => {
     console.log('  - currentHistoryId:', currentHistoryId);
     console.log('  - surveyResults:', surveyResults);
     console.log('  - surveyResults?.length:', surveyResults?.length);
-    console.log('  - isReportRequest:', isReportRequest);
     console.log('  - user:', user);
 
     const userMessage: ChatMessage = {
@@ -438,118 +413,6 @@ const ChatbotPage: React.FC = () => {
     setIsTyping(true);
 
     try {
-      // 🔥 키워드 감지 시 리포트 요청
-      if (isReportRequest) {
-        // 3턴 이하인 경우 처리
-        if (userTurnCount < 3) {
-          // 이전 진단 데이터가 있는지 확인
-          if (surveyResults && surveyResults.length > 0) {
-            console.log(
-              '📊 리포트 키워드 감지, 이전 데이터 있음 - 상세 모달 버튼 노출'
-            );
-
-            const existingDataMessage: ChatMessage = {
-              id: (Date.now() + 1).toString(),
-              content: `📊 ${userNickname}의 이전 퍼스널컬러 진단 결과를 찾았어요!
-
-${surveyResults[0].result_name || surveyResults[0].result_tone.toUpperCase()} 타입으로 진단받으셨던 결과를 상세히 확인하실 수 있습니다.
-
-[상세보기]`,
-              isUser: false,
-              timestamp: new Date(),
-            };
-
-            setMessages(prev => [...prev, existingDataMessage]);
-            setIsTyping(false);
-            return;
-          } else {
-            // 이전 데이터 없음
-            console.log(
-              '📊 리포트 키워드 감지, 이전 데이터 없음 - 분석을 위해 정보가 더 필요'
-            );
-
-            const needMoreDataMessage: ChatMessage = {
-              id: (Date.now() + 1).toString(),
-              content: `${userNickname}, 분석을 위해 정보가 더 필요해요! 📋
-
-퍼스널컬러 진단을 위해 몇 가지 질문에 답변해 주시면, 그 결과로 상세한 분석 리포트를 만들어드릴 수 있어요!
-
-어떤 색깔 옷을 좋아하시는지, 어떤 메이크업이 잘 어울리는지부터 편하게 이야기해보실래요? 🎨`,
-              isUser: false,
-              timestamp: new Date(),
-            };
-
-            setMessages(prev => [...prev, needMoreDataMessage]);
-            setIsTyping(false);
-            return;
-          }
-        }
-
-        // 3턴 이상인 경우 기존 로직 유지
-        if (surveyResults && surveyResults.length > 0) {
-          console.log('📊 리포트 키워드 감지, 리포트 요청 중...');
-          console.log('이전 진단 결과:', surveyResults[0]);
-
-          try {
-            // 진단 결과 ID 사용 (currentHistoryId가 아님)
-            const latestSurveyId = surveyResults[0].id;
-            const reportResponse =
-              await reportApi.requestReport(latestSurveyId);
-            console.log('✅ 리포트 요청 성공:', reportResponse);
-
-            // 리포트 생성 알림 메시지
-            const reportNotificationMessage: ChatMessage = {
-              id: (Date.now() + 1).toString(),
-              content: `📊 ${userNickname}의 ${surveyResults[0].result_name || surveyResults[0].result_tone.toUpperCase()} 타입 분석 리포트를 생성하고 있습니다! 
-
-${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리포트를 만들고 있어요. 잠시만 기다려주세요...'}
-
-생성이 완료되면 마이페이지에서 확인할 수 있습니다! 📋`,
-              isUser: false,
-              timestamp: new Date(),
-            };
-
-            setMessages(prev => [...prev, reportNotificationMessage]);
-            setIsTyping(false);
-            return; // 일반 챗봇 응답 대신 리포트 요청으로 대체
-          } catch (reportError: any) {
-            console.error('❌ 리포트 요청 실패:', reportError);
-
-            // 리포트 생성 실패 메시지
-            const reportErrorMessage: ChatMessage = {
-              id: (Date.now() + 1).toString(),
-              content: `${userNickname}, 리포트 생성 중 오류가 발생했어요 😅
-
-다시 시도해보시거나, 먼저 저와 대화를 통해 새로운 퍼스널컬러 진단을 받아보시는 건 어떨까요? 
-
-새로운 진단 결과가 나오면 더 정확한 리포트를 만들어드릴 수 있습니다! 🎨`,
-              isUser: false,
-              timestamp: new Date(),
-            };
-
-            setMessages(prev => [...prev, reportErrorMessage]);
-            setIsTyping(false);
-            return;
-          }
-        } else {
-          // 3턴 이상이지만 진단 내역이 없어서 리포트 생성 불가
-          const noHistoryMessage: ChatMessage = {
-            id: (Date.now() + 1).toString(),
-            content: `${userNickname}, 아직 저장된 퍼스널컬러 진단 내역이 없어서 리포트를 생성할 수 없어요 😅
-
-방금 전 대화를 통해 분석한 결과가 있다면, 먼저 그 결과를 저장한 후 리포트를 요청해 주세요!
-
-또는 새로운 진단을 진행하실 수도 있어요! 🎨`,
-            isUser: false,
-            timestamp: new Date(),
-          };
-
-          setMessages(prev => [...prev, noHistoryMessage]);
-          setIsTyping(false);
-          return;
-        }
-      }
-
       // 일반 챗봇 대화
       const response = await analyze({
         question: inputMessage.trim(),
@@ -1071,7 +934,7 @@ function isDiagnosisBubble(msg?: any): boolean {
   // 로그인하지 않은 경우
   if (!user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 flex items-center justify-center pt-20">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 flex items-center justify-center">
         <Card
           className="shadow-xl border-0 max-w-md"
           style={{ borderRadius: '16px' }}
@@ -1218,7 +1081,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                         // prefer server-provided influencer profiles when available
                         if (Array.isArray(influencers) && influencers.length > 0) {
                           for (const p of influencers) {
-                            const n = (p.name || '').toString().toLowerCase();
+                            const n = ((p as any).name || '').toString().toLowerCase();
                             if (!n) continue;
                             if (key === n || key.includes(n) || key.startsWith(n)) return p;
                           }

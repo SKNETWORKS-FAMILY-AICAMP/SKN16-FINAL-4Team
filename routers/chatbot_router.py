@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Body
 from openai import OpenAI
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -216,19 +216,6 @@ async def welcome(db: Session = Depends(get_db), current_user: models.User = Dep
         # silently ignore DB failures here; frontend has a local fallback
         has_prev = False
 
-    # Try to pick an influencer (prefer returning the full object if available)
-    influencer_obj = None
-    try:
-        if influencer_service and hasattr(influencer_service, 'list_influencers'):
-            infl_list = influencer_service.list_influencers()
-            if infl_list:
-                chosen = random.choice(infl_list)
-                if isinstance(chosen, dict):
-                    influencer_obj = chosen
-                else:
-                    influencer_obj = {"name": str(chosen)}
-    except Exception:
-        influencer_obj = None
 
     # Build a contextual welcome message using the LLM when possible.
     # If we have a previous diagnosis, ask the LLM to mention it; otherwise ask gentle diagnostic questions.
@@ -236,11 +223,6 @@ async def welcome(db: Session = Depends(get_db), current_user: models.User = Dep
         infl_name = None
         infl_excerpt = None
         persona_notes = None
-        if influencer_obj:
-            infl_name = influencer_obj.get('name') or influencer_obj.get('id')
-            infl_excerpt = (influencer_obj.get('short_description') if isinstance(influencer_obj.get('short_description'), str) else None) or influencer_obj.get('expertise') or influencer_obj.get('tag')
-            # optional speaking style or tone hint from influencer metadata
-            persona_notes = influencer_obj.get('speaking_style') if isinstance(influencer_obj.get('speaking_style'), str) else None
 
         # Build system + user prompt for the LLM
         system_prompt = "당신은 퍼스널컬러 분야의 친절한 상담자이며, 주어진 인플루언서 페르소나의 말투와 스타일을 모방하여 한국어로 자연스럽고 친근한 환영 인사를 작성합니다. 응답은 사용자에게 바로 표시할 텍스트 한 덩어리(문단)로만 출력하세요."
@@ -304,7 +286,112 @@ async def welcome(db: Session = Depends(get_db), current_user: models.User = Dep
         print(f"[welcome] 메시지 생성 중 오류: {e}")
         message = f"안녕하세요, {user_nick}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다! 무엇을 도와드릴까요?"
 
-    return {"message": message, "influencer": influencer_obj, "has_previous": has_prev, "previous_summary": prev_summary}
+    return {"message": message, "has_previous": has_prev, "previous_summary": prev_summary}
+
+
+@router.get('/influencer/profiles')
+def get_influencer_profiles(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """
+    Proxy endpoint: returns influencer profiles for the frontend.
+    If the `services.api_influencer` module is available, call its `influencer_profiles()` function.
+    Otherwise return a safe fallback list.
+    """
+    try:
+        profiles = None
+        if influencer_service and hasattr(influencer_service, 'influencer_profiles'):
+            res = influencer_service.influencer_profiles()
+            # convert pydantic models to dicts when necessary
+            if isinstance(res, list):
+                out = []
+                for it in res:
+                    try:
+                        if hasattr(it, 'dict'):
+                            out.append(it.dict())
+                        else:
+                            out.append(it)
+                    except Exception:
+                        out.append(it)
+                profiles = out
+            else:
+                profiles = res
+        # fallback safe list if service not available
+        if not profiles:
+            profiles = [
+                {'name': '원준', 'short_description': '친근하면서도 솔직한 리뷰', 'example_sentences': ['안녕하세요 귀욤이님! 원준입니다!']},
+                {'name': '세현', 'short_description': '자연스러운 데일리 메이크업 전문', 'example_sentences': ['안녕하세요 포드래곤님! 세현이예요!']},
+                {'name': '종민', 'short_description': '가성비 중심의 실용적 리뷰', 'example_sentences': ['안녕하세요 트루드래곤님! 종민입니다!']},
+                {'name': '혜경', 'short_description': '종합 뷰티 가이드', 'example_sentences': ['안녕하세요 뷰티패밀리님! 혜경입니다!']},
+            ]
+
+        # Ensure each profile has a stable unique id (slug) for client-side linking
+        def make_id(name: str) -> str:
+            try:
+                s = name.strip().lower()
+                s = s.replace(' ', '_')
+                import re
+                s = re.sub(r'[^a-z0-9_\-]', '', s)
+                return s
+            except Exception:
+                return str(name)
+
+        for p in profiles:
+            try:
+                if isinstance(p, dict) and not p.get('id'):
+                    nm = p.get('name') or p.get('short_name') or p.get('short_description') or 'unknown'
+                    p['id'] = make_id(str(nm))
+            except Exception:
+                p['id'] = p.get('name') or 'unknown'
+
+        # If we have a logged-in user, attach a short recent conversation snippet per influencer
+        try:
+            user_id = getattr(current_user, 'id', None)
+            if user_id:
+                for p in profiles:
+                    infl_id = None
+                    try:
+                        infl_id = p.get('id') or p.get('influencer_id')
+                    except Exception:
+                        infl_id = None
+                    if not infl_id:
+                        p['recent_snippet'] = None
+                        continue
+
+                    # find the most recent chat history for this user with this influencer id, fallback to name if necessary
+                    try:
+                        hist = db.query(models.ChatHistory).filter_by(user_id=user_id, influencer_id=infl_id).order_by(models.ChatHistory.created_at.desc()).first()
+                        if not hist:
+                            # try fallback by name match
+                            name = p.get('name')
+                            if name:
+                                hist = db.query(models.ChatHistory).filter(models.ChatHistory.user_id==user_id, models.ChatHistory.influencer_name.like(f"%{name}%")).order_by(models.ChatHistory.created_at.desc()).first()
+                        if not hist:
+                            p['recent_snippet'] = None
+                            continue
+
+                        msgs = db.query(models.ChatMessage).filter_by(history_id=hist.id).order_by(models.ChatMessage.created_at.desc()).limit(4).all()
+                        # reverse to chronological order
+                        msgs = list(reversed(msgs))
+                        snippet_lines = []
+                        for m in msgs:
+                            role = 'U' if getattr(m, 'role', '') == 'user' else 'A'
+                            text = (getattr(m, 'text', '') or '')
+                            # shorten long texts
+                            short = text.replace('\n', ' ').strip()
+                            if len(short) > 120:
+                                short = short[:117] + '...'
+                            snippet_lines.append(f"{role}: {short}")
+                        p['recent_snippet'] = ' | '.join(snippet_lines)
+                    except Exception as e:
+                        print(f"[get_influencer_profiles] recent snippet lookup failed for {name}: {e}")
+                        p['recent_snippet'] = None
+        except Exception:
+            # if any error occurs during recent lookup, ignore and return profiles as-is
+            pass
+
+        return profiles
+    except Exception as e:
+        print(f"[get_influencer_profiles] proxy call failed: {e}")
+        return []
 
 # RAG 인덱스 구축 (서버 시작 시 한 번만 실행)
 fixed_index = build_rag_index(client, "data/RAG/personal_color_RAG.txt")
@@ -1139,6 +1226,7 @@ async def analyze(
 
 @router.post("/start")
 def start_chat_session(
+    payload: dict | None = Body(None),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1153,14 +1241,36 @@ def start_chat_session(
     # creating duplicate open sessions. Locking the user row is lightweight and
     # avoids requiring DB schema changes (partial unique indexes) here.
     try:
+        # optional influencer_name from request body
+        influencer_name = None
+        try:
+            if payload and isinstance(payload, dict):
+                influencer_name = payload.get('influencer_name') or payload.get('influencer')
+        except Exception:
+            influencer_name = None
+
         # Lock the user row for this transaction
         db.query(models.User).filter(models.User.id == current_user.id).with_for_update().first()
 
         # Now check again for an existing open session while holding the lock
-        existing = db.query(models.ChatHistory).filter(
-            models.ChatHistory.user_id == current_user.id,
-            models.ChatHistory.ended_at == None,
-        ).order_by(models.ChatHistory.created_at.desc()).first()
+        # If an influencer_name was requested, prefer reusing an open session for that influencer
+        existing = None
+        if influencer_name:
+            try:
+                existing = db.query(models.ChatHistory).filter(
+                    models.ChatHistory.user_id == current_user.id,
+                    models.ChatHistory.ended_at == None,
+                    models.ChatHistory.influencer_name == influencer_name,
+                ).order_by(models.ChatHistory.created_at.desc()).first()
+            except Exception:
+                existing = None
+
+        # fallback: any existing open session
+        if not existing:
+            existing = db.query(models.ChatHistory).filter(
+                models.ChatHistory.user_id == current_user.id,
+                models.ChatHistory.ended_at == None,
+            ).order_by(models.ChatHistory.created_at.desc()).first()
 
         if existing:
             user_turns = db.query(models.ChatMessage).filter_by(history_id=existing.id, role='user').count()
@@ -1169,12 +1279,21 @@ def start_chat_session(
 
         # No existing open session found while holding the lock: create one
         chat_history = models.ChatHistory(user_id=current_user.id)
+        # persist both influencer id and name when available
+        try:
+            if influencer_name:
+                # if influencer_name is actually an id (slug), store in influencer_id
+                if isinstance(influencer_name, str) and '_' in influencer_name:
+                    chat_history.influencer_id = influencer_name
+                else:
+                    chat_history.influencer_name = influencer_name
+        except Exception:
+            pass
         db.add(chat_history)
         db.commit()
         db.refresh(chat_history)
         print(f"➕ 새 채팅 세션 생성: user_id={current_user.id}, history_id={chat_history.id}")
         return {"history_id": chat_history.id, "reused": False, "user_turns": 0}
-
     except Exception as e:
         # Roll back on error and return a 500 so clients can retry safely
         print(f"❌ /start 오류 발생: {e}")
@@ -1185,35 +1304,63 @@ def start_chat_session(
         raise HTTPException(status_code=500, detail="채팅 세션 생성 중 DB 오류가 발생했습니다")
 
 
-@router.post('/session/{history_id}/persona')
-def set_session_persona(
-    history_id: int,
-    payload: dict,
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Set or update the influencer persona for an existing chat history.
+@router.get('/history/{history_id}')
+def get_chat_history(history_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return existing chat history items for the current user.
 
-    Payload example: { "influencer_name": "원준" }
+    This endpoint is safe to call after `start` returns a history_id (including reused sessions)
+    and will return the same `items` structure as `/analyze` produces so the frontend can
+    rehydrate the chat UI without sending a new user message.
     """
-    infl_name = payload.get('influencer_name') or payload.get('name')
-    if not infl_name:
-        raise HTTPException(status_code=400, detail='influencer_name is required')
-
-    chat = db.query(models.ChatHistory).filter_by(id=history_id, user_id=current_user.id).first()
-    if not chat:
-        raise HTTPException(status_code=404, detail='대화 세션 없음')
-
-    chat.influencer_name = infl_name
     try:
-        db.add(chat)
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        print(f"❌ set_session_persona DB 오류: {e}")
-        raise HTTPException(status_code=500, detail='DB 저장 실패')
+        history = db.query(models.ChatHistory).filter_by(id=history_id, user_id=current_user.id).first()
+        if not history:
+            raise HTTPException(status_code=404, detail="해당 history_id 세션 없음")
 
-    return {"message": "persona saved", "influencer_name": infl_name}
+        msgs = db.query(models.ChatMessage).filter_by(history_id=history.id).order_by(models.ChatMessage.id.asc()).all()
+        items = []
+        qid = 1
+        # pair user + ai messages into items (same logic as in /analyze)
+        for i in range(0, len(msgs) - 1, 2):
+            try:
+                if msgs[i].role == 'user' and msgs[i+1].role in ('ai', 'system', 'assistant'):
+                    raw_text = (msgs[i+1].text or "")
+                    try:
+                        d = json.loads(raw_text)
+                    except Exception:
+                        d = {"description": raw_text}
+
+                    # normalize recommendations field
+                    recommendations = d.get('recommendations', [])
+                    if isinstance(recommendations, dict):
+                        recommendations = list(recommendations.values())
+                    elif not isinstance(recommendations, list):
+                        recommendations = []
+                    d['recommendations'] = recommendations
+                    d.setdefault('primary_tone', '')
+                    d.setdefault('sub_tone', '')
+                    d.setdefault('emotion', d.get('emotion', 'neutral') or 'neutral')
+                    d.setdefault('description', d.get('description') or '')
+
+                    # create ChatItemModel-like structure
+                    item = {
+                        'question_id': qid,
+                        'question': msgs[i].text,
+                        'answer': d.get('description', ''),
+                        'chat_res': d,
+                    }
+                    items.append(item)
+                    qid += 1
+            except Exception:
+                continue
+
+        return {"history_id": history.id, "items": items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[get_chat_history] error: {e}")
+        raise HTTPException(status_code=500, detail="히스토리 조회 중 오류가 발생했습니다")
+    
 
 @router.post("/end/{history_id}")
 async def end_chat_session(
