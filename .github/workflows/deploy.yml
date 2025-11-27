@@ -31,7 +31,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Backend.dockerfile # <-- 수정된 파일명 반영
+          file: ./Dockerfile # <-- 수정된 파일명 반영
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest
           cache-from: type=gha
