@@ -18,6 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
+      # For test runs we provide lightweight test-friendly defaults.
+      # Use a file-backed SQLite DB for tests and a dummy OpenAI key (tests should mock requests).
+      DB_URL: sqlite:///./test.db
+      OPENAI_API_KEY: test
 
     steps:
       - name: Checkout repository
