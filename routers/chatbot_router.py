@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi import APIRouter, HTTPException, Depends, Body, Query
 from openai import OpenAI
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -188,7 +188,11 @@ def get_db():
 
 
 @router.get("/welcome")
-async def welcome(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+async def welcome(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    influencer_id: str | None = Query(None, alias='influencer_id')
+):
     """
     Simple welcome endpoint used by frontend to provide a server-side welcome message
     and an optional influencer suggestion. This is intentionally lightweight so the
@@ -223,6 +227,56 @@ async def welcome(db: Session = Depends(get_db), current_user: models.User = Dep
         infl_name = None
         infl_excerpt = None
         persona_notes = None
+
+        # If caller provided an influencer id or slug, try to resolve it
+        # to a full profile via the influencer service (or fallback list).
+        if influencer_id:
+            try:
+                profiles = None
+                if influencer_service and hasattr(influencer_service, 'influencer_profiles'):
+                    res = influencer_service.influencer_profiles()
+                    if isinstance(res, list):
+                        outp = []
+                        for it in res:
+                            try:
+                                if hasattr(it, 'dict'):
+                                    outp.append(it.dict())
+                                else:
+                                    outp.append(it)
+                            except Exception:
+                                outp.append(it)
+                        profiles = outp
+                    else:
+                        profiles = res
+                if not profiles:
+                    profiles = [
+                        {'id': 'won_jun', 'name': '원준', 'short_description': '친근하면서도 솔직한 리뷰', 'example_sentences': ['안녕하세요 귀욤이님! 원준입니다!']},
+                        {'id': 'se_hyun', 'name': '세현', 'short_description': '자연스러운 데일리 메이크업 전문', 'example_sentences': ['안녕하세요 포드래곤님! 세현이예요!']},
+                        {'id': 'jong_min', 'name': '종민', 'short_description': '가성비 중심의 실용적 리뷰', 'example_sentences': ['안녕하세요 트루드래곤님! 종민입니다!']},
+                        {'id': 'hye_kyung', 'name': '혜경', 'short_description': '종합 뷰티 가이드', 'example_sentences': ['안녕하세요 뷰티패밀리님! 혜경입니다!']},
+                    ]
+
+                # try match by id or name (case-insensitive)
+                found = None
+                for p in profiles:
+                    try:
+                        pid = str(p.get('id') or p.get('influencer_id') or '')
+                        name = str(p.get('name') or p.get('short_name') or '')
+                        if pid and pid == str(influencer_id):
+                            found = p
+                            break
+                        if name and name.lower() == str(influencer_id).lower():
+                            found = p
+                            break
+                    except Exception:
+                        continue
+
+                if found:
+                    infl_name = found.get('name') or infl_name
+                    infl_excerpt = found.get('short_description') or (found.get('example_sentences') and found.get('example_sentences')[0])
+                    persona_notes = found.get('characteristics') or found.get('description') or None
+            except Exception:
+                pass
 
         # Build system + user prompt for the LLM
         system_prompt = "당신은 퍼스널컬러 분야의 친절한 상담자이며, 주어진 인플루언서 페르소나의 말투와 스타일을 모방하여 한국어로 자연스럽고 친근한 환영 인사를 작성합니다. 응답은 사용자에게 바로 표시할 텍스트 한 덩어리(문단)로만 출력하세요."
@@ -342,51 +396,6 @@ def get_influencer_profiles(db: Session = Depends(get_db), current_user: models.
             except Exception:
                 p['id'] = p.get('name') or 'unknown'
 
-        # If we have a logged-in user, attach a short recent conversation snippet per influencer
-        try:
-            user_id = getattr(current_user, 'id', None)
-            if user_id:
-                for p in profiles:
-                    infl_id = None
-                    try:
-                        infl_id = p.get('id') or p.get('influencer_id')
-                    except Exception:
-                        infl_id = None
-                    if not infl_id:
-                        p['recent_snippet'] = None
-                        continue
-
-                    # find the most recent chat history for this user with this influencer id, fallback to name if necessary
-                    try:
-                        hist = db.query(models.ChatHistory).filter_by(user_id=user_id, influencer_id=infl_id).order_by(models.ChatHistory.created_at.desc()).first()
-                        if not hist:
-                            # try fallback by name match
-                            name = p.get('name')
-                            if name:
-                                hist = db.query(models.ChatHistory).filter(models.ChatHistory.user_id==user_id, models.ChatHistory.influencer_name.like(f"%{name}%")).order_by(models.ChatHistory.created_at.desc()).first()
-                        if not hist:
-                            p['recent_snippet'] = None
-                            continue
-
-                        msgs = db.query(models.ChatMessage).filter_by(history_id=hist.id).order_by(models.ChatMessage.created_at.desc()).limit(4).all()
-                        # reverse to chronological order
-                        msgs = list(reversed(msgs))
-                        snippet_lines = []
-                        for m in msgs:
-                            role = 'U' if getattr(m, 'role', '') == 'user' else 'A'
-                            text = (getattr(m, 'text', '') or '')
-                            # shorten long texts
-                            short = text.replace('\n', ' ').strip()
-                            if len(short) > 120:
-                                short = short[:117] + '...'
-                            snippet_lines.append(f"{role}: {short}")
-                        p['recent_snippet'] = ' | '.join(snippet_lines)
-                    except Exception as e:
-                        print(f"[get_influencer_profiles] recent snippet lookup failed for {name}: {e}")
-                        p['recent_snippet'] = None
-        except Exception:
-            # if any error occurs during recent lookup, ignore and return profiles as-is
-            pass
 
         return profiles
     except Exception as e:
@@ -1304,6 +1313,192 @@ def start_chat_session(
         raise HTTPException(status_code=500, detail="채팅 세션 생성 중 DB 오류가 발생했습니다")
 
 
+
+
+@router.get('/history/influencers')
+def get_influencer_histories(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return a list of influencer groups for the current user with simple summaries.
+
+    Each item contains: `influencer_id`, `influencer_name`, `total_sessions`, `total_messages`, `last_activity`.
+    """
+    try:
+        user_id = getattr(current_user, 'id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="로그인 필요")
+
+        histories = db.query(models.ChatHistory).filter_by(user_id=user_id).order_by(models.ChatHistory.created_at.desc()).all()
+
+        groups: dict = {}
+        for h in histories:
+            key = h.influencer_id or (h.influencer_name or 'unknown')
+            name = h.influencer_name or h.influencer_id or 'unknown'
+            if key not in groups:
+                groups[key] = {
+                    'influencer_id': key,
+                    'influencer_name': name,
+                    'histories': [],
+                    'total_messages': 0,
+                    'last_activity': h.created_at,
+                }
+            groups[key]['histories'].append(h.id)
+            # count messages for this history
+            try:
+                cnt = db.query(models.ChatMessage).filter_by(history_id=h.id).count()
+            except Exception:
+                cnt = 0
+            groups[key]['total_messages'] += cnt
+            if h.created_at and (not groups[key]['last_activity'] or h.created_at > groups[key]['last_activity']):
+                groups[key]['last_activity'] = h.created_at
+
+        # Retrieve influencer profiles (prefer influencer service) to merge metadata
+        profiles = None
+        try:
+            if influencer_service and hasattr(influencer_service, 'influencer_profiles'):
+                res = influencer_service.influencer_profiles()
+                if isinstance(res, list):
+                    outp = []
+                    for it in res:
+                        try:
+                            if hasattr(it, 'dict'):
+                                outp.append(it.dict())
+                            else:
+                                outp.append(it)
+                        except Exception:
+                            outp.append(it)
+                    profiles = outp
+                else:
+                    profiles = res
+        except Exception:
+            profiles = None
+
+        # fallback safe list if service not available
+        if not profiles:
+            profiles = [
+                {'id': 'won_jun', 'name': '원준', 'short_description': '친근하면서도 솔직한 리뷰', 'example_sentences': ['안녕하세요 귀욤이님! 원준입니다!']},
+                {'id': 'se_hyun', 'name': '세현', 'short_description': '자연스러운 데일리 메이크업 전문', 'example_sentences': ['안녕하세요 포드래곤님! 세현이예요!']},
+                {'id': 'jong_min', 'name': '종민', 'short_description': '가성비 중심의 실용적 리뷰', 'example_sentences': ['안녕하세요 트루드래곤님! 종민입니다!']},
+                {'id': 'hye_kyung', 'name': '혜경', 'short_description': '종합 뷰티 가이드', 'example_sentences': ['안녕하세요 뷰티패밀리님! 혜경입니다!']},
+            ]
+
+        # Normalize profiles into a lookup by id and by name
+        profile_map_by_id = {}
+        profile_map_by_name = {}
+        for p in profiles:
+            try:
+                if isinstance(p, dict):
+                    pid = p.get('id') or p.get('influencer_id') or None
+                    name = p.get('name') or p.get('short_name') or None
+                    if pid:
+                        profile_map_by_id[str(pid)] = p
+                    if name:
+                        profile_map_by_name[str(name).lower()] = p
+            except Exception:
+                continue
+
+        # Ensure that every known profile appears in the groups map even if the user
+        # has no chat histories with them. This lets the frontend depend on a
+        # single endpoint for both the influencer list and per-influencer histories.
+        def _slugify_name(n: str) -> str:
+            try:
+                s = str(n).strip().lower()
+                s = s.replace(' ', '_')
+                import re
+                s = re.sub(r'[^a-z0-9_\-]', '', s)
+                return s
+            except Exception:
+                return str(n)
+
+        for p in profiles:
+            try:
+                if not isinstance(p, dict):
+                    continue
+                pid = p.get('id') or p.get('influencer_id')
+                name = p.get('name') or p.get('short_name') or p.get('short_description')
+                key = str(pid) if pid else _slugify_name(name or 'unknown')
+                if key not in groups:
+                    groups[key] = {
+                        'influencer_id': key,
+                        'influencer_name': name or key,
+                        'histories': [],
+                        'total_messages': 0,
+                        'last_activity': None,
+                    }
+            except Exception:
+                continue
+
+        # Remove the generic 'unknown' group so the frontend receives only
+        # meaningful influencer entries (profiles or named influencers).
+        # This avoids showing an 'unknown' tile in the influencer list.
+        filtered_groups = {k: v for k, v in groups.items() if str(k).lower() != 'unknown'}
+
+        out = []
+        for key, g in filtered_groups.items():
+            recent_msg = None
+            try:
+                recent_msg = db.query(models.ChatMessage).join(models.ChatHistory).filter(models.ChatHistory.user_id==user_id, models.ChatHistory.id.in_(g['histories'])).order_by(models.ChatMessage.created_at.desc()).first()
+            except Exception:
+                recent_msg = None
+
+            if recent_msg:
+                text = getattr(recent_msg, 'text', '') or ''
+                short = text.replace('\n', ' ').strip()
+                if len(short) > 120:
+                    short = short[:117] + '...'
+
+            # merge profile metadata if available
+            profile_meta = None
+            try:
+                # prefer exact id match
+                if g['influencer_id'] and profile_map_by_id.get(str(g['influencer_id'])):
+                    profile_meta = profile_map_by_id.get(str(g['influencer_id']))
+                else:
+                    # try name match
+                    nm = (g['influencer_name'] or '').lower()
+                    if nm and profile_map_by_name.get(nm):
+                        profile_meta = profile_map_by_name.get(nm)
+            except Exception:
+                profile_meta = None
+
+            item = {
+                'influencer_id': g['influencer_id'],
+                'influencer_name': g['influencer_name'],
+                'total_sessions': len(g['histories']),
+                'total_messages': g['total_messages'],
+                'last_activity': g['last_activity'],
+            }
+            if profile_meta:
+                # Merge the full profile metadata when available so the frontend
+                # can rely on a single API response for both history summaries
+                # and detailed profile fields used by the profile modal.
+                try:
+                    # If the profile provider returned a rich dict, attach it directly.
+                    # Normalize common alternate field names to keep shape predictable.
+                    full_profile = dict(profile_meta) if isinstance(profile_meta, dict) else profile_meta
+                    # normalize small set of aliases into common keys
+                    if not full_profile.get('id'):
+                        full_profile['id'] = full_profile.get('influencer_id') or full_profile.get('name')
+                    if not full_profile.get('image'):
+                        full_profile['image'] = full_profile.get('profile') or full_profile.get('avatar') or full_profile.get('image')
+                    if not full_profile.get('short_description'):
+                        full_profile['short_description'] = full_profile.get('short_description') or full_profile.get('short_name') or full_profile.get('description')
+
+                    item['profile'] = full_profile
+                except Exception:
+                    # fallback: do nothing and keep item without profile
+                    pass
+
+            out.append(item)
+
+        # sort by last_activity desc
+        out.sort(key=lambda x: x.get('last_activity') or datetime.min, reverse=True)
+        return out
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[get_influencer_histories] error: {e}")
+        raise HTTPException(status_code=500, detail="인플루언서별 히스토리 조회 중 오류가 발생했습니다")
+
+
 @router.get('/history/{history_id}')
 def get_chat_history(history_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Return existing chat history items for the current user.
@@ -1360,6 +1555,46 @@ def get_chat_history(history_id: int, current_user: models.User = Depends(get_cu
     except Exception as e:
         print(f"[get_chat_history] error: {e}")
         raise HTTPException(status_code=500, detail="히스토리 조회 중 오류가 발생했습니다")
+
+
+@router.get('/history/influencer/{influencer_id}')
+def get_messages_for_influencer(influencer_id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return all messages for the given influencer across the user's chat histories.
+
+    The response contains `history_id` and `items` (list of messages ordered by created_at asc).
+    """
+    try:
+        user_id = getattr(current_user, 'id', None)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="로그인 필요")
+
+        # find histories that match influencer_id (exact match on influencer_id OR name-like match)
+        histories = db.query(models.ChatHistory).filter(models.ChatHistory.user_id==user_id).filter(
+            (models.ChatHistory.influencer_id == influencer_id) | (models.ChatHistory.influencer_name.like(f"%{influencer_id}%"))
+        ).order_by(models.ChatHistory.created_at.asc()).all()
+
+        if not histories:
+            return {'history_id': None, 'items': []}
+
+        # collect messages across histories, preserving chronological order
+        history_ids = [h.id for h in histories]
+        msgs = db.query(models.ChatMessage).filter(models.ChatMessage.history_id.in_(history_ids)).order_by(models.ChatMessage.created_at.asc()).all()
+
+        items = [
+            {
+                'history_id': m.history_id,
+                'role': m.role,
+                'text': m.text,
+                'raw': m.raw,
+                'created_at': m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
+            }
+            for m in msgs
+        ]
+
+        return {'history_ids': history_ids, 'items': items}
+    except Exception as e:
+        print(f"[get_messages_for_influencer] error: {e}")
+        raise HTTPException(status_code=500, detail="인플루언서별 메시지 조회 중 오류가 발생했습니다")
     
 
 @router.post("/end/{history_id}")

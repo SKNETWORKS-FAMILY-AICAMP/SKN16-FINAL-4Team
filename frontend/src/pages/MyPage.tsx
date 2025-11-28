@@ -42,8 +42,12 @@ const { Title, Text } = Typography;
 // 작은 하위 컴포넌트: 인플루언서 리스트를 렌더하고 클릭 시 챗봇으로 이동
 const InfluencerList: React.FC = () => {
   const navigate = useNavigate();
-  const { influencerProfiles } = useChatbot();
-  const profiles = Array.isArray(influencerProfiles) && influencerProfiles.length > 0 ? influencerProfiles : [];
+  const { influencerHistories } = useChatbot();
+  // Use profiles embedded in influencerHistories when available.
+  const profilesFromHistories = Array.isArray(influencerHistories)
+    ? influencerHistories.map((h: any) => (h.profile ? h.profile : { id: h.influencer_id, name: h.influencer_name }))
+    : [];
+  const profiles = profilesFromHistories;
 
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [activeProfile, setActiveProfile] = useState<any | null>(null);
@@ -60,8 +64,8 @@ const InfluencerList: React.FC = () => {
       ) : (
         profiles.map((p: any, idx: number) => {
           // Determine image source: prefer explicit profile/image url, then public /profiles/<id|name>.png
-          const slug = encodeURIComponent((p.id || p.name || '').toString().trim());
-          const imageSrc = p.profile || p.image || (slug ? `/profiles/${slug}.png` : undefined);
+                const slug = encodeURIComponent((p.id || p.name || '').toString().trim());
+                const imageSrc = p.profile || p.image || (slug ? `/profiles/${slug}.png` : undefined);
 
           return (
             <div key={idx} className="flex items-center p-3 bg-white rounded shadow-sm w-full">
@@ -76,14 +80,14 @@ const InfluencerList: React.FC = () => {
                 </Avatar>
               </div>
 
-              <div className="ml-4 flex-1 min-w-0">
+                  <div className="ml-4 flex-1 min-w-0">
                 <div className="text-sm font-medium">{(p as any).name || p.subscriber_name?.[0] || (p.greeting?.slice ? p.greeting.slice(0,6) : '') || '인플루언서'}</div>
-                <div className="mt-1 text-xs text-gray-500">{p.characteristics || (p.expertise ? p.expertise.join(', ') : '') || ''}</div>
+                <div className="mt-1 text-xs text-gray-500">{p.characteristics || (p.expertise ? p.expertise.join(', ') : '') || p.short_description || ''}</div>
 
-                {p.recent_snippet ? (
+                {p.short_description ? (
                   <div className="mt-2 text-xs text-gray-600 w-full">
-                    <div className="truncate" title={p.recent_snippet}>
-                      {p.recent_snippet}
+                    <div className="truncate" title={p.short_description}>
+                      {p.short_description}
                     </div>
                   </div>
                 ) : (

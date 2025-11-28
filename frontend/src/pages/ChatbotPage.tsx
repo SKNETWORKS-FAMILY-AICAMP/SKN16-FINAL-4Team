@@ -75,7 +75,8 @@ const ChatbotPage: React.FC = () => {
     analyzeError,
     diagnoseError,
     startSession,
-    influencerProfiles,
+    // from useChatbot: influencer histories
+    influencerHistories,
   } = useChatbot();
   const sessionStartedRef = useRef(false);
 
@@ -184,14 +185,25 @@ const ChatbotPage: React.FC = () => {
     }
   }, [blocker.state]);
 
+  const inflIdFromQueryTop = (() => {
+    try {
+      const params = new URLSearchParams((location as any).search || window.location.search);
+      return params.get('infl_id') || undefined;
+    } catch (e) {
+      return undefined;
+    }
+  })();
+
+  const inflFromStateTop = (location as any).state?.influencerProfile?.id || (location as any).state?.influencerProfile?.name || undefined;
+
   const welcomeQuery = useQuery<{
     message?: string;
     influencer?: any;
     has_previous?: boolean;
     previous_summary?: string;
   }>({
-    queryKey: ['welcome'],
-    queryFn: async () => await chatbotApi.getWelcome(),
+    queryKey: ['welcome', inflIdFromQueryTop || inflFromStateTop],
+    queryFn: async () => await chatbotApi.getWelcome(inflIdFromQueryTop || inflFromStateTop),
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -199,7 +211,9 @@ const ChatbotPage: React.FC = () => {
   const welcomeIsPending = welcomeQuery.isFetching || welcomeQuery.isLoading;
 
   // influencer profiles: hook에서 제공하는 캐시 우선, 없으면 로컬 폴백
-  const influencers = (influencerProfiles && influencerProfiles.length > 0) ? influencerProfiles : localInfluencers;
+  const influencers = (Array.isArray(influencerHistories) && influencerHistories.length > 0)
+    ? influencerHistories.map((h: any) => h.profile || { id: h.influencer_id, name: h.influencer_name })
+    : localInfluencers;
 
   useEffect(() => {
     if (!welcomeData) return;
