@@ -1,0 +1,50 @@
+name: Python Tests
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'services/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: ['main']
+    paths:
+      - 'services/**'
+      - '.github/workflows/**'
+
+jobs:
+  test:
+    name: Run pytest
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      # For test runs we provide lightweight test-friendly defaults.
+      # Use a file-backed SQLite DB for tests and a dummy OpenAI key (tests should mock requests).
+      DB_URL: sqlite:///./test.db
+      OPENAI_API_KEY: test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests (services only)
+        run: |
+          pytest -q services

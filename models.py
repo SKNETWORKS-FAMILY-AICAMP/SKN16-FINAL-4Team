@@ -50,6 +50,10 @@ class ChatHistory(Base):
     __tablename__ = "chat_history"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
+    # Optional influencer persona applied to this chat session
+    influencer_name = Column(String(100), nullable=True)
+    # New: influencer unique id (external service id or slug). Prefer using this for reliable matching.
+    influencer_id = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     ended_at = Column(DateTime, nullable=True)
     user = relationship("User", backref="chat_histories")
@@ -62,6 +66,8 @@ class ChatMessage(Base):
     history_id = Column(Integer, ForeignKey("chat_history.id"), nullable=False)
     role = Column(String(10))  # "user" / "ai"
     text = Column(Text, nullable=False)
+    # Raw structured payload (JSON string) returned by orchestrator/services
+    raw = Column(Text, nullable=True)
     emotion = Column(String(20), nullable=True)  # 감정 정보
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     history = relationship("ChatHistory", back_populates="messages")

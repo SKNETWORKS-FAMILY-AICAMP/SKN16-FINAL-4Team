@@ -19,6 +19,18 @@ export interface ChatResModel {
   emotion: EmotionType;
 }
 
+export interface InfluencerProfile {
+  id: string;
+  name: string;
+  greeting: string;
+  emoji: string;
+  color: string;
+  subscriber_name: string[];
+  closing: string;
+  characteristics: string;
+  expertise: string[];
+}
+
 export interface ChatItemModel {
   question_id: number;
   question: string;
@@ -29,6 +41,24 @@ export interface ChatItemModel {
 export interface ChatbotHistoryResponse {
   history_id: number;
   items: ChatItemModel[];
+}
+
+export interface InfluencerHistoryItem {
+  influencer_id?: string;
+  influencer_name?: string;
+  total_sessions?: number;
+  total_messages?: number;
+  last_activity?: string;
+  profile?: InfluencerProfile;
+}
+
+export interface InfluencerMessageItem {
+  id?: string | number;
+  history_id?: number;
+  role?: string;
+  text?: string;
+  created_at?: string;
+  raw?: any;
 }
 
 /**
@@ -52,12 +82,58 @@ class ChatbotApi {
     return response.data;
   }
 
+  /** Get existing history items for a given history id */
+  async getHistory(historyId: number): Promise<ChatbotHistoryResponse> {
+    const response = await apiClient.get<ChatbotHistoryResponse>(`/chatbot/history/${historyId}`);
+    return response.data;
+  }
+
   /**
    * 명시적으로 새 채팅 세션을 생성하고 history_id를 반환합니다.
    */
-  async startSession(): Promise<{ history_id: number; reused: boolean; user_turns: number }> {
-    const response = await apiClient.post(`/chatbot/start`, {});
+  async startSession(influencerId?: string): Promise<{ history_id: number; reused: boolean; user_turns: number }> {
+    const body: any = {};
+    if (influencerId) {
+      // include both keys for backward compatibility: some backend checks influencer_name
+      body.influencer_id = influencerId;
+      body.influencer_name = influencerId;
+    }
+    const response = await apiClient.post(`/chatbot/start`, body);
     return response.data;
+  }
+
+  /** 서버가 생성한 환영 메시지 가져오기 */
+  async getWelcome(influencer?: string): Promise<{ message: string; influencer?: string; has_previous: boolean; previous_summary?: string }>{
+    const params: any = {};
+    if (influencer) params.influencer_id = influencer;
+    const response = await apiClient.get(`/chatbot/welcome`, { params });
+    return response.data;
+  }
+
+  /** 등록된 인플루언서 프로필 목록을 가져옵니다. 실패 시 빈 배열을 반환합니다. */
+
+  /** Get influencer grouped histories (aggregated) */
+  async getInfluencerHistories(): Promise<InfluencerHistoryItem[]> {
+    try {
+      const response = await apiClient.get<InfluencerHistoryItem[]>(`/chatbot/history/influencers`);
+      return response.data;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to fetch influencer histories', e);
+      return [];
+    }
+  }
+
+  /** Get all messages for a given influencer across histories */
+  async getMessagesForInfluencer(influencerId: string): Promise<InfluencerMessageItem[]> {
+    try {
+      const response = await apiClient.get<InfluencerMessageItem[]>(`/chatbot/history/influencer/${encodeURIComponent(influencerId)}`);
+      return response.data;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to fetch messages for influencer', influencerId, e);
+      return [];
+    }
   }
 
   /**

@@ -34,6 +34,8 @@ streamlit
 # Development & Testing
 ipython
 jupyter
+pytest
+pytest-asyncio
 
 # Other utilities
 pillow>=10.0.0
