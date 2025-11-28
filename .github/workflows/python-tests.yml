@@ -1,11 +1,6 @@
 name: Python Tests
 
 on:
-  push:
-    paths:
-      - 'services/**'
-      - '.github/workflows/**'
-    branches: ["**"]
   pull_request:
     paths:
       - 'services/**'
