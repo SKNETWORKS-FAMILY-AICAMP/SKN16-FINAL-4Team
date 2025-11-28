@@ -177,8 +177,8 @@ def normalize_personal_color(primary: str | None, sub: str | None) -> tuple[str,
     if not primary and not sub:
         return ("웜", "봄")
 
-    p = (primary or "").strip().lower()
-    s = (sub or "").strip().lower()
+    p = str(primary or "").strip().lower()
+    s = str(sub or "").strip().lower()
 
     # Determine primary (웜/쿨)
     primary_norm = None
