@@ -18,7 +18,6 @@ import {
   ExclamationCircleOutlined,
   CalendarOutlined,
   MoreOutlined,
-  MessageOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -131,13 +130,9 @@ const MyPage: React.FC = () => {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   // 페이징 상태
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const pageSize = 5;
+  const pageSize = 3;
 
-  // AI 전문가 상담으로 이동
-  const handleAIConsultation = () => {
-    // navigate(RouterPaths.PersonalColorTest); // 기존 설문 방식 (비활성화)
-    navigate(RouterPaths.Chatbot); // 대화형 진단으로 변경
-  };
+  
 
   // 진단 결과 상세보기
   const handleViewDetail = (result: SurveyResultDetail) => {
@@ -428,18 +423,8 @@ const MyPage: React.FC = () => {
                       아직 진단 기록이 없습니다.
                     </Text>
                     <Text className="text-gray-400 text-sm block mt-2">
-                      AI 전문가와 대화하며 퍼스널컬러 진단을 받아보세요.
+                      인플루언서를 선택하여 상담을 시작해 보세요.
                     </Text>
-                    <div className="mt-6">
-                      <Button
-                        type="primary"
-                        size="large"
-                        icon={<MessageOutlined />}
-                        onClick={handleAIConsultation}
-                      >
-                        AI 전문가와 퍼스널컬러 상담하기
-                      </Button>
-                    </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -452,7 +437,7 @@ const MyPage: React.FC = () => {
                         total: surveyResults.length,
                         onChange: (page) => setCurrentPage(page),
                         showSizeChanger: false,
-                        showQuickJumper: true,
+                        showQuickJumper: false,
                       }}
                       dataSource={surveyResults}
                       renderItem={result => (
@@ -527,18 +512,7 @@ const MyPage: React.FC = () => {
                       )}
                     />
 
-                    <div className="text-center pt-4 border-t border-gray-100 space-y-3">
-                      <div className="flex justify-center">
-                        <Button
-                          type="primary"
-                          icon={<MessageOutlined />}
-                          onClick={() => navigate(RouterPaths.Chatbot)}
-                          size="large"
-                        >
-                          AI 전문가와 퍼스널컬러 상담하기
-                        </Button>
-                      </div>
-                    </div>
+                    <div className="text-center pt-4 border-t border-gray-100 space-y-3" />
                   </div>
                 )}
               </div>
