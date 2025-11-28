@@ -273,18 +273,48 @@ def influencer_profiles():
     out = []
     for name, meta in YOUTUBER_PROFILES.items():
         # shallow copy to avoid accidental mutation
-        # add stable id (slug) for each influencer
-        obj = {**(meta or {}), 'name': name}
-        # only set id if meta didn't provide one
+        m = dict(meta or {})
+        obj = {**m, 'name': name}
+        # ensure stable id
         obj.setdefault('id', make_id(name))
 
-        # Normalize recent_snippet to the last message text without role prefixes
+        # Normalize types and ensure fields expected by frontend InfluencerProfile exist
+        # greeting, emoji, color, subscriber_name (list), closing, characteristics, expertise (list)
         try:
-            raw_snip = (meta or {}).get('recent_snippet') if isinstance(meta, dict) else None
-            if raw_snip is not None:
-                obj['recent_snippet'] = raw_snip
+            if not isinstance(obj.get('greeting'), str):
+                obj['greeting'] = obj.get('greeting') or ''
+            if not isinstance(obj.get('emoji'), str):
+                obj['emoji'] = obj.get('emoji') or ''
+            if not isinstance(obj.get('color'), str):
+                obj['color'] = obj.get('color') or '#ffffff'
+            # subscriber_name should be an array of strings
+            subs = obj.get('subscriber_name') or obj.get('subscriber_names') or []
+            if isinstance(subs, str):
+                subs = [s.strip() for s in re.split(r'[;,\n]+', subs) if s.strip()]
+            if not isinstance(subs, list):
+                subs = list(subs) if subs else []
+            obj['subscriber_name'] = subs
+
+            if not isinstance(obj.get('closing'), str):
+                obj['closing'] = obj.get('closing') or ''
+            if not isinstance(obj.get('characteristics'), str):
+                obj['characteristics'] = obj.get('characteristics') or ''
+            ex = obj.get('expertise') or obj.get('expertises') or []
+            if isinstance(ex, str):
+                ex = [s.strip() for s in re.split(r'[;,\n]+', ex) if s.strip()]
+            if not isinstance(ex, list):
+                ex = list(ex) if ex else []
+            obj['expertise'] = ex
         except Exception:
-            pass
+            # best-effort normalization; ignore failures
+            obj.setdefault('greeting', '')
+            obj.setdefault('emoji', '')
+            obj.setdefault('color', '#ffffff')
+            obj.setdefault('subscriber_name', [])
+            obj.setdefault('closing', '')
+            obj.setdefault('characteristics', '')
+            obj.setdefault('expertise', [])
+
         out.append(obj)
     return out
 

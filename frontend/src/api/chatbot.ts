@@ -20,8 +20,8 @@ export interface ChatResModel {
 }
 
 export interface InfluencerProfile {
-  id?: string;
-  name?: string;
+  id: string;
+  name: string;
   greeting: string;
   emoji: string;
   color: string;
@@ -41,6 +41,24 @@ export interface ChatItemModel {
 export interface ChatbotHistoryResponse {
   history_id: number;
   items: ChatItemModel[];
+}
+
+export interface InfluencerHistoryItem {
+  influencer_id?: string;
+  influencer_name?: string;
+  total_sessions?: number;
+  total_messages?: number;
+  last_activity?: string;
+  profile?: InfluencerProfile;
+}
+
+export interface InfluencerMessageItem {
+  id?: string | number;
+  history_id?: number;
+  role?: string;
+  text?: string;
+  created_at?: string;
+  raw?: any;
 }
 
 /**
@@ -85,23 +103,35 @@ class ChatbotApi {
   }
 
   /** 서버가 생성한 환영 메시지 가져오기 */
-  async getWelcome(): Promise<{ message: string; influencer?: string; has_previous: boolean; previous_summary?: string }>{
-    const response = await apiClient.get(`/chatbot/welcome`);
+  async getWelcome(influencer?: string): Promise<{ message: string; influencer?: string; has_previous: boolean; previous_summary?: string }>{
+    const params: any = {};
+    if (influencer) params.influencer_id = influencer;
+    const response = await apiClient.get(`/chatbot/welcome`, { params });
     return response.data;
   }
 
   /** 등록된 인플루언서 프로필 목록을 가져옵니다. 실패 시 빈 배열을 반환합니다. */
-  async getInfluencerProfiles(): Promise<InfluencerProfile[]> {
+
+  /** Get influencer grouped histories (aggregated) */
+  async getInfluencerHistories(): Promise<InfluencerHistoryItem[]> {
     try {
-      const response = await apiClient.get(`/chatbot/influencer/profiles`);
+      const response = await apiClient.get<InfluencerHistoryItem[]>(`/chatbot/history/influencers`);
       return response.data;
     } catch (e) {
-      // 실패 시 빈 배열로 안전하게 폴백
-      // 에러는 콘솔에 로그합니다.
-      // 호출 쪽에서 빈 배열을 받을 것을 기대하도록 구현합니다.
-      // (네트워크/서버 오류 등)
       // eslint-disable-next-line no-console
-      console.error('Failed to fetch influencer profiles', e);
+      console.error('Failed to fetch influencer histories', e);
+      return [];
+    }
+  }
+
+  /** Get all messages for a given influencer across histories */
+  async getMessagesForInfluencer(influencerId: string): Promise<InfluencerMessageItem[]> {
+    try {
+      const response = await apiClient.get<InfluencerMessageItem[]>(`/chatbot/history/influencer/${encodeURIComponent(influencerId)}`);
+      return response.data;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to fetch messages for influencer', influencerId, e);
       return [];
     }
   }
