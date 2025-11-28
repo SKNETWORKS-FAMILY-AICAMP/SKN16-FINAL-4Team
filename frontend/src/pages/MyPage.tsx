@@ -12,12 +12,15 @@ import {
   List,
   Spin,
   Dropdown,
+  Tabs,
 } from 'antd';
 import {
   DeleteOutlined,
   ExclamationCircleOutlined,
   CalendarOutlined,
   MoreOutlined,
+  CommentOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -374,148 +377,125 @@ const MyPage: React.FC = () => {
           </Col>
         </Row>
 
-        {/* 인플루언서 상담 섹션 */}
+        {/* 통합: AI 전문가 + 최근 진단 기록을 Tabs로 표시 */}
         <Row className="mt-8">
           <Col span={24}>
             <Card className="shadow-sm border border-gray-200" style={{ borderRadius: '8px' }}>
-              <div className="px-6 py-2">
-                <div className="flex items-center justify-between">
-                  <Title level={4} className="mb-6 text-gray-800">AI 전문가</Title>
-                  <Text className="!text-gray-500 !text-sm">원하시는 인플루언서를 선택해 상담을 시작하세요</Text>
-                </div>
+              <Tabs
+                type="card"
+                defaultActiveKey="influencer"
+                items={[
+                  {
+                    key: 'influencer',
+                    label: 'AI 전문가',
+                    icon: <CommentOutlined />,
+                    children: (
+                      <div className="px-6 py-2">
+                        <div className="flex items-center justify-between">
+                          <Title level={4} className="mb-6 text-gray-800">AI 전문가</Title>
+                          <Text className="!text-gray-500 !text-sm">원하시는 인플루언서를 선택해 상담을 시작하세요</Text>
+                        </div>
 
-                {/* 인플루언서 리스트 (useChatbot에서 제공) */}
-                <InfluencerList />
-              </div>
-            </Card>
-          </Col>
-        </Row>
+                        <InfluencerList />
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'recent',
+                    label: '최근 진단 기록',
+                    icon: <HistoryOutlined />,
+                    children: (
+                      <div className="px-6 py-2">
+                        <div className="flex items-center justify-between">
+                          <Title level={4} className="mb-6 text-gray-800">최근 진단 기록</Title>
+                          <Text className="!text-gray-500 !text-sm">총 {surveyResults?.length || 0}건</Text>
+                        </div>
 
-        {/* 최근 진단 기록 섹션 */}
-        <Row className="mt-8">
-          <Col span={24}>
-            <Card
-              className="shadow-sm border border-gray-200"
-              style={{ borderRadius: '8px' }}
-            >
-              <div className="px-6 py-2">
-                <div className="flex items-center justify-between">
-                  <Title level={4} className="mb-6 text-gray-800">
-                    최근 진단 기록
-                  </Title>
-                  <Text className="!text-gray-500 !text-sm">
-                    총 {surveyResults?.length || 0}건
-                  </Text>
-                </div>
-
-                {isLoadingSurveys ? (
-                  <div className="text-center py-12">
-                    <Spin size="large" />
-                    <div className="mt-4">
-                      <Text className="text-gray-500">
-                        진단 기록을 불러오는 중...
-                      </Text>
-                    </div>
-                  </div>
-                ) : !surveyResults || surveyResults.length === 0 ? (
-                  <div className="text-center py-12 bg-gray-50 rounded-lg">
-                    <Text className="text-gray-500 text-base">
-                      아직 진단 기록이 없습니다.
-                    </Text>
-                    <Text className="text-gray-400 text-sm block mt-2">
-                      인플루언서를 선택하여 상담을 시작해 보세요.
-                    </Text>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <List
-                      itemLayout="vertical"
-                      size="small"
-                      pagination={{
-                        current: currentPage,
-                        pageSize: pageSize,
-                        total: surveyResults.length,
-                        onChange: (page) => setCurrentPage(page),
-                        showSizeChanger: false,
-                        showQuickJumper: false,
-                      }}
-                      dataSource={surveyResults}
-                      renderItem={result => (
-                        <List.Item
-                          key={result.id}
-                          className="bg-white border border-gray-100 rounded-lg p-4 hover:shadow-md transition-shadow"
-                        >
-                          <div className="flex justify-between items-start">
-                            <div className="flex-1">
-                              <div className="flex items-center mb-2">
-                                <Text className="!text-gray-500 text-sm flex items-center">
-                                  <CalendarOutlined className="mr-1" />
-                                  {formatKoreanDate(result.created_at, true)}
-                                </Text>
-                              </div>
-
-                              <div className="mb-2">
-                                <Text strong className="text-lg !text-gray-800">
-                                  {result.result_name ||
-                                    `${result.result_tone.toUpperCase()} 타입`}
-                                </Text>
-                              </div>
-
-                              {result.result_description && (
-                                <Text className="!text-gray-600 text-sm block mb-2">
-                                  {result.result_description.length > 100
-                                    ? `${result.result_description.substring(
-                                        0,
-                                        100
-                                      )}...`
-                                    : result.result_description}
-                                </Text>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <Button
-                                type="link"
-                                onClick={() => handleViewDetail(result)}
-                                className="text-blue-600"
-                              >
-                                상세보기
-                              </Button>
-                              <Dropdown
-                                menu={{
-                                  items: [
-                                    {
-                                      key: 'delete',
-                                      label: '삭제',
-                                      icon: <DeleteOutlined />,
-                                      danger: true,
-                                      onClick: () =>
-                                        handleDeleteSurvey(
-                                          result.id,
-                                          result.result_name ||
-                                            `${result.result_tone.toUpperCase()} 타입`
-                                        ),
-                                    },
-                                  ],
-                                }}
-                                trigger={['click']}
-                              >
-                                <Button
-                                  type="text"
-                                  icon={<MoreOutlined />}
-                                  size="small"
-                                />
-                              </Dropdown>
+                        {isLoadingSurveys ? (
+                          <div className="text-center py-12">
+                            <Spin size="large" />
+                            <div className="mt-4">
+                              <Text className="text-gray-500">진단 기록을 불러오는 중...</Text>
                             </div>
                           </div>
-                        </List.Item>
-                      )}
-                    />
+                        ) : !surveyResults || surveyResults.length === 0 ? (
+                          <div className="text-center py-12 bg-gray-50 rounded-lg">
+                            <Text className="text-gray-500 text-base">아직 진단 기록이 없습니다.</Text>
+                            <Text className="text-gray-400 text-sm block mt-2">인플루언서를 선택하여 상담을 시작해 보세요.</Text>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <List
+                              itemLayout="vertical"
+                              size="small"
+                              pagination={{
+                                current: currentPage,
+                                pageSize: pageSize,
+                                total: surveyResults.length,
+                                onChange: (page) => setCurrentPage(page),
+                                showSizeChanger: false,
+                                showQuickJumper: false,
+                              }}
+                              dataSource={surveyResults}
+                              renderItem={result => (
+                                <List.Item
+                                  key={result.id}
+                                  className="bg-white border border-gray-100 rounded-lg p-4 hover:shadow-md transition-shadow"
+                                >
+                                  <div className="flex justify-between items-start">
+                                    <div className="flex-1">
+                                      <div className="flex items-center mb-2">
+                                        <Text className="!text-gray-500 text-sm flex items-center">
+                                          <CalendarOutlined className="mr-1" />
+                                          {formatKoreanDate(result.created_at, true)}
+                                        </Text>
+                                      </div>
 
-                    <div className="text-center pt-4 border-t border-gray-100 space-y-3" />
-                  </div>
-                )}
-              </div>
+                                      <div className="mb-2">
+                                        <Text strong className="text-lg !text-gray-800">
+                                          {result.result_name || `${result.result_tone.toUpperCase()} 타입`}
+                                        </Text>
+                                      </div>
+
+                                      {result.result_description && (
+                                        <Text className="!text-gray-600 text-sm block mb-2">
+                                          {result.result_description.length > 100 ? `${result.result_description.substring(0, 100)}...` : result.result_description}
+                                        </Text>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                      <Button type="link" onClick={() => handleViewDetail(result)} className="text-blue-600">상세보기</Button>
+                                      <Dropdown
+                                        menu={{
+                                          items: [
+                                            {
+                                              key: 'delete',
+                                              label: '삭제',
+                                              icon: <DeleteOutlined />,
+                                              danger: true,
+                                              onClick: () => handleDeleteSurvey(result.id, result.result_name || `${result.result_tone.toUpperCase()} 타입`),
+                                            },
+                                          ],
+                                        }}
+                                        trigger={['click']}
+                                      >
+                                        <Button type="text" icon={<MoreOutlined />} size="small" />
+                                      </Dropdown>
+                                    </div>
+                                  </div>
+                                </List.Item>
+                              )}
+                            />
+
+                            <div className="text-center pt-4 border-t border-gray-100 space-y-3" />
+                          </div>
+                        )}
+                      </div>
+                    ),
+                  },
+                ]}
+              />
             </Card>
           </Col>
         </Row>
