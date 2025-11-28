@@ -204,10 +204,10 @@ def apply_influencer_style(payload: InfluencerRequest):
             parsed = json.loads(content)
         except Exception:
             # fallback: treat entire text as styled_text
-            return InfluencerApplyResponse(influencer=influencer['name'], styled_text=content.strip(), raw={'model_output': content})
+            return InfluencerApplyResponse(influencer=(influencer.get('name') if influencer else ''), styled_text=content.strip(), raw={'model_output': content})
 
     styled = parsed.get('styled_text') or parsed.get('text') or parsed.get('response') or ''
-    return InfluencerApplyResponse(influencer=influencer['name'], styled_text=styled, raw={'model_output': parsed})
+    return InfluencerApplyResponse(influencer=(influencer.get('name') if influencer else ''), styled_text=styled, raw={'model_output': parsed})
 
 
 # --- 추가: 강화된 유튜버 프로필 및 시스템 프롬프트 (원준, 세현, 종민, 혜경) ---

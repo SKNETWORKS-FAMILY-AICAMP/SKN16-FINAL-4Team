@@ -139,6 +139,16 @@ async def analyze(payload: OrchestratorRequest):
         }
         results["emotion"] = emo_wrapped
 
+        # Promote parsed keys to top-level for backwards compatibility (tests expect primary_tone at top-level)
+        try:
+            if isinstance(emo_result, dict):
+                # copy parsed keys into the top-level wrapper if not present
+                for k, v in emo_result.items():
+                    if k not in results["emotion"]:
+                        results["emotion"][k] = v
+        except Exception:
+            pass
+
     if color_res_raw is not None:
         color_result = color_res_raw.dict() if hasattr(color_res_raw, "dict") else color_res_raw
         color_wrapped = {
@@ -147,6 +157,15 @@ async def analyze(payload: OrchestratorRequest):
             "raw_model_output": color_result.get("raw_model_output") if isinstance(color_result, dict) else None,
         }
         results["color"] = color_wrapped
+
+        # Promote parsed color hints to top-level for convenience
+        try:
+            if isinstance(color_result, dict):
+                for k, v in color_result.items():
+                    if k not in results["color"]:
+                        results["color"][k] = v
+        except Exception:
+            pass
 
     # Normalize common key aliases for compatibility with tests / upstream callers
     try:
