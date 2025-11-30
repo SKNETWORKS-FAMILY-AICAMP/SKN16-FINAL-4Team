@@ -34,8 +34,7 @@ jobs:
           file: ./Dockerfile # <-- 수정된 파일명 반영
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/skn16-fastapi:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+     
 
       # 5. 프론트엔드 이미지 빌드 및 푸시
       - name: Build and Push Frontend Image
