@@ -1,10 +1,13 @@
 import React from 'react';
-import { Form, Input, Button, Radio } from 'antd';
+import { Form, Input, Button, Radio, Checkbox } from 'antd';
 import { useNavigate } from 'react-router-dom';
 
 import type { GenderType } from '@/api/user';
 import { useCreateUser } from '@/hooks/useUser';
 import RouterPaths from '@/routes/Router';
+
+import personalInfoText from '../../../../docs/personal_information_terms.txt?raw';
+
 
 interface SignUpFormValues {
   nickname: string;
@@ -13,6 +16,8 @@ interface SignUpFormValues {
   password_confirm: string;
   email: string;
   gender: GenderType;
+  consent_required: boolean;
+  consent_marketing?: boolean;
 }
 
 const SignUpForm: React.FC = () => {
@@ -20,6 +25,7 @@ const SignUpForm: React.FC = () => {
   const createUser = useCreateUser();
 
   const [form] = Form.useForm();
+
 
   // 폼 제출 처리
   const handleSubmit = async (values: SignUpFormValues) => {
@@ -178,6 +184,44 @@ const SignUpForm: React.FC = () => {
           ]}
           optionType="button"
         />
+      </Form.Item>
+
+      {/* 개인정보 약관 영역 */}
+      <Form.Item label="개인정보 수집 및 이용 약관" required>
+        <div
+          style={{
+            height: 120,
+            overflowY: 'auto',
+            border: '1px solid #e5e7eb',
+            padding: 12,
+            borderRadius: 6,
+            background: '#ffffff',
+            fontSize: 12,
+            lineHeight: '1.4',
+          }}
+        >
+          <div style={{ whiteSpace: 'pre-wrap' }}>{personalInfoText}</div>
+        </div>
+      </Form.Item>
+
+      <Form.Item
+        className='!mb-0'
+        name="consent_required"
+        valuePropName="checked"
+        rules={[
+          {
+            validator: (_: any, value: boolean) =>
+              value ? Promise.resolve() : Promise.reject(new Error('필수 항목에 동의하셔야 합니다')),
+          },
+        ]}
+      >
+        <Checkbox>
+          <strong>[필수]</strong> 개인정보 수집 및 이용 동의
+        </Checkbox>
+      </Form.Item>
+
+      <Form.Item name="consent_marketing" valuePropName="checked">
+        <Checkbox>[선택] 마케팅 수신 동의</Checkbox>
       </Form.Item>
 
       <Form.Item className="mb-0">
