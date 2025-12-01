@@ -100,3 +100,20 @@ class AIFeedback(Base):
     detail_practicality = Column(Text)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     message = relationship("ChatMessage", back_populates="ai_feedback")
+
+
+class Consent(Base):
+    __tablename__ = "consent"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("user.id"), nullable=False, index=True)
+    consent_type = Column(String(64), nullable=False)   # e.g. 'personal_info', 'marketing'
+    consent = Column(Boolean, nullable=False)           # True = 동의, False = 미동의(철회)
+    version = Column(String(64), nullable=True)         # 약관/정책 버전 식별자
+    source = Column(String(32), nullable=True)          # 'signup', 'mypage', 'email' 등
+    ip = Column(String(45), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    revoked_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", backref="consents")
