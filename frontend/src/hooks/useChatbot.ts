@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { chatbotApi } from '@/api/chatbot';
 import { userFeedbackApi } from '@/api/feedback';
@@ -31,9 +31,9 @@ export function useChatbot(options?: UseChatbotOptions) {
   const { data: user } = useCurrentUser();
 
   // start a new chat session explicitly
-  const startSession = useCallback(async () => {
+  const startSession = useCallback(async (influencerId?: string) => {
     try {
-      const res = await chatbotApi.startSession();
+      const res = await chatbotApi.startSession(influencerId);
       return res as { history_id: number; reused: boolean; user_turns: number };
     } catch (e) {
       console.error('채팅 세션 시작 실패', e);
@@ -46,6 +46,10 @@ export function useChatbot(options?: UseChatbotOptions) {
     mutationFn: (params: { question: string; history_id?: number | undefined }) =>
       chatbotApi.analyze(params as any),
     onSuccess: (data: any) => {
+      // Invalidate influencer histories so UI (MyPage) can refresh with latest messages
+      try {
+        queryClient.invalidateQueries({ queryKey: ['influencerHistories'] });
+      } catch (e) {}
       options?.onAnalyzeSuccess?.(data);
     },
     onError: (error: any) => {
@@ -116,27 +120,68 @@ export function useChatbot(options?: UseChatbotOptions) {
     return chatbotApi.endChatSession(historyId as any);
   };
 
+  // ------------------ influencer histories (react-query) ------------------
+  const {
+    data: influencerHistoriesData,
+    isLoading: isLoadingInfluencerHistories,
+    isError: isErrorInfluencerHistories,
+    refetch: refetchInfluencerHistories,
+  } = useQuery<any[]>({
+    queryKey: ['influencerHistories'],
+    queryFn: () => chatbotApi.getInfluencerHistories(),
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const getInfluencerHistories = async (forceRefresh = false) => {
+    if (forceRefresh) {
+      const r = await refetchInfluencerHistories();
+      return r.data || [];
+    }
+    return influencerHistoriesData || [];
+  };
+
+  const fetchMessagesForInfluencer = async (influencerId: string) => {
+    return await chatbotApi.getMessagesForInfluencer(influencerId);
+  };
+
+  // (influencerProfiles removed) use influencerHistories instead
+
   const submitFeedback = (payload: FeedbackPayload) => (feedbackMutation.mutateAsync as any)(payload);
+  const getPendingFlag = (m: any) => {
+    if (!m) return false;
+    // prefer isPending if available (per-call pending), otherwise fall back to isLoading
+    if (typeof m.isPending !== 'undefined') return !!m.isPending;
+    return !!m.isLoading;
+  };
 
   return {
     // session control
     startSession,
     // analyze mutation
     analyze,
-    isAnalyzing: (analyzeMutation as any).isLoading || false,
+    isAnalyzing: getPendingFlag(analyzeMutation),
     analyzeError: (analyzeMutation as any).error || null,
 
     // diagnosis (3-turn) mutation
     analyzeChatForDiagnosis,
-    isDiagnosing: (diagnosisMutation as any).isLoading || false,
+    isDiagnosing: getPendingFlag(diagnosisMutation),
     diagnoseError: (diagnosisMutation as any).error || null,
 
     // end session (direct API call)
     endChatSession,
 
+    // influencer profiles removed: prefer influencerHistories
+    // influencer histories
+    getInfluencerHistories,
+    influencerHistories: influencerHistoriesData || [],
+    isLoadingInfluencerHistories,
+    influencerHistoriesError: isErrorInfluencerHistories,
+    refetchInfluencerHistories,
+    fetchMessagesForInfluencer,
+
     // feedback
     submitFeedback,
-    isSubmittingFeedback: (feedbackMutation as any).isLoading || false,
+    isSubmittingFeedback: getPendingFlag(feedbackMutation),
     feedbackError: (feedbackMutation as any).error || null,
   };
 }

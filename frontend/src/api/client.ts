@@ -14,7 +14,7 @@ import axios, {
 
 // 환경변수에서 API 설정 가져오기
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 const API_TIMEOUT = Number(import.meta.env.VITE_API_TIMEOUT) || 30000; // 30초로 증가
 
 // Axios 인스턴스 생성

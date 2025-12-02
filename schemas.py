@@ -12,6 +12,8 @@ class UserCreate(BaseModel):
     password_confirm: str
     email: str = Field(pattern=r'^[^@]+@[^@]+\.[^@]+$')
     gender: Literal['남성', '여성'] | None = None
+    consent_required: bool
+    consent_marketing: bool | None = False
 
     @model_validator(mode='after')
     def validate_all_fields(self):
@@ -38,6 +40,8 @@ class UserCreate(BaseModel):
             raise ValueError('비밀번호에 4자리 이상 동일한 문자를 연속으로 사용할 수 없습니다.')
         if self.password != self.password_confirm:
             raise ValueError('비밀번호가 일치하지 않습니다.')
+        if not getattr(self, 'consent_required', False):
+            raise ValueError('개인정보 수집 및 이용 동의는 필수입니다.')
         return self
 
 class User(BaseModel):

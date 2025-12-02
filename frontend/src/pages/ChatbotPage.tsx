@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { formatKoreanDate } from '@/utils/dateUtils';
 import {
   Card,
   Input,
   Button,
   Typography,
-  Spin,
   message,
   Avatar,
   Tag,
@@ -16,17 +15,22 @@ import {
   ArrowLeftOutlined,
 } from '@ant-design/icons';
 import { getAvatarRenderInfo } from '@/utils/genderUtils';
-import { useNavigate, useBeforeUnload, useBlocker } from 'react-router-dom';
+import { useNavigate, useBeforeUnload, useBlocker, useLocation } from 'react-router-dom';
 import { useCurrentUser } from '@/hooks/useUser';
 import { useSurveyResultsLive } from '@/hooks/useSurvey';
 import useChatbot from '@/hooks/useChatbot';
 import type { ChatResModel } from '@/api/chatbot';
-import { reportApi } from '@/api/report';
+import { chatbotApi } from '@/api/chatbot';
+import localInfluencers from '@/data/influencers';
 import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
+import { normalizePersonalColor } from '@/utils/personalColorUtils';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
 import FeedbackModal from '@/components/FeedbackModal';
+import InfluencerProfileModal from '@/components/InfluencerProfileModal';
 import type { SurveyResultDetail } from '@/api/survey';
 import AnimatedEmoji from '@/components/AnimatedEmoji';
+import { Loading } from '@/components';
+import InfluencerImage from '@/components/InfluencerImage';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -69,6 +73,9 @@ const ChatbotPage: React.FC = () => {
     analyzeError,
     diagnoseError,
     startSession,
+    // from useChatbot: influencer histories
+    influencerHistories,
+    fetchMessagesForInfluencer,
   } = useChatbot();
   const sessionStartedRef = useRef(false);
 
@@ -77,6 +84,7 @@ const ChatbotPage: React.FC = () => {
   const [delayedDescriptions, setDelayedDescriptions] = useState<{ [id: string]: boolean }>({});
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const isBusy = isTyping || isAnalyzing || isDiagnosing;
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [isLeavingPage, setIsLeavingPage] = useState(false);
   const [currentHistoryId, setCurrentHistoryId] = useState<number | undefined>(
@@ -89,6 +97,172 @@ const ChatbotPage: React.FC = () => {
     useState<SurveyResultDetail | null>(null); // 선택된 진단 결과
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+
+  // Small helpers to reduce duplicated parsing/mapping logic
+  const parseRawChatRes = (raw: any): ChatResModel | undefined => {
+    if (!raw) return undefined;
+    try {
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (e) {
+      return undefined;
+    }
+  };
+
+  const mapInfluencerRespItems = (items: any[], inflId: string | number) => {
+    return (items || []).map((m: any, idx: number) => {
+      const isUser = (m.role || '').toString().toLowerCase() === 'user';
+      let chatRes = undefined as any;
+      try {
+        if (m.raw) chatRes = parseRawChatRes(m.raw);
+      } catch (e) {
+        chatRes = undefined;
+      }
+      return {
+        id: `infl-${inflId}-${idx}-${m.history_id || ''}`,
+        content: m.text || '',
+        isUser,
+        timestamp: m.created_at ? new Date(m.created_at) : new Date(),
+        chatRes,
+        questionId: undefined,
+      } as ChatMessage;
+    });
+  };
+
+  const historyItemsToChatMessages = (items: any[], historyId?: number) => {
+    const out: ChatMessage[] = [];
+    let baseTs = Date.now() - (items?.length || 0) * 2000;
+    for (const it of items || []) {
+      out.push({
+        id: `h-${historyId}-${it.question_id}-u`,
+        content: it.question || '',
+        isUser: true,
+        timestamp: new Date(baseTs),
+      });
+      baseTs += 1000;
+      out.push({
+        id: `h-${historyId}-${it.question_id}-b`,
+        content: it.answer || '',
+        isUser: false,
+        timestamp: new Date(baseTs),
+        chatRes: it.chat_res,
+      });
+      baseTs += 1000;
+    }
+    return out;
+  };
+
+  const analyzeItemsToBotMessages = (items: any[], historyId?: number) => {
+    const out: ChatMessage[] = [];
+    let baseTs = Date.now();
+    for (const it of items || []) {
+      out.push({
+        id: `w-${historyId}-${it.question_id || 0}-b`,
+        content: it.answer || (it.chat_res && it.chat_res.description) || '',
+        isUser: false,
+        timestamp: new Date(baseTs),
+        chatRes: it.chat_res,
+      });
+      baseTs += 1000;
+    }
+    return out;
+  };
+
+  const extractBotContentFromItem = (item: any) => {
+    let botContent = item.answer;
+    if (!botContent || botContent.trim() === '') {
+      botContent = item.chat_res?.description || '답변을 준비 중입니다...';
+    }
+    try {
+      const trimmed = (botContent || '').trim();
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') {
+          return parsed.description || parsed.answer || item.chat_res?.description || '답변을 준비 중입니다...';
+        }
+      }
+    } catch (e) {
+      // ignore parse errors and return raw content
+    }
+    return botContent;
+  };
+
+  // Scroll helper: scroll messages container to bottom only when it overflows
+  const scrollToBottom = (smooth: boolean = true) => {
+    try {
+      const container = messagesContainerRef.current as HTMLDivElement | null;
+      if (!container) return;
+      // Only programmatically scroll when content is larger than the container
+      if (container.scrollHeight > container.clientHeight) {
+        container.scrollTo({ top: container.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
+  const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<any | null>(null);
+  const autoCloseRef = useRef<number | null>(null);
+
+  const location = useLocation();
+
+  // 라우터 state로 전달된 인플루언서 프로필(예: MyPage에서 클릭으로 전달)을 수신
+  useEffect(() => {
+    try {
+      const maybe = (location as any).state?.influencerProfile;
+      if (maybe) {
+        setActiveInfluencerProfile(maybe);
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [location]);
+
+  // When an influencer profile is active, load all previous messages for that influencer
+  useEffect(() => {
+    if (!activeInfluencerProfile) return;
+
+    let mounted = true;
+    (async () => {
+      try {
+        const inflId = activeInfluencerProfile.id || activeInfluencerProfile.name;
+        if (!inflId) return;
+        const resp = await fetchMessagesForInfluencer(inflId);
+        // resp may be either an array of message items or an object { history_ids, items }
+        let items: any[] = [];
+        let historyIds: number[] = [];
+        if (Array.isArray(resp)) {
+          items = resp as any[];
+        } else if (resp && typeof resp === 'object') {
+          items = (resp as any).items || [];
+          historyIds = (resp as any).history_ids || [];
+        }
+
+        const loaded: ChatMessage[] = mapInfluencerRespItems(items, inflId);
+
+        if (!mounted) return;
+
+        setMessages(prev => {
+          // preserve welcome at index 0 if present
+          if (prev.length > 0 && prev[0]?.id === 'welcome') return [prev[0], ...loaded];
+          return loaded;
+        });
+
+        // if there's no currentHistoryId (no active session), restore the latest history id
+        if (!currentHistoryId && Array.isArray(historyIds) && historyIds.length > 0) {
+          setCurrentHistoryId(historyIds[historyIds.length - 1]);
+        }
+      } catch (e) {
+        console.warn('인플루언서 메시지 불러오기 실패:', e);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+    // only depend on influencer id to avoid re-running when function refs or profile objects change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeInfluencerProfile?.id]);
 
   // 대화가 있는지 확인하는 함수
   const hasConversation = () => messages.length > 1;
@@ -118,24 +292,16 @@ const ChatbotPage: React.FC = () => {
   useEffect(() => {
     if (!messagesEndRef.current || !messagesContainerRef.current) return;
 
-    // Do not auto-scroll for the initial welcome and the following message.
-    // Only start auto-scrolling once the conversation has more than 2 messages.
     if (messages.length <= 2) return;
 
     const container = messagesContainerRef.current as HTMLDivElement;
 
-    // Only scroll when the message list actually overflows the container
-    // to avoid scrolling the whole window when content is short.
     const isOverflowing = container.scrollHeight > container.clientHeight;
 
-    // Debugging log to help diagnose unexpected scrolls in runtime.
-    // Remove or convert to a proper logger once confirmed.
-    // eslint-disable-next-line no-console
     console.debug('[chat-scroll] messages=', messages.length, 'isTyping=', isTyping, 'overflowing=', isOverflowing);
 
     if (!isOverflowing) return;
 
-    // Smoothly scroll the container to the bottom.
     container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }, [messages, isTyping, delayedDescriptions]);
 
@@ -166,68 +332,13 @@ const ChatbotPage: React.FC = () => {
     }
   }, [blocker.state]);
 
-  // 초기 환영 메시지 설정
-  useEffect(() => {
-    let welcomeMessage: ChatMessage;
+  // legacy query/state influencer helpers removed (not used anymore)
 
-    // 사용자 닉네임 추출 (친밀감 향상)
-    const userNickname = `${user?.nickname ?? '사용자'}님`;
+  // influencer profiles: hook에서 제공하는 캐시 우선, 없으면 로컬 폴백
+  const influencers = (Array.isArray(influencerHistories) && influencerHistories.length > 0)
+    ? influencerHistories.map((h: any) => h.profile || { id: h.influencer_id, name: h.influencer_name })
+    : localInfluencers;
 
-    if (surveyResults && surveyResults.length > 0) {
-      // 과거 진단 내역이 있는 경우
-      const latestResult = surveyResults[0];
-      welcomeMessage = {
-        id: 'welcome',
-        content: `안녕하세요, ${userNickname}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다!
-
-이전 진단 결과를 확인해보니 "${latestResult.result_name || latestResult.result_tone.toUpperCase()} 타입"이시네요! 
-
-${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와드릴 수도 있고, 
-새롭게 대화를 통해 진단을 다시 받아보셔도 좋습니다! 
-
-퍼스널컬러와 관련된 어떤 것이든 편하게 말씀해 주세요:
-✨ 색상 고민이나 궁금한 점
-💄 메이크업 팁이나 제품 추천  
-👗 옷 색깔이나 스타일링 조언
-🌈 새로운 퍼스널컬러 진단
-
-어떤 이야기부터 시작해볼까요, ${userNickname}?`,
-        isUser: false,
-        timestamp: new Date(),
-      };
-    } else {
-      // 진단 내역이 없는 경우 - 대화형 진단 안내
-      welcomeMessage = {
-        id: 'welcome',
-        content: `안녕하세요, ${userNickname}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다!
-
-처음 방문해주셨네요! 반가워요 🎨
-
-저와 자연스러운 대화를 통해 ${userNickname}만의 퍼스널컬러를 찾아보세요!
-복잡한 설문지 없이도, 편안한 대화만으로 충분합니다.
-
-이런 것들에 대해 얘기해보면 도움이 될 거예요:
-✨ 평소 어떤 색깔 옷을 즐겨 입으시는지
-💄 어떤 립스틱이나 블러셔가 잘 어울리는지  
-👀 피부톤이나 혈관색에 대한 생각
-🌟 좋아하는 스타일이나 색감 취향
-
-어떤 이야기부터 시작해볼까요, ${userNickname}? 
-편하게 말씀해 주세요! 😄`,
-        isUser: false,
-        timestamp: new Date(),
-      };
-    }
-
-    setMessages(prevMessages => {
-      if (prevMessages.length === 0) {
-        return [welcomeMessage];
-      } else if (prevMessages[0]?.id === 'welcome') {
-        return [welcomeMessage, ...prevMessages.slice(1)];
-      }
-      return prevMessages;
-    });
-  }, [surveyResults]);
 
   // 페이지 진입 시 명시적으로 새 채팅 세션을 시작합니다.
   // 이렇게 하면 이전 세션의 기록이 현재 세션에 섞이지 않고,
@@ -239,13 +350,90 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
     let mounted = true;
     (async () => {
       try {
-        const res = await startSession();
+        const params = new URLSearchParams((location as any).search || window.location.search);
+        const inflIdFromQuery = params.get('infl_id');
+        const inflNameFromState = (location as any).state?.influencerProfile?.name || activeInfluencerProfile?.name;
+        // prefer explicit query param infl_id (slug) if provided
+        const startWith = inflIdFromQuery || inflNameFromState;
+        const res = await startSession(startWith as any);
         if (mounted) {
           setCurrentHistoryId(res.history_id);
           // 복원 가능한 기존 열린 세션이면 이미 진행된 사용자 턴 수를 복원
           if (res.reused && typeof res.user_turns === 'number') {
             setUserTurnCount(res.user_turns);
             console.log('재사용 세션의 기존 사용자 턴 수 복원:', res.user_turns);
+          }
+          // If this session reuses existing history, fetch the previous messages
+          if (res.reused) {
+            try {
+              const hist = await chatbotApi.getHistory(res.history_id);
+              if (hist && Array.isArray(hist.items) && hist.items.length > 0) {
+                // convert items to ChatMessage array (chronological)
+                const loaded: ChatMessage[] = historyItemsToChatMessages(hist.items, res.history_id);
+                // merge with existing welcome message if present
+                setMessages(prev => {
+                  // if prev already has welcome at index 0, keep it, otherwise prepend nothing
+                  if (prev.length > 0 && prev[0]?.id === 'welcome') return [prev[0], ...loaded];
+                  return loaded;
+                });
+                // ensure we scroll to the bottom after messages render
+                setTimeout(() => scrollToBottom(false), 50);
+              }
+            } catch (e) {
+              console.warn('히스토리 불러오기 실패:', e);
+            }
+            // Ensure a welcome message is present even when reusing an existing session.
+            // Call analyze({question: ''}) to get the current welcome text (may vary by influencer/persona).
+            try {
+              const welcomeResp2 = await analyze({ question: '', history_id: res.history_id });
+              if (welcomeResp2 && Array.isArray(welcomeResp2.items) && welcomeResp2.items.length > 0) {
+                const wmsgs: ChatMessage[] = analyzeItemsToBotMessages(welcomeResp2.items, res.history_id);
+                // Prepend welcome only if the first message isn't already a welcome
+                setMessages(prev => {
+                  if (prev.length > 0 && prev[0] && prev[0].id && String(prev[0].id).startsWith('w-')) return prev;
+                  return [...wmsgs, ...prev];
+                });
+                setTimeout(() => scrollToBottom(false), 50);
+              }
+            } catch (e) {
+              // ignore welcome fetch failures for reused sessions
+            }
+          }
+          // If this is a fresh session (not reused), request the welcome via analyze
+          if (!res.reused) {
+            try {
+              const welcomeResp = await analyze({ question: '', history_id: res.history_id });
+              let loaded: ChatMessage[] = [];
+              if (welcomeResp && Array.isArray(welcomeResp.items) && welcomeResp.items.length > 0) {
+                loaded = analyzeItemsToBotMessages(welcomeResp.items, res.history_id);
+              } else {
+                // Fallback: ensure a welcome message is shown even if backend returns empty
+                const fallbackText = '안녕하세요! 퍼스널컬러 AI 컨설턴트입니다. 궁금한 점을 알려주시면 도와드릴게요.';
+                loaded.push({
+                  id: `w-${res.history_id}-0-b-fallback`,
+                  content: fallbackText,
+                  isUser: false,
+                  timestamp: new Date(),
+                  chatRes: { primary_tone: '', sub_tone: '', description: fallbackText, recommendations: [], emotion: 'neutral' } as any,
+                });
+              }
+
+              setMessages(prev => (prev.length > 0 ? [...prev, ...loaded] : loaded));
+              // after inserting welcome for fresh session, scroll to bottom immediately
+              setTimeout(() => scrollToBottom(false), 50);
+            } catch (e) {
+              console.warn('환영 메시지 로드 실패:', e);
+              // On error, still show a local fallback welcome so the UI isn't blank
+              const fallbackText = '안녕하세요! 퍼스널컬러 AI 컨설턴트입니다. 네트워크 문제로 환영 메시지를 불러오지 못했어요.';
+              const fallbackMsg: ChatMessage = {
+                id: `w-${res.history_id}-0-b-error`,
+                content: fallbackText,
+                isUser: false,
+                timestamp: new Date(),
+                chatRes: { primary_tone: '', sub_tone: '', description: fallbackText, recommendations: [], emotion: 'neutral' } as any,
+              };
+              setMessages(prev => (prev.length > 0 ? [...prev, fallbackMsg] : [fallbackMsg]));
+            }
           }
         }
         console.log('새 채팅 세션 시작, history_id=', res.history_id, 'reused=', res.reused);
@@ -261,23 +449,6 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
     };
   }, [startSession]);
 
-  // 리포트 키워드 확인 함수
-  const checkReportKeywords = (message: string): boolean => {
-    if (!message) return false;
-    const normalized = message.toLowerCase();
-    const keywords = [
-      '리포트',
-      '리포트 생성',
-      '보고서',
-      '분석 리포트',
-      '리포트 요청',
-      '리포트요청',
-      '리포트 생성해',
-      '리포트 만들어',
-    ];
-    return keywords.some(k => normalized.includes(k));
-  };
-
   // 메시지에 리포트(진단) 상세보기 버튼을 보여야 하는지 판단
   const shouldShowReportButton = (msg: ChatMessage): boolean => {
     if (!msg || msg.isUser) return false;
@@ -288,71 +459,53 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
     return false;
   };
 
+
   // 진단 결과 상세보기 모달 열기
   const handleViewDiagnosisDetail = () => {
-    // 만약 이미 preview/selectedResult가 있으면 바로 모달을 연다.
     if (selectedResult) {
       setIsDetailModalOpen(true);
       return;
     }
-    if (surveyResults && surveyResults.length > 0) {
-      // 기존 진단 결과
-      setSelectedResult(surveyResults[0] as SurveyResultDetail);
-      setIsDetailModalOpen(true);
-    } else if (userTurnCount >= 3 && messages.length > 0) {
-      // 3턴 후 임시 진단 결과 생성
-      const lastBotMessage = messages
-        .filter(msg => !msg.isUser && msg.chatRes)
-        .pop();
 
-      if (lastBotMessage?.chatRes) {
-        const tempResult: SurveyResultDetail = {
-          id: Date.now(),
-          result_tone: (lastBotMessage.chatRes.primary_tone || 'spring') as any,
-          result_name: `${lastBotMessage.chatRes.sub_tone || '봄'} ${lastBotMessage.chatRes.primary_tone || '웜'}톤`,
-          confidence: 0.85,
-          total_score: 85,
-          detailed_analysis:
-            lastBotMessage.chatRes.description ||
-            '3턴 대화를 통한 분석 결과입니다.',
-          color_palette: [],
-          style_keywords: lastBotMessage.chatRes.recommendations || [],
-          makeup_tips: [],
-          answers: [],
-          created_at: new Date().toISOString(),
-          user_id: user?.id || 0,
-          top_types: [
-            {
-              type: (lastBotMessage.chatRes.sub_tone?.toLowerCase() ||
-                'spring') as any,
-              name: `${lastBotMessage.chatRes.sub_tone || '봄'} ${lastBotMessage.chatRes.primary_tone || '웜'}톤`,
-              description:
-                lastBotMessage.chatRes.description || '3턴 대화 분석 결과',
-              score: 0.85,
-              color_palette: [
-                '#FFB6C1',
-                '#FFA07A',
-                '#FFFF99',
-                '#98FB98',
-                '#87CEEB',
-              ],
-              style_keywords: lastBotMessage.chatRes.recommendations?.slice(
-                0,
-                3
-              ) || ['밝은', '화사한', '생동감'],
-              makeup_tips: ['자연스러운 톤', '코랄 계열 립', '피치 블러셔'],
-            },
-          ],
-        };
+    const lastBotMessage = messages.filter(msg => !msg.isUser && msg.chatRes).pop();
 
-        setSelectedResult(tempResult);
-        setIsDetailModalOpen(true);
-      } else {
-        message.warning('진단 데이터를 찾을 수 없습니다.');
-      }
-    } else {
-      message.warning('아직 충분한 진단 정보가 없습니다. 더 대화해보세요!');
+    if (!lastBotMessage || !lastBotMessage.chatRes) {
+      message.warning('진단 데이터를 찾을 수 없습니다.');
+      return;
     }
+
+    const cr = lastBotMessage.chatRes;
+
+    const normalized = normalizePersonalColor(cr.primary_tone, cr.sub_tone);
+
+    const tempResult: SurveyResultDetail = {
+      id: Date.now(),
+      result_tone: (cr.primary_tone || 'spring') as any,
+      result_name: normalized.displayName,
+      confidence: 0.85,
+      total_score: 85,
+      detailed_analysis: cr.description || '3턴 대화를 통한 분석 결과입니다.',
+      color_palette: [],
+      style_keywords: cr.recommendations || [],
+      makeup_tips: [],
+      answers: [],
+      created_at: new Date().toISOString(),
+      user_id: user?.id || 0,
+      top_types: [
+        {
+          type: (cr.sub_tone?.toLowerCase() || 'spring') as any,
+          name: normalized.displayName,
+          description: cr.description || '3턴 대화 분석 결과',
+          score: 0.85,
+          color_palette: ['#FFB6C1', '#FFA07A', '#FFFF99', '#98FB98', '#87CEEB'],
+          style_keywords: cr.recommendations?.slice(0, 3) || ['밝은', '화사한', '생동감'],
+          makeup_tips: ['자연스러운 톤', '코랄 계열 립', '피치 블러셔'],
+        },
+      ],
+    };
+
+    setSelectedResult(tempResult);
+    setIsDetailModalOpen(true);
   };
 
   // 진단 상세보기 모달 닫기
@@ -364,9 +517,8 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
   // 메시지 전송 처리
   const handleSendMessage = async () => {
     // analyze 중복 호출 방지: 로딩 중이면 early return
-    if (!inputMessage.trim() || isTyping || isAnalyzing || isDiagnosing) return;
+    if (!inputMessage.trim() || isBusy) return;
 
-    const isReportRequest = checkReportKeywords(inputMessage.trim());
     const userNickname = `${user?.nickname || '사용자'}님`;
 
     // 현재 상태 디버깅 로그
@@ -374,7 +526,6 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
     console.log('  - currentHistoryId:', currentHistoryId);
     console.log('  - surveyResults:', surveyResults);
     console.log('  - surveyResults?.length:', surveyResults?.length);
-    console.log('  - isReportRequest:', isReportRequest);
     console.log('  - user:', user);
 
     const userMessage: ChatMessage = {
@@ -389,118 +540,6 @@ ${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와�
     setIsTyping(true);
 
     try {
-      // 🔥 키워드 감지 시 리포트 요청
-      if (isReportRequest) {
-        // 3턴 이하인 경우 처리
-        if (userTurnCount < 3) {
-          // 이전 진단 데이터가 있는지 확인
-          if (surveyResults && surveyResults.length > 0) {
-            console.log(
-              '📊 리포트 키워드 감지, 이전 데이터 있음 - 상세 모달 버튼 노출'
-            );
-
-            const existingDataMessage: ChatMessage = {
-              id: (Date.now() + 1).toString(),
-              content: `📊 ${userNickname}의 이전 퍼스널컬러 진단 결과를 찾았어요!
-
-${surveyResults[0].result_name || surveyResults[0].result_tone.toUpperCase()} 타입으로 진단받으셨던 결과를 상세히 확인하실 수 있습니다.
-
-[상세보기]`,
-              isUser: false,
-              timestamp: new Date(),
-            };
-
-            setMessages(prev => [...prev, existingDataMessage]);
-            setIsTyping(false);
-            return;
-          } else {
-            // 이전 데이터 없음
-            console.log(
-              '📊 리포트 키워드 감지, 이전 데이터 없음 - 분석을 위해 정보가 더 필요'
-            );
-
-            const needMoreDataMessage: ChatMessage = {
-              id: (Date.now() + 1).toString(),
-              content: `${userNickname}, 분석을 위해 정보가 더 필요해요! 📋
-
-퍼스널컬러 진단을 위해 몇 가지 질문에 답변해 주시면, 그 결과로 상세한 분석 리포트를 만들어드릴 수 있어요!
-
-어떤 색깔 옷을 좋아하시는지, 어떤 메이크업이 잘 어울리는지부터 편하게 이야기해보실래요? 🎨`,
-              isUser: false,
-              timestamp: new Date(),
-            };
-
-            setMessages(prev => [...prev, needMoreDataMessage]);
-            setIsTyping(false);
-            return;
-          }
-        }
-
-        // 3턴 이상인 경우 기존 로직 유지
-        if (surveyResults && surveyResults.length > 0) {
-          console.log('📊 리포트 키워드 감지, 리포트 요청 중...');
-          console.log('이전 진단 결과:', surveyResults[0]);
-
-          try {
-            // 진단 결과 ID 사용 (currentHistoryId가 아님)
-            const latestSurveyId = surveyResults[0].id;
-            const reportResponse =
-              await reportApi.requestReport(latestSurveyId);
-            console.log('✅ 리포트 요청 성공:', reportResponse);
-
-            // 리포트 생성 알림 메시지
-            const reportNotificationMessage: ChatMessage = {
-              id: (Date.now() + 1).toString(),
-              content: `📊 ${userNickname}의 ${surveyResults[0].result_name || surveyResults[0].result_tone.toUpperCase()} 타입 분석 리포트를 생성하고 있습니다! 
-
-${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리포트를 만들고 있어요. 잠시만 기다려주세요...'}
-
-생성이 완료되면 마이페이지에서 확인할 수 있습니다! 📋`,
-              isUser: false,
-              timestamp: new Date(),
-            };
-
-            setMessages(prev => [...prev, reportNotificationMessage]);
-            setIsTyping(false);
-            return; // 일반 챗봇 응답 대신 리포트 요청으로 대체
-          } catch (reportError: any) {
-            console.error('❌ 리포트 요청 실패:', reportError);
-
-            // 리포트 생성 실패 메시지
-            const reportErrorMessage: ChatMessage = {
-              id: (Date.now() + 1).toString(),
-              content: `${userNickname}, 리포트 생성 중 오류가 발생했어요 😅
-
-다시 시도해보시거나, 먼저 저와 대화를 통해 새로운 퍼스널컬러 진단을 받아보시는 건 어떨까요? 
-
-새로운 진단 결과가 나오면 더 정확한 리포트를 만들어드릴 수 있습니다! 🎨`,
-              isUser: false,
-              timestamp: new Date(),
-            };
-
-            setMessages(prev => [...prev, reportErrorMessage]);
-            setIsTyping(false);
-            return;
-          }
-        } else {
-          // 3턴 이상이지만 진단 내역이 없어서 리포트 생성 불가
-          const noHistoryMessage: ChatMessage = {
-            id: (Date.now() + 1).toString(),
-            content: `${userNickname}, 아직 저장된 퍼스널컬러 진단 내역이 없어서 리포트를 생성할 수 없어요 😅
-
-방금 전 대화를 통해 분석한 결과가 있다면, 먼저 그 결과를 저장한 후 리포트를 요청해 주세요!
-
-또는 새로운 진단을 진행하실 수도 있어요! 🎨`,
-            isUser: false,
-            timestamp: new Date(),
-          };
-
-          setMessages(prev => [...prev, noHistoryMessage]);
-          setIsTyping(false);
-          return;
-        }
-      }
-
       // 일반 챗봇 대화
       const response = await analyze({
         question: inputMessage.trim(),
@@ -517,33 +556,7 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
       console.log('📋 Latest Item:', latestItem);
 
       if (latestItem) {
-        // answer 필드 안전 처리 (더 견고한 JSON 감지/파싱)
-        let botContent = latestItem.answer;
-
-        console.log('🔤 원본 answer:', botContent);
-        console.log('🎯 chat_res:', latestItem.chat_res);
-
-        // Prefer chat_res.description when answer is empty
-        if (!botContent || botContent.trim() === '') {
-          botContent = latestItem.chat_res?.description || '답변을 준비 중입니다...';
-          console.log('🔄 대체된 content (빈 answer 대체):', botContent);
-        }
-
-        // Attempt to parse JSON robustly: trim, then try JSON.parse regardless of surrounding whitespace/newlines
-        try {
-          const trimmed = (botContent || '').trim();
-          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-            const parsed = JSON.parse(trimmed);
-            if (parsed && typeof parsed === 'object') {
-              // Prefer explicit description field, then answer field
-              botContent = parsed.description || parsed.answer || latestItem.chat_res?.description || '답변을 준비 중입니다...';
-              console.log('📖 JSON 파싱 후:', botContent);
-            }
-          }
-        } catch (e) {
-          // JSON 파싱 실패 시 그대로 사용 (이미 handled by chat_res fallback)
-          console.log('❌ JSON 파싱 실패, 원본 사용', e);
-        }
+        const botContent = extractBotContentFromItem(latestItem);
 
         const botMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
@@ -603,7 +616,6 @@ ${reportResponse.message || '기존 진단 결과를 바탕으로 상세한 리�
                       diagnosisResult.survey_result_id || Date.now()
                     );
                   } catch (e) {
-                    // Fallback to best-effort mapping if conversion fails
                     console.warn('convertReportDataToSurveyDetail 실패, 폴백 사용', e);
                     return {
                       id: diagnosisResult.survey_result_id || Date.now(),
@@ -1013,19 +1025,442 @@ function isDiagnosisBubble(msg?: any): boolean {
   return false;
 }
 
-  // 로딩 상태
-  if (userLoading || surveyLoading) {
+  // Helpers to group messages by date and format headers
+  const isSameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  const formatDateHeader = (d: Date) => {
+    const today = new Date();
+    if (isSameDay(d, today)) return '오늘';
+    const weekdays = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
+    return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${weekdays[d.getDay()]}`;
+  };
+
+  const groupMessagesByDate = (msgs: ChatMessage[]) => {
+    const map = new Map<string, ChatMessage[]>();
+    for (const m of msgs) {
+      // normalize to YYYY-MM-DD key
+      const d = new Date(m.timestamp);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+        d.getDate()
+      ).padStart(2, '0')}`;
+      if (!map.has(key)) {
+        map.set(key, []);
+      }
+      map.get(key)!.push(m);
+    }
+
+    // sort keys (YYYY-MM-DD strings) ascending so oldest date comes first
+    const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
+
+    return keys.map(k => {
+      const items = (map.get(k) || []).slice().sort((x, y) => new Date(x.timestamp).getTime() - new Date(y.timestamp).getTime());
+      const date = items.length > 0 ? new Date(items[0].timestamp) : new Date(k);
+      return { key: k, items, date };
+    });
+  };
+
+  // Memoized grouped sections so we don't recompute on every render
+  const groupedSections = useMemo(() => groupMessagesByDate(messages), [messages]);
+
+  // Small inline typing animation using SVG (no external CSS needed)
+  const TypingAnimation: React.FC<{ size?: number; color?: string }> = ({ size = 10, color = '#9CA3AF' }) => (
+    <svg width={size * 3 + 20} height={size} viewBox={`0 0 ${size * 3 + 20} ${size}`} xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <circle cx={size / 2} cy={size / 2} r={size / 2} fill={color}>
+        <animate attributeName="opacity" values="0.2;1;0.2" dur="1s" repeatCount="indefinite" begin="0s" />
+      </circle>
+      <circle cx={size / 2 + size + 6} cy={size / 2} r={size / 2} fill={color}>
+        <animate attributeName="opacity" values="0.2;1;0.2" dur="1s" repeatCount="indefinite" begin="0.15s" />
+      </circle>
+      <circle cx={size / 2 + (size + 6) * 2} cy={size / 2} r={size / 2} fill={color}>
+        <animate attributeName="opacity" values="0.2;1;0.2" dur="1s" repeatCount="indefinite" begin="0.3s" />
+      </circle>
+    </svg>
+  );
+
+  const renderMessage = (msg: ChatMessage) => {
+    const idx = messages.findIndex(m => m.id === msg.id);
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 flex items-center justify-center pt-20">
-        <Spin size="large" />
+      <div
+        className={`flex mb-3 ${msg.isUser ? 'justify-end' : 'justify-start'}`}
+      >
+        <div
+          className={`flex max-w-lg items-start ${msg.isUser ? 'flex-row-reverse' : 'flex-row'}`}
+        >
+          {msg.isUser ? (
+            (() => {
+              const avatarConfig = getAvatarRenderInfo(
+                user?.gender,
+                user?.id
+              );
+              return (
+                <Avatar
+                  className={`!ml-3 ${avatarConfig.className}`}
+                  style={avatarConfig.style}
+                >
+                  {typeof avatarConfig.content === 'string' ? (
+                    <span style={{ fontSize: '18px' }}>
+                      {avatarConfig.content}
+                    </span>
+                  ) : (
+                    avatarConfig.content
+                  )}
+                </Avatar>
+              );
+            })()
+            ) : (
+            (() => {
+              // For bot messages, prefer the currently active influencer profile for avatar.
+              // If none selected, fall back to influencer info embedded in the message, then robot icon.
+              const inflKey = (msg as any).influencer || (msg as any).chatRes?.influencer || (msg as any).chatRes?.raw?.influencer || (msg as any).influencer_id || null;
+
+              const getInfluencerAvatarInfo = (s: any) => {
+                if (!s || typeof s !== 'string') return null;
+                const key = s.trim().toLowerCase();
+
+                if (Array.isArray(influencers) && influencers.length > 0) {
+                  for (const p of influencers) {
+                    const n = ((p as any).name || '').toString().toLowerCase();
+                    if (!n) continue;
+                    if (key === n || key.includes(n) || key.startsWith(n)) return p;
+                  }
+                }
+
+                const map: Record<string, any> = {
+                  '혜경': { name: '혜경', emoji: '🎨', color: '#F0E6FF', profile: '/profiles/혜경.png' },
+                  '원준': { name: '원준', emoji: '🌟', color: '#FFE4E6', profile: '/profiles/원준.png' },
+                  '종민': { name: '종민', emoji: '💰', color: '#FFF2CC', profile: '/profiles/종민.png' },
+                  '세현': { name: '세현', emoji: '🌿', color: '#E8F5E8', profile: '/profiles/세현.png' },
+                };
+                for (const k of Object.keys(map)) {
+                  if (key.includes(k) || key.startsWith(k.toLowerCase())) return map[k];
+                }
+
+                const prefix = key.split(/[_\s-]/)[0] || key;
+                return { name: s, emoji: '🌟', color: '#e5e7eb', prefix };
+              };
+
+              const inflFromMsg = getInfluencerAvatarInfo(inflKey);
+              const avatarProfile = activeInfluencerProfile || inflFromMsg;
+
+              if (avatarProfile) {
+                const inflName = (((avatarProfile as any)?.name || '') as string).toLowerCase();
+                const activeName = typeof activeInfluencerProfile === 'string'
+                  ? (activeInfluencerProfile as string).toLowerCase()
+                  : (((activeInfluencerProfile as any)?.name || '') as string).toLowerCase();
+                const activeId = (activeInfluencerProfile && (activeInfluencerProfile as any).id) ?? null;
+                const inflId = (avatarProfile && (avatarProfile as any).id) ?? null;
+                const isActive = (
+                  activeId != null && inflId != null
+                    ? String(activeId) === String(inflId)
+                    : activeName && inflName && activeName === inflName
+                );
+
+                return (
+                  <div
+                    className={`influencer-avatar-clickable !mr-3 ${isActive ? 'influencer-avatar-active' : ''}`}
+                    onClick={() => {
+                      if (autoCloseRef.current) {
+                        window.clearTimeout(autoCloseRef.current as any);
+                        autoCloseRef.current = null;
+                      }
+                      setActiveInfluencerProfile(avatarProfile);
+                      setInfluencerModalOpen(true);
+                    }}
+                    aria-label={`Open profile ${(avatarProfile as any).name}`}
+                    role="button"
+                    tabIndex={0}
+                    style={{ display: 'inline-flex', alignItems: 'center' }}
+                  >
+                    <Avatar
+                      size={50}
+                      style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff' }}
+                    >
+                      <InfluencerImage profile={avatarProfile} name={(avatarProfile as any).name} emoji={(avatarProfile as any).emoji} />
+                    </Avatar>
+                  </div>
+                );
+              }
+
+              return (
+                <Avatar
+                  icon={<RobotOutlined />}
+                  style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
+                  className="!mr-3"
+                />
+              );
+            })()
+          )}
+          <div className="flex flex-col gap-1">
+            {!msg.isUser && (idx === 0 || (msg.chatRes?.emotion && !isDiagnosisBubble(msg))) && (
+              <div
+                className="relative px-4 py-2 rounded-lg bg-white border border-gray-200 mb-1 flex items-center chatbot-balloon"
+                style={{ maxWidth: 'fit-content' }}
+              >
+                <span
+                  className="absolute left-[-10px] top-4 w-0 h-0"
+                  style={{
+                    borderTop: '8px solid transparent',
+                    borderBottom: '8px solid transparent',
+                    borderRight: '10px solid #fff',
+                    left: '-10px',
+                    top: '16px',
+                    zIndex: 1,
+                  }}
+                />
+                <span
+                  className="absolute left-[-12px] top-4 w-0 h-0"
+                  style={{
+                    borderTop: '9px solid transparent',
+                    borderBottom: '9px solid transparent',
+                    borderRight: '12px solid #e5e7eb',
+                    left: '-12px',
+                    top: '15px',
+                    zIndex: 0,
+                  }}
+                />
+                <AnimatedEmoji emotion={msg?.chatRes?.emotion ?? 'neutral'} size={40} />
+              </div>
+            )}
+            {(msg.isUser || !msg.chatRes?.emotion || delayedDescriptions[msg.id] || typeof delayedDescriptions[msg.id] === 'undefined') && (
+              <div
+                className={`relative px-4 py-2 rounded-lg ${
+                  msg.isUser
+                    ? 'bg-blue-500 text-white user-balloon'
+                    : 'bg-white chatbot-balloon'
+                }`}
+                style={{
+                  marginLeft: msg.isUser ? 0 : '0',
+                  marginRight: msg.isUser ? '0' : 0,
+                  maxWidth: '100%',
+                  border: msg.isUser ? undefined : '1.5px solid #e5e7eb',
+                  boxShadow: msg.isUser ? undefined : '0 2px 8px rgba(0,0,0,0.04)',
+                }}
+              >
+                {msg.isUser ? (
+                  <>
+                    <span
+                      className="absolute right-[-10px] top-4 w-0 h-0"
+                      style={{
+                        borderTop: '8px solid transparent',
+                        borderBottom: '8px solid transparent',
+                        borderLeft: '10px solid #3b82f6',
+                        right: '-10px',
+                        top: '16px',
+                        zIndex: 1,
+                      }}
+                    />
+                    <span
+                      className="absolute right-[-12px] top-4 w-0 h-0"
+                      style={{
+                        borderTop: '9px solid transparent',
+                        borderBottom: '9px solid transparent',
+                        borderLeft: '12px solid #2563eb',
+                        right: '-12px',
+                        top: '15px',
+                        zIndex: 0,
+                      }}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <span
+                      className="absolute left-[-10px] top-4 w-0 h-0"
+                      style={{
+                        borderTop: '8px solid transparent',
+                        borderBottom: '8px solid transparent',
+                        borderRight: '10px solid #fff',
+                        left: '-10px',
+                        top: '16px',
+                        zIndex: 1,
+                      }}
+                    />
+                    <span
+                      className="absolute left-[-12px] top-4 w-0 h-0"
+                      style={{
+                        borderTop: '9px solid transparent',
+                        borderBottom: '9px solid transparent',
+                        borderRight: '12px solid #e5e7eb',
+                        left: '-12px',
+                        top: '15px',
+                        zIndex: 0,
+                      }}
+                    />
+                  </>
+                )}
+                {msg.customContent ? (
+                  msg.customContent
+                ) : msg.content.includes('[상세보기]') ? (
+                  <div>
+                    {msg.content.includes('🌈 **추천 컬러 팔레트**') &&
+                    msg.diagnosisData ? (
+                      <div>
+                        <Text
+                          className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                        >
+                          {msg.content.split('🌈 **추천 컬러 팔레트**')[0]}
+                        </Text>
+
+                        <div className="mt-3">
+                          <Text
+                            strong
+                            className="block mb-2 !text-gray-700"
+                          >
+                            🌈 추천 컬러 팔레트
+                          </Text>
+                          <div className="flex flex-wrap gap-2 mb-3">
+                            {msg.diagnosisData.color_palette &&
+                            msg.diagnosisData.color_palette.length > 0 ? (
+                              msg.diagnosisData.color_palette.map(
+                                (color: string, index: number) => (
+                                  <div
+                                    key={index}
+                                    className="flex items-center gap-1"
+                                  >
+                                    <div
+                                      className="w-6 h-6 rounded-full border border-gray-300"
+                                      style={{ backgroundColor: color }}
+                                      title={color}
+                                    />
+                                    <Text className="text-xs text-gray-600">
+                                      {color}
+                                    </Text>
+                                  </div>
+                                )
+                              )
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    className="w-6 h-6 rounded-full border border-gray-300"
+                                    style={{ backgroundColor: '#FFB6C1' }}
+                                  />
+                                  <Text className="text-xs text-gray-600">
+                                    #FFB6C1
+                                  </Text>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    className="w-6 h-6 rounded-full border border-gray-300"
+                                    style={{ backgroundColor: '#FFA07A' }}
+                                  />
+                                  <Text className="text-xs text-gray-600">
+                                    #FFA07A
+                                  </Text>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    className="w-6 h-6 rounded-full border border-gray-300"
+                                    style={{ backgroundColor: '#FFFF99' }}
+                                  />
+                                  <Text className="text-xs text-gray-600">
+                                    #FFFF99
+                                  </Text>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    className="w-6 h-6 rounded-full border border-gray-300"
+                                    style={{ backgroundColor: '#98FB98' }}
+                                  />
+                                  <Text className="text-xs text-gray-600">
+                                    #98FB98
+                                  </Text>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    className="w-6 h-6 rounded-full border border-gray-300"
+                                    style={{ backgroundColor: '#87CEEB' }}
+                                  />
+                                  <Text className="text-xs text-gray-600">
+                                    #87CEEB
+                                  </Text>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <Text
+                          className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                        >
+                          {msg.content
+                            .split('🌈 **추천 컬러 팔레트**')[1]
+                            ?.replace(/🎨 #[A-Fa-f0-9]{6}/g, '')
+                            .replace('[상세보기]', '')
+                            .trim()}
+                        </Text>
+                      </div>
+                    ) : (
+                      <Text
+                        className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                      >
+                        {msg.content.replace('[상세보기]', '')}
+                      </Text>
+                    )}
+                    <div className="mt-3">
+                      <Button
+                        type="primary"
+                        size="small"
+                        onClick={handleViewDiagnosisDetail}
+                        className="bg-purple-500 hover:bg-purple-600 border-purple-500 hover:border-purple-600"
+                      >
+                        📊 상세보기
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Text
+                    className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                  >
+                    {msg.content}
+                  </Text>
+                )}
+
+                <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
+                  {shouldShowReportButton(msg) && (
+                    <Button
+                      type="default"
+                      size="small"
+                      onClick={() => {
+                        if (selectedResult) {
+                          setIsDetailModalOpen(true);
+                          return;
+                        }
+                        if (surveyResults && surveyResults.length > 0) {
+                          setSelectedResult(surveyResults[0] as SurveyResultDetail);
+                          setIsDetailModalOpen(true);
+                          return;
+                        }
+                        handleViewDiagnosisDetail();
+                      }}
+                      className="border-purple-300 text-purple-600 hover:border-purple-500 hover:text-purple-700"
+                    >
+                      🎨 진단 결과
+                    </Button>
+                  )}
+                  {formatKoreanDate(msg.timestamp, true)}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
+    );
+  };
+
+  // 로딩 상태
+  // `welcomeIsPending` used to be provided by a removed react-query welcome request; default to false.
+  const welcomeIsPending = false;
+  if (userLoading || surveyLoading || welcomeIsPending) {
+    return (
+      <Loading />
     );
   }
 
   // 로그인하지 않은 경우
   if (!user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 flex items-center justify-center pt-20">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 flex items-center justify-center">
         <Card
           className="shadow-xl border-0 max-w-md"
           style={{ borderRadius: '16px' }}
@@ -1129,316 +1564,23 @@ function isDiagnosisBubble(msg?: any): boolean {
           {/* 메시지 목록 */}
           <div
             ref={messagesContainerRef}
-            className="flex-1 overflow-y-auto mb-3 p-3 bg-gray-50 rounded-lg"
-            style={{ minHeight: '400px', paddingTop: '30px' }}
+            className="flex-1 overflow-y-auto mb-3 p-3 bg-gray-50 rounded-lg flex flex-col"
+            style={{ minHeight: '400px', paddingTop: '30px', position: 'relative' }}
           >
-            {messages.map((msg, idx) => (
-              <div
-                key={msg.id}
-                className={`flex mb-3 ${msg.isUser ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`flex max-w-lg items-start ${msg.isUser ? 'flex-row-reverse' : 'flex-row'}`}
-                >
-                  {msg.isUser ? (
-                    (() => {
-                      const avatarConfig = getAvatarRenderInfo(
-                        user?.gender,
-                        user?.id
-                      );
-                      return (
-                        <Avatar
-                          className={`!ml-3 ${avatarConfig.className}`}
-                          style={avatarConfig.style}
-                        >
-                          {typeof avatarConfig.content === 'string' ? (
-                            <span style={{ fontSize: '18px' }}>
-                              {avatarConfig.content}
-                            </span>
-                          ) : (
-                            avatarConfig.content
-                          )}
-                        </Avatar>
-                      );
-                    })()
-                  ) : (
-                    <Avatar
-                      icon={<RobotOutlined />}
-                      style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
-                      className="!mr-3"
-                    />
-                  )}
-                  <div className="flex flex-col gap-1">
-                    {/* 이모티콘 애니메이션 버블 (bot 메시지에만, 먼저 표시) */}
-                    {/* 퍼스널컬러 진단 챗봇 버블(분석/추천/진단 등)에는 이모티콘 미표시 */}
-                    {!msg.isUser && (idx === 0 || (msg.chatRes?.emotion && !isDiagnosisBubble(msg))) && (
-                      <div
-                        className="relative px-4 py-2 rounded-lg bg-white border border-gray-200 mb-1 flex items-center chatbot-balloon"
-                        style={{ maxWidth: 'fit-content' }}
-                      >
-                        {/* 말풍선 꼬리 (챗봇) + border */}
-                        <span
-                          className="absolute left-[-10px] top-4 w-0 h-0"
-                          style={{
-                            borderTop: '8px solid transparent',
-                            borderBottom: '8px solid transparent',
-                            borderRight: '10px solid #fff',
-                            left: '-10px',
-                            top: '16px',
-                            zIndex: 1,
-                          }}
-                        />
-                        {/* border용 꼬리 */}
-                        <span
-                          className="absolute left-[-12px] top-4 w-0 h-0"
-                          style={{
-                            borderTop: '9px solid transparent',
-                            borderBottom: '9px solid transparent',
-                            borderRight: '12px solid #e5e7eb',
-                            left: '-12px',
-                            top: '15px',
-                            zIndex: 0,
-                          }}
-                        />
-                        <AnimatedEmoji emotion={msg?.chatRes?.emotion ?? "neutral"} size={40} />
-                      </div>
-                    )}
-                    {/* description/텍스트 버블 (딜레이 후 표시) */}
-                    {(msg.isUser || !msg.chatRes?.emotion || delayedDescriptions[msg.id] || typeof delayedDescriptions[msg.id] === 'undefined') && (
-                      <div
-                        className={`relative px-4 py-2 rounded-lg ${
-                          msg.isUser
-                            ? 'bg-blue-500 text-white user-balloon'
-                            : 'bg-white chatbot-balloon'
-                        }`}
-                        style={{
-                          marginLeft: msg.isUser ? 0 : '0',
-                          marginRight: msg.isUser ? '0' : 0,
-                          maxWidth: '100%',
-                          border: msg.isUser ? undefined : '1.5px solid #e5e7eb',
-                          boxShadow: msg.isUser ? undefined : '0 2px 8px rgba(0,0,0,0.04)',
-                        }}
-                      >
-                        {/* 말풍선 꼬리 */}
-                        {msg.isUser ? (
-                          <>
-                            <span
-                              className="absolute right-[-10px] top-4 w-0 h-0"
-                              style={{
-                                borderTop: '8px solid transparent',
-                                borderBottom: '8px solid transparent',
-                                borderLeft: '10px solid #3b82f6',
-                                right: '-10px',
-                                top: '16px',
-                                zIndex: 1,
-                              }}
-                            />
-                            {/* border용 꼬리 */}
-                            <span
-                              className="absolute right-[-12px] top-4 w-0 h-0"
-                              style={{
-                                borderTop: '9px solid transparent',
-                                borderBottom: '9px solid transparent',
-                                borderLeft: '12px solid #2563eb',
-                                right: '-12px',
-                                top: '15px',
-                                zIndex: 0,
-                              }}
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <span
-                              className="absolute left-[-10px] top-4 w-0 h-0"
-                              style={{
-                                borderTop: '8px solid transparent',
-                                borderBottom: '8px solid transparent',
-                                borderRight: '10px solid #fff',
-                                left: '-10px',
-                                top: '16px',
-                                zIndex: 1,
-                              }}
-                            />
-                            {/* border용 꼬리 */}
-                            <span
-                              className="absolute left-[-12px] top-4 w-0 h-0"
-                              style={{
-                                borderTop: '9px solid transparent',
-                                borderBottom: '9px solid transparent',
-                                borderRight: '12px solid #e5e7eb',
-                                left: '-12px',
-                                top: '15px',
-                                zIndex: 0,
-                              }}
-                            />
-                          </>
-                        )}
-                        {/* 메시지 내용 렌더링 - customContent 또는 일반 content */}
-                        {msg.customContent ? (
-                          msg.customContent
-                        ) : msg.content.includes('[상세보기]') ? (
-                          <div>
-                            {/* 컬러 팔레트가 포함된 진단 결과 메시지인지 확인 */}
-                            {msg.content.includes('🌈 **추천 컬러 팔레트**') &&
-                            msg.diagnosisData ? (
-                              <div>
-                                {/* 메인 텍스트 (컬러 팔레트 부분 제외) */}
-                                <Text
-                                  className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                                >
-                                  {msg.content.split('🌈 **추천 컬러 팔레트**')[0]}
-                                </Text>
-
-                                {/* 컬러 팔레트 시각적 표시 */}
-                                <div className="mt-3">
-                                  <Text
-                                    strong
-                                    className="block mb-2 !text-gray-700"
-                                  >
-                                    🌈 추천 컬러 팔레트
-                                  </Text>
-                                  <div className="flex flex-wrap gap-2 mb-3">
-                                    {msg.diagnosisData.color_palette &&
-                                    msg.diagnosisData.color_palette.length > 0 ? (
-                                      msg.diagnosisData.color_palette.map(
-                                        (color: string, index: number) => (
-                                          <div
-                                            key={index}
-                                            className="flex items-center gap-1"
-                                          >
-                                            <div
-                                              className="w-6 h-6 rounded-full border border-gray-300"
-                                              style={{ backgroundColor: color }}
-                                              title={color}
-                                            />
-                                            <Text className="text-xs text-gray-600">
-                                              {color}
-                                            </Text>
-                                          </div>
-                                        )
-                                      )
-                                    ) : (
-                                      <>
-                                        <div className="flex items-center gap-1">
-                                          <div
-                                            className="w-6 h-6 rounded-full border border-gray-300"
-                                            style={{ backgroundColor: '#FFB6C1' }}
-                                          />
-                                          <Text className="text-xs text-gray-600">
-                                            #FFB6C1
-                                          </Text>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                          <div
-                                            className="w-6 h-6 rounded-full border border-gray-300"
-                                            style={{ backgroundColor: '#FFA07A' }}
-                                          />
-                                          <Text className="text-xs text-gray-600">
-                                            #FFA07A
-                                          </Text>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                          <div
-                                            className="w-6 h-6 rounded-full border border-gray-300"
-                                            style={{ backgroundColor: '#FFFF99' }}
-                                          />
-                                          <Text className="text-xs text-gray-600">
-                                            #FFFF99
-                                          </Text>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                          <div
-                                            className="w-6 h-6 rounded-full border border-gray-300"
-                                            style={{ backgroundColor: '#98FB98' }}
-                                          />
-                                          <Text className="text-xs text-gray-600">
-                                            #98FB98
-                                          </Text>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                          <div
-                                            className="w-6 h-6 rounded-full border border-gray-300"
-                                            style={{ backgroundColor: '#87CEEB' }}
-                                          />
-                                          <Text className="text-xs text-gray-600">
-                                            #87CEEB
-                                          </Text>
-                                        </div>
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* 나머지 텍스트 */}
-                                <Text
-                                  className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                                >
-                                  {msg.content
-                                    .split('🌈 **추천 컬러 팔레트**')[1]
-                                    ?.replace(/🎨 #[A-Fa-f0-9]{6}/g, '')
-                                    .replace('[상세보기]', '')
-                                    .trim()}
-                                </Text>
-                              </div>
-                            ) : (
-                              <Text
-                                className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                              >
-                                {msg.content.replace('[상세보기]', '')}
-                              </Text>
-                            )}
-                            <div className="mt-3">
-                              <Button
-                                type="primary"
-                                size="small"
-                                onClick={handleViewDiagnosisDetail}
-                                className="bg-purple-500 hover:bg-purple-600 border-purple-500 hover:border-purple-600"
-                              >
-                                📊 상세보기
-                              </Button>
-                            </div>
-                          </div>
-                        ) : (
-                          <Text
-                            className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                          >
-                            {msg.content}
-                          </Text>
-                        )}
-
-                        <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
-                          {/* 리포트 관련 메시지에 리포트 상세보기 버튼 추가 */}
-                          {shouldShowReportButton(msg) && (
-                        <Button
-                          type="default"
-                          size="small"
-                          onClick={() => {
-                            // previewResultOuter is sometimes undefined in this scope due to closure issues
-                            // Instead, always use selectedResult if available, otherwise fallback
-                            if (selectedResult) {
-                              setIsDetailModalOpen(true);
-                              return;
-                            }
-                            // If recentResults exist, use the first one
-                            if (surveyResults && surveyResults.length > 0) {
-                              setSelectedResult(surveyResults[0] as SurveyResultDetail);
-                              setIsDetailModalOpen(true);
-                              return;
-                            }
-                            // Fallback to handler (may show warning)
-                            handleViewDiagnosisDetail();
-                          }}
-                          className="border-purple-300 text-purple-600 hover:border-purple-500 hover:text-purple-700"
-                        >
-                          🎨 진단 결과
-                        </Button>
-                          )}
-                          {formatKoreanDate(msg.timestamp, true)}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+            {/* spacer pushes messages to bottom when there's extra space, but collapses when content overflows */}
+            <div style={{ flex: 1 }} />
+            {groupedSections.map((sec) => (
+              <div key={`sec-${sec.key}`} className="mb-3">
+                <div className="flex items-center justify-center my-4">
+                  <div className="flex-1 border-t border-gray-200" />
+                  <span className="mx-4 px-4 py-1 bg-white text-sm text-gray-600 rounded-full shadow-sm">
+                    {formatDateHeader(sec.date)}
+                  </span>
+                  <div className="flex-1 border-t border-gray-200" />
                 </div>
+                {sec.items.map((msg) => (
+                  <div key={msg.id}>{renderMessage(msg)}</div>
+                ))}
               </div>
             ))}
 
@@ -1446,16 +1588,67 @@ function isDiagnosisBubble(msg?: any): boolean {
             {isTyping && (
               <div className="flex justify-start mb-3">
                 <div className="flex items-start">
-                  <Avatar
-                    icon={<RobotOutlined />}
-                    style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
-                    className="!mr-2"
-                  />
-                  <div className="bg-white border border-gray-200 px-4 py-2 rounded-lg">
-                    <Spin size="small" />
-                    <Text className="ml-2 !text-gray-500">
-                      답변을 생성하고 있습니다...
-                    </Text>
+                  {/* Avatar: prefer active influencer, else infer from last bot message, else robot */}
+                  <div className={`chatbot-avatar-container !mr-2 ${isTyping ? 'chatbot-active' : ''}`}>
+                    {
+                      (() => {
+                        // find last bot message to infer influencer if needed
+                        const lastBot = [...messages].slice().reverse().find(m => !m.isUser);
+                        const inflKey = (lastBot as any)?.influencer || (lastBot as any)?.chatRes?.influencer || (lastBot as any)?.chatRes?.raw?.influencer || (lastBot as any)?.influencer_id || null;
+
+                        let found: any = null;
+                        if (activeInfluencerProfile) {
+                          found = activeInfluencerProfile;
+                        } else if (inflKey && Array.isArray(influencers) && influencers.length > 0) {
+                          const key = String(inflKey).toLowerCase();
+                          for (const p of influencers) {
+                            const n = ((p as any).name || '').toString().toLowerCase();
+                            if (!n) continue;
+                            if (key === n || key.includes(n) || key.startsWith(n)) {
+                              found = p;
+                              break;
+                            }
+                          }
+                        }
+
+                        if (found) {
+                          return (
+                            <div
+                              className="influencer-avatar-clickable !mr-3 influencer-avatar-active"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => {
+                                if (autoCloseRef.current) {
+                                  window.clearTimeout(autoCloseRef.current as any);
+                                  autoCloseRef.current = null;
+                                }
+                                setActiveInfluencerProfile(found);
+                                setInfluencerModalOpen(true);
+                              }}
+                            >
+                              <Avatar
+                                size={50}
+                                style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff' }}
+                              >
+                                <InfluencerImage profile={found} name={(found as any).name} emoji={(found as any).emoji} />
+                              </Avatar>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <Avatar
+                            icon={<RobotOutlined />}
+                            style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
+                          />
+                        );
+                      })()
+                    }
+                  </div>
+
+                  <div className="bg-white border border-gray-200 px-4 py-2 rounded-lg flex items-center">
+                    <TypingAnimation size={8} color="#6b7280" />
+                    <span className="sr-only">답변을 생성하고 있습니다</span>
                   </div>
                 </div>
               </div>
@@ -1494,7 +1687,7 @@ function isDiagnosisBubble(msg?: any): boolean {
               onChange={e => setInputMessage(e.target.value)}
               onKeyDown={e => {
                 // analyze 중복 호출 방지: 로딩 중이면 입력 무시
-                if (isTyping || isAnalyzing || isDiagnosing) return;
+                if (isBusy) return;
                 handleKeyDown(e);
               }}
               placeholder={
@@ -1503,7 +1696,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                   : '퍼스널컬러에 대해 궁금한 것을 물어보세요...'
               }
               autoSize={{ minRows: 1, maxRows: 2 }}
-              disabled={isTyping || isAnalyzing || isDiagnosing}
+              disabled={isBusy}
               style={{ fontSize: '14px' }}
             />
             <Button
@@ -1511,10 +1704,10 @@ function isDiagnosisBubble(msg?: any): boolean {
               icon={<SendOutlined />}
               onClick={() => {
                 // analyze 중복 호출 방지: 로딩 중이면 클릭 무시
-                if (isTyping || isAnalyzing || isDiagnosing) return;
+                if (isBusy) return;
                 handleSendMessage();
               }}
-              disabled={!inputMessage.trim() || isTyping || isAnalyzing || isDiagnosing}
+              disabled={!inputMessage.trim() || isBusy}
               className="h-auto"
             >
               전송
@@ -1558,6 +1751,19 @@ function isDiagnosisBubble(msg?: any): boolean {
             }
             return out;
           })()}
+        />
+
+        {/* Influencer profile modal */}
+        <InfluencerProfileModal
+          open={influencerModalOpen}
+          onCancel={() => {
+            setInfluencerModalOpen(false);
+            if (autoCloseRef.current) {
+              window.clearTimeout(autoCloseRef.current as any);
+              autoCloseRef.current = null;
+            }
+          }}
+          profile={activeInfluencerProfile}
         />
       </div>
     </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { formatKoreanDate } from '@/utils/dateUtils';
 import {
   Row,
@@ -12,13 +12,15 @@ import {
   List,
   Spin,
   Dropdown,
+  Tabs,
 } from 'antd';
 import {
   DeleteOutlined,
   ExclamationCircleOutlined,
   CalendarOutlined,
   MoreOutlined,
-  MessageOutlined,
+  CommentOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -29,18 +31,136 @@ import {
 import { getAvatarRenderInfo } from '@/utils/genderUtils';
 import RouterPaths from '@/routes/Router';
 import { useSurveyResultsLive, useDeleteSurvey } from '@/hooks/useSurvey';
+import useChatbot from '@/hooks/useChatbot';
 import type { SurveyResultDetail } from '@/api/survey';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
+import InfluencerProfileModal from '@/components/InfluencerProfileModal';
+import { Loading } from '@/components';
+import type { InfluencerHistoryItem } from '@/api/chatbot';
 
 const { Title, Text } = Typography;
+
+// 작은 하위 컴포넌트: 인플루언서 리스트를 렌더하고 클릭 시 챗봇으로 이동
+const InfluencerList: React.FC = () => {
+  const navigate = useNavigate();
+  const { influencerHistories, refetchInfluencerHistories } = useChatbot();
+  // Use profiles embedded in influencerHistories when available.
+  const profilesFromHistories = Array.isArray(influencerHistories)
+    ? influencerHistories : [];
+
+  // Refresh influencer histories on mount and when the tab becomes visible
+  useEffect(() => {
+    try {
+      refetchInfluencerHistories();
+    } catch (e) {
+      // ignore
+    }
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        try {
+          refetchInfluencerHistories();
+        } catch (e) { }
+      }
+    };
+    window.addEventListener('visibilitychange', onVisibility);
+    return () => window.removeEventListener('visibilitychange', onVisibility);
+  }, [refetchInfluencerHistories]);
+
+  // Format timestamp as `yyyy.mm.dd hh:mm`
+  const formatShortTimestamp = (iso?: string | null) => {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '';
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [activeProfile, setActiveProfile] = useState<any | null>(null);
+
+  const openProfile = (p: any) => {
+    setActiveProfile(p);
+    setProfileModalOpen(true);
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      {profilesFromHistories.length === 0 ? (
+        <div className="text-sm text-gray-500">등록된 인플루언서가 없습니다.</div>
+      ) : (
+        profilesFromHistories.map((influencer: InfluencerHistoryItem, idx: number) => {
+          const slug = encodeURIComponent((influencer.influencer_id || influencer.influencer_name || '').toString().trim());
+          const imageSrc = (slug ? `/profiles/${slug}.png` : undefined);
+
+          return (
+            <div key={idx} className="flex items-center p-3 bg-white rounded shadow-sm w-full">
+              <div role="button" tabIndex={0} onClick={() => openProfile(influencer.profile)}>
+                <Avatar
+                  size={64}
+                  src={imageSrc}
+                  style={{ backgroundColor: influencer.profile?.color || '#f3f4f6', flexShrink: 0 }}
+                >
+                  {/* fallback content when image not available */}
+                  {influencer.profile?.emoji || '🎨'}
+                </Avatar>
+              </div>
+
+              <div className="ml-4 flex-1 min-w-0">
+                <div className="text-sm font-medium">{(influencer.profile as any)?.name || influencer.profile?.subscriber_name?.[0] || (influencer.profile?.greeting?.slice ? influencer.profile.greeting.slice(0, 6) : '') || '인플루언서'}</div>
+                <div className="mt-1 text-xs text-gray-500">{influencer.profile?.characteristics || (influencer.profile?.expertise ? influencer.profile.expertise.join(', ') : '')}</div>
+
+                {influencer.profile?.short_description ? (
+                  <div className="mt-2 text-xs text-gray-600 w-full flex">
+                    <div
+                      className="truncate"
+                    >
+                      <span>{influencer.profile?.short_description}</span>
+                    </div>
+                    {influencer.last_activity ? (
+                      <span className="ml-5 text-gray-400 whitespace-nowrap">{formatShortTimestamp(influencer.last_activity)}</span>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="mt-2 text-xs text-gray-400">최근 대화 없음</div>
+                )}
+              </div>
+
+              <div className="ml-4 flex items-end w-28 flex-shrink-0">
+                <Button
+                  block
+                  type="primary"
+                  size="small"
+                  onClick={() => navigate(`/chatbot?infl_id=${slug || encodeURIComponent(influencer.profile?.name || '')}`, { state: { influencerProfile: influencer.profile } })}
+                >
+                  상담하기
+                </Button>
+              </div>
+            </div>
+          );
+        })
+      )}
+
+      <InfluencerProfileModal
+        open={profileModalOpen}
+        onCancel={() => setProfileModalOpen(false)}
+        profile={activeProfile}
+      />
+    </div>
+  );
+};
 
 /**
  * 마이페이지 컴포넌트
  */
 const MyPage: React.FC = () => {
   const { data: user, isLoading } = useCurrentUser();
-  const { data: userStats, isLoading: isLoadingStats } = useUserStats();
-  const { data: surveyResults, isLoading: isLoadingSurveys } =
+  const { data: userStats, isPending: isLoadingStats } = useUserStats();
+  const { data: surveyResults, isPending: isLoadingSurveys } =
     useSurveyResultsLive();
   const navigate = useNavigate();
   const deleteCurrentUser = useDeleteCurrentUser();
@@ -52,13 +172,9 @@ const MyPage: React.FC = () => {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   // 페이징 상태
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const pageSize = 5;
+  const pageSize = 3;
 
-  // AI 전문가 상담으로 이동
-  const handleAIConsultation = () => {
-    // navigate(RouterPaths.PersonalColorTest); // 기존 설문 방식 (비활성화)
-    navigate(RouterPaths.Chatbot); // 대화형 진단으로 변경
-  };
+
 
   // 진단 결과 상세보기
   const handleViewDetail = (result: SurveyResultDetail) => {
@@ -142,12 +258,9 @@ const MyPage: React.FC = () => {
   };
 
   // 아바타 렌더링: getAvatarRenderInfo를 직접 사용
-
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center pt-20">
-        <div>로딩 중...</div>
-      </div>
+      <Loading />
     );
   }
 
@@ -158,6 +271,11 @@ const MyPage: React.FC = () => {
           <div className="text-center p-8">
             <Title level={3}>로그인이 필요합니다</Title>
             <Text>마이페이지를 보려면 로그인해주세요.</Text>
+            <div className="mt-6">
+              <Button type="primary" onClick={() => navigate('/login')}>
+                로그인
+              </Button>
+            </div>
           </div>
         </Card>
       </div>
@@ -284,9 +402,8 @@ const MyPage: React.FC = () => {
                     </Text>
                     <div className="flex items-center">
                       <div
-                        className={`w-2 h-2 rounded-full mr-2 ${
-                          user.is_active ? 'bg-green-500' : 'bg-red-500'
-                        }`}
+                        className={`w-2 h-2 rounded-full mr-2 ${user.is_active ? 'bg-green-500' : 'bg-red-500'
+                          }`}
                       ></div>
                       <Text
                         className={
@@ -303,152 +420,125 @@ const MyPage: React.FC = () => {
           </Col>
         </Row>
 
-        {/* 최근 진단 기록 섹션 */}
+        {/* 통합: AI 전문가 + 최근 진단 기록을 Tabs로 표시 */}
         <Row className="mt-8">
           <Col span={24}>
-            <Card
-              className="shadow-sm border border-gray-200"
-              style={{ borderRadius: '8px' }}
-            >
-              <div className="px-6 py-2">
-                <div className="flex items-center justify-between">
-                  <Title level={4} className="mb-6 text-gray-800">
-                    최근 진단 기록
-                  </Title>
-                  <Text className="!text-gray-500 !text-sm">
-                    총 {surveyResults?.length || 0}건
-                  </Text>
-                </div>
+            <Card className="shadow-sm border border-gray-200" style={{ borderRadius: '8px' }}>
+              <Tabs
+                type="card"
+                defaultActiveKey="influencer"
+                items={[
+                  {
+                    key: 'influencer',
+                    label: 'AI 전문가',
+                    icon: <CommentOutlined />,
+                    children: (
+                      <div className="px-6 py-2">
+                        <div className="flex items-center justify-between">
+                          <Title level={4} className="mb-6 text-gray-800">AI 전문가</Title>
+                          <Text className="!text-gray-500 !text-sm">원하시는 인플루언서를 선택해 상담을 시작하세요</Text>
+                        </div>
 
-                {isLoadingSurveys ? (
-                  <div className="text-center py-12">
-                    <Spin size="large" />
-                    <div className="mt-4">
-                      <Text className="text-gray-500">
-                        진단 기록을 불러오는 중...
-                      </Text>
-                    </div>
-                  </div>
-                ) : !surveyResults || surveyResults.length === 0 ? (
-                  <div className="text-center py-12 bg-gray-50 rounded-lg">
-                    <Text className="text-gray-500 text-base">
-                      아직 진단 기록이 없습니다.
-                    </Text>
-                    <Text className="text-gray-400 text-sm block mt-2">
-                      AI 전문가와 대화하며 퍼스널컬러 진단을 받아보세요.
-                    </Text>
-                    <div className="mt-6">
-                      <Button
-                        type="primary"
-                        size="large"
-                        icon={<MessageOutlined />}
-                        onClick={handleAIConsultation}
-                      >
-                        AI 전문가와 퍼스널컬러 상담하기
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <List
-                      itemLayout="vertical"
-                      size="large"
-                      pagination={{
-                        current: currentPage,
-                        pageSize: pageSize,
-                        total: surveyResults.length,
-                        onChange: (page) => setCurrentPage(page),
-                        showSizeChanger: false,
-                        showQuickJumper: true,
-                      }}
-                      dataSource={surveyResults}
-                      renderItem={result => (
-                        <List.Item
-                          key={result.id}
-                          className="bg-white border border-gray-100 rounded-lg p-4 hover:shadow-md transition-shadow"
-                        >
-                          <div className="flex justify-between items-start">
-                            <div className="flex-1">
-                              <div className="flex items-center mb-2">
-                                <Text className="!text-gray-500 text-sm flex items-center">
-                                  <CalendarOutlined className="mr-1" />
-                                  {formatKoreanDate(result.created_at, true)}
-                                </Text>
-                              </div>
+                        <InfluencerList />
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'recent',
+                    label: '최근 진단 기록',
+                    icon: <HistoryOutlined />,
+                    children: (
+                      <div className="px-6 py-2">
+                        <div className="flex items-center justify-between">
+                          <Title level={4} className="mb-6 text-gray-800">최근 진단 기록</Title>
+                          <Text className="!text-gray-500 !text-sm">총 {surveyResults?.length || 0}건</Text>
+                        </div>
 
-                              <div className="mb-2">
-                                <Text strong className="text-lg !text-gray-800">
-                                  {result.result_name ||
-                                    `${result.result_tone.toUpperCase()} 타입`}
-                                </Text>
-                              </div>
-
-                              {result.result_description && (
-                                <Text className="!text-gray-600 text-sm block mb-2">
-                                  {result.result_description.length > 100
-                                    ? `${result.result_description.substring(
-                                        0,
-                                        100
-                                      )}...`
-                                    : result.result_description}
-                                </Text>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <Button
-                                type="link"
-                                onClick={() => handleViewDetail(result)}
-                                className="text-blue-600"
-                              >
-                                상세보기
-                              </Button>
-                              <Dropdown
-                                menu={{
-                                  items: [
-                                    {
-                                      key: 'delete',
-                                      label: '삭제',
-                                      icon: <DeleteOutlined />,
-                                      danger: true,
-                                      onClick: () =>
-                                        handleDeleteSurvey(
-                                          result.id,
-                                          result.result_name ||
-                                            `${result.result_tone.toUpperCase()} 타입`
-                                        ),
-                                    },
-                                  ],
-                                }}
-                                trigger={['click']}
-                              >
-                                <Button
-                                  type="text"
-                                  icon={<MoreOutlined />}
-                                  size="small"
-                                />
-                              </Dropdown>
+                        {isLoadingSurveys ? (
+                          <div className="text-center py-12">
+                            <Spin size="large" />
+                            <div className="mt-4">
+                              <Text className="text-gray-500">진단 기록을 불러오는 중...</Text>
                             </div>
                           </div>
-                        </List.Item>
-                      )}
-                    />
+                        ) : !surveyResults || surveyResults.length === 0 ? (
+                          <div className="text-center py-12 bg-gray-50 rounded-lg">
+                            <Text className="text-gray-500 text-base">아직 진단 기록이 없습니다.</Text>
+                            <Text className="text-gray-400 text-sm block mt-2">인플루언서를 선택하여 상담을 시작해 보세요.</Text>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <List
+                              itemLayout="vertical"
+                              size="small"
+                              pagination={{
+                                current: currentPage,
+                                pageSize: pageSize,
+                                total: surveyResults.length,
+                                onChange: (page) => setCurrentPage(page),
+                                showSizeChanger: false,
+                                showQuickJumper: false,
+                              }}
+                              dataSource={surveyResults}
+                              renderItem={result => (
+                                <List.Item
+                                  key={result.id}
+                                  className="bg-white border border-gray-100 rounded-lg p-4 hover:shadow-md transition-shadow"
+                                >
+                                  <div className="flex justify-between items-start">
+                                    <div className="flex-1">
+                                      <div className="flex items-center mb-2">
+                                        <Text className="!text-gray-500 text-sm flex items-center">
+                                          <CalendarOutlined className="mr-1" />
+                                          {formatKoreanDate(result.created_at, true)}
+                                        </Text>
+                                      </div>
 
-                    <div className="text-center pt-4 border-t border-gray-100 space-y-3">
-                      <div className="flex justify-center">
-                        <Button
-                          type="primary"
-                          icon={<MessageOutlined />}
-                          onClick={() => navigate(RouterPaths.Chatbot)}
-                          size="large"
-                        >
-                          AI 전문가와 퍼스널컬러 상담하기
-                        </Button>
+                                      <div className="mb-2">
+                                        <Text strong className="text-lg !text-gray-800">
+                                          {result.result_name || `${result.result_tone.toUpperCase()} 타입`}
+                                        </Text>
+                                      </div>
+
+                                      {result.result_description && (
+                                        <Text className="!text-gray-600 text-sm block mb-2">
+                                          {result.result_description.length > 100 ? `${result.result_description.substring(0, 100)}...` : result.result_description}
+                                        </Text>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                      <Button type="link" onClick={() => handleViewDetail(result)} className="text-blue-600">상세보기</Button>
+                                      <Dropdown
+                                        menu={{
+                                          items: [
+                                            {
+                                              key: 'delete',
+                                              label: '삭제',
+                                              icon: <DeleteOutlined />,
+                                              danger: true,
+                                              onClick: () => handleDeleteSurvey(result.id, result.result_name || `${result.result_tone.toUpperCase()} 타입`),
+                                            },
+                                          ],
+                                        }}
+                                        trigger={['click']}
+                                      >
+                                        <Button type="text" icon={<MoreOutlined />} size="small" />
+                                      </Dropdown>
+                                    </div>
+                                  </div>
+                                </List.Item>
+                              )}
+                            />
+
+                            <div className="text-center pt-4 border-t border-gray-100 space-y-3" />
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+                    ),
+                  },
+                ]}
+              />
             </Card>
           </Col>
         </Row>
