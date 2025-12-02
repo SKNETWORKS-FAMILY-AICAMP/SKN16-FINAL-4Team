@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { formatKoreanDate } from '@/utils/dateUtils';
 import {
   Row,
@@ -36,18 +36,49 @@ import type { SurveyResultDetail } from '@/api/survey';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
 import InfluencerProfileModal from '@/components/InfluencerProfileModal';
 import { Loading } from '@/components';
+import type { InfluencerHistoryItem } from '@/api/chatbot';
 
 const { Title, Text } = Typography;
 
 // 작은 하위 컴포넌트: 인플루언서 리스트를 렌더하고 클릭 시 챗봇으로 이동
 const InfluencerList: React.FC = () => {
   const navigate = useNavigate();
-  const { influencerHistories } = useChatbot();
+  const { influencerHistories, refetchInfluencerHistories } = useChatbot();
   // Use profiles embedded in influencerHistories when available.
   const profilesFromHistories = Array.isArray(influencerHistories)
-    ? influencerHistories.map((h: any) => (h.profile ? h.profile : { id: h.influencer_id, name: h.influencer_name }))
-    : [];
-  const profiles = profilesFromHistories;
+    ? influencerHistories : [];
+
+  // Refresh influencer histories on mount and when the tab becomes visible
+  useEffect(() => {
+    try {
+      refetchInfluencerHistories();
+    } catch (e) {
+      // ignore
+    }
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        try {
+          refetchInfluencerHistories();
+        } catch (e) { }
+      }
+    };
+    window.addEventListener('visibilitychange', onVisibility);
+    return () => window.removeEventListener('visibilitychange', onVisibility);
+  }, [refetchInfluencerHistories]);
+
+  // Format timestamp as `yyyy.mm.dd hh:mm`
+  const formatShortTimestamp = (iso?: string | null) => {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '';
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } catch (e) {
+      return '';
+    }
+  };
 
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [activeProfile, setActiveProfile] = useState<any | null>(null);
@@ -59,36 +90,40 @@ const InfluencerList: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-3">
-      {profiles.length === 0 ? (
+      {profilesFromHistories.length === 0 ? (
         <div className="text-sm text-gray-500">등록된 인플루언서가 없습니다.</div>
       ) : (
-        profiles.map((p: any, idx: number) => {
-          // Determine image source: prefer explicit profile/image url, then public /profiles/<id|name>.png
-                const slug = encodeURIComponent((p.id || p.name || '').toString().trim());
-                const imageSrc = p.profile || p.image || (slug ? `/profiles/${slug}.png` : undefined);
+        profilesFromHistories.map((influencer: InfluencerHistoryItem, idx: number) => {
+          const slug = encodeURIComponent((influencer.influencer_id || influencer.influencer_name || '').toString().trim());
+          const imageSrc = (slug ? `/profiles/${slug}.png` : undefined);
 
           return (
             <div key={idx} className="flex items-center p-3 bg-white rounded shadow-sm w-full">
-              <div role="button" tabIndex={0} onClick={() => openProfile(p)} onKeyDown={() => openProfile(p)}>
+              <div role="button" tabIndex={0} onClick={() => openProfile(influencer.profile)}>
                 <Avatar
                   size={64}
                   src={imageSrc}
-                  style={{ backgroundColor: p.color || '#f3f4f6', flexShrink: 0 }}
+                  style={{ backgroundColor: influencer.profile?.color || '#f3f4f6', flexShrink: 0 }}
                 >
                   {/* fallback content when image not available */}
-                  {p.emoji || p.icon || '🎨'}
+                  {influencer.profile?.emoji || '🎨'}
                 </Avatar>
               </div>
 
-                  <div className="ml-4 flex-1 min-w-0">
-                <div className="text-sm font-medium">{(p as any).name || p.subscriber_name?.[0] || (p.greeting?.slice ? p.greeting.slice(0,6) : '') || '인플루언서'}</div>
-                <div className="mt-1 text-xs text-gray-500">{p.characteristics || (p.expertise ? p.expertise.join(', ') : '') || p.short_description || ''}</div>
+              <div className="ml-4 flex-1 min-w-0">
+                <div className="text-sm font-medium">{(influencer.profile as any)?.name || influencer.profile?.subscriber_name?.[0] || (influencer.profile?.greeting?.slice ? influencer.profile.greeting.slice(0, 6) : '') || '인플루언서'}</div>
+                <div className="mt-1 text-xs text-gray-500">{influencer.profile?.characteristics || (influencer.profile?.expertise ? influencer.profile.expertise.join(', ') : '')}</div>
 
-                {p.short_description ? (
-                  <div className="mt-2 text-xs text-gray-600 w-full">
-                    <div className="truncate" title={p.short_description}>
-                      {p.short_description}
+                {influencer.profile?.short_description ? (
+                  <div className="mt-2 text-xs text-gray-600 w-full flex">
+                    <div
+                      className="truncate"
+                    >
+                      <span>{influencer.profile?.short_description}</span>
                     </div>
+                    {influencer.last_activity ? (
+                      <span className="ml-5 text-gray-400 whitespace-nowrap">{formatShortTimestamp(influencer.last_activity)}</span>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="mt-2 text-xs text-gray-400">최근 대화 없음</div>
@@ -100,7 +135,7 @@ const InfluencerList: React.FC = () => {
                   block
                   type="primary"
                   size="small"
-                  onClick={() => navigate(`/chatbot?infl_id=${slug || encodeURIComponent(p.name || '')}`, { state: { influencerProfile: p } })}
+                  onClick={() => navigate(`/chatbot?infl_id=${slug || encodeURIComponent(influencer.profile?.name || '')}`, { state: { influencerProfile: influencer.profile } })}
                 >
                   상담하기
                 </Button>
@@ -139,7 +174,7 @@ const MyPage: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const pageSize = 3;
 
-  
+
 
   // 진단 결과 상세보기
   const handleViewDetail = (result: SurveyResultDetail) => {
@@ -236,6 +271,11 @@ const MyPage: React.FC = () => {
           <div className="text-center p-8">
             <Title level={3}>로그인이 필요합니다</Title>
             <Text>마이페이지를 보려면 로그인해주세요.</Text>
+            <div className="mt-6">
+              <Button type="primary" onClick={() => navigate('/login')}>
+                로그인
+              </Button>
+            </div>
           </div>
         </Card>
       </div>
@@ -362,9 +402,8 @@ const MyPage: React.FC = () => {
                     </Text>
                     <div className="flex items-center">
                       <div
-                        className={`w-2 h-2 rounded-full mr-2 ${
-                          user.is_active ? 'bg-green-500' : 'bg-red-500'
-                        }`}
+                        className={`w-2 h-2 rounded-full mr-2 ${user.is_active ? 'bg-green-500' : 'bg-red-500'
+                          }`}
                       ></div>
                       <Text
                         className={

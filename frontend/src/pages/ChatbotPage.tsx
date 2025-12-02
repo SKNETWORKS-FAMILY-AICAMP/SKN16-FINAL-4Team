@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { formatKoreanDate } from '@/utils/dateUtils';
 import {
   Card,
   Input,
   Button,
   Typography,
-  Spin,
   message,
   Avatar,
   Tag,
@@ -22,7 +21,6 @@ import { useSurveyResultsLive } from '@/hooks/useSurvey';
 import useChatbot from '@/hooks/useChatbot';
 import type { ChatResModel } from '@/api/chatbot';
 import { chatbotApi } from '@/api/chatbot';
-import { useQuery } from '@tanstack/react-query';
 import localInfluencers from '@/data/influencers';
 import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
 import { normalizePersonalColor } from '@/utils/personalColorUtils';
@@ -77,6 +75,7 @@ const ChatbotPage: React.FC = () => {
     startSession,
     // from useChatbot: influencer histories
     influencerHistories,
+    fetchMessagesForInfluencer,
   } = useChatbot();
   const sessionStartedRef = useRef(false);
 
@@ -116,6 +115,71 @@ const ChatbotPage: React.FC = () => {
       // ignore
     }
   }, [location]);
+
+  // When an influencer profile is active, load all previous messages for that influencer
+  useEffect(() => {
+    if (!activeInfluencerProfile) return;
+
+    let mounted = true;
+    (async () => {
+      try {
+        const inflId = activeInfluencerProfile.id || activeInfluencerProfile.name;
+        if (!inflId) return;
+        const resp = await fetchMessagesForInfluencer(inflId);
+        // resp may be either an array of message items or an object { history_ids, items }
+        let items: any[] = [];
+        let historyIds: number[] = [];
+        if (Array.isArray(resp)) {
+          items = resp as any[];
+        } else if (resp && typeof resp === 'object') {
+          items = (resp as any).items || [];
+          historyIds = (resp as any).history_ids || [];
+        }
+
+        const loaded: ChatMessage[] = items.map((m: any, idx: number) => {
+          const isUser = (m.role || '').toString().toLowerCase() === 'user';
+          let chatRes = undefined;
+          try {
+            if (m.raw) {
+              const parsed = typeof m.raw === 'string' ? JSON.parse(m.raw) : m.raw;
+              chatRes = parsed;
+            }
+          } catch (e) {
+            chatRes = undefined;
+          }
+          return {
+            id: `infl-${inflId}-${idx}-${m.history_id || ''}`,
+            content: m.text || '',
+            isUser,
+            timestamp: m.created_at ? new Date(m.created_at) : new Date(),
+            chatRes,
+            questionId: undefined,
+          } as ChatMessage;
+        });
+
+        if (!mounted) return;
+
+        setMessages(prev => {
+          // preserve welcome at index 0 if present
+          if (prev.length > 0 && prev[0]?.id === 'welcome') return [prev[0], ...loaded];
+          return loaded;
+        });
+
+        // if there's no currentHistoryId (no active session), restore the latest history id
+        if (!currentHistoryId && Array.isArray(historyIds) && historyIds.length > 0) {
+          setCurrentHistoryId(historyIds[historyIds.length - 1]);
+        }
+      } catch (e) {
+        console.warn('인플루언서 메시지 불러오기 실패:', e);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+    // only depend on influencer id to avoid re-running when function refs or profile objects change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeInfluencerProfile?.id]);
 
   // 대화가 있는지 확인하는 함수
   const hasConversation = () => messages.length > 1;
@@ -185,82 +249,13 @@ const ChatbotPage: React.FC = () => {
     }
   }, [blocker.state]);
 
-  const inflIdFromQueryTop = (() => {
-    try {
-      const params = new URLSearchParams((location as any).search || window.location.search);
-      return params.get('infl_id') || undefined;
-    } catch (e) {
-      return undefined;
-    }
-  })();
-
-  const inflFromStateTop = (location as any).state?.influencerProfile?.id || (location as any).state?.influencerProfile?.name || undefined;
-
-  const welcomeQuery = useQuery<{
-    message?: string;
-    influencer?: any;
-    has_previous?: boolean;
-    previous_summary?: string;
-  }>({
-    queryKey: ['welcome', inflIdFromQueryTop || inflFromStateTop],
-    queryFn: async () => await chatbotApi.getWelcome(inflIdFromQueryTop || inflFromStateTop),
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-  const welcomeData = welcomeQuery.data;
-  const welcomeIsPending = welcomeQuery.isFetching || welcomeQuery.isLoading;
+  // legacy query/state influencer helpers removed (not used anymore)
 
   // influencer profiles: hook에서 제공하는 캐시 우선, 없으면 로컬 폴백
   const influencers = (Array.isArray(influencerHistories) && influencerHistories.length > 0)
     ? influencerHistories.map((h: any) => h.profile || { id: h.influencer_id, name: h.influencer_name })
     : localInfluencers;
 
-  useEffect(() => {
-    if (!welcomeData) return;
-    if ((welcomeData as any).message) {
-      const welcomeMessage: ChatMessage = {
-        id: 'welcome',
-        content: (welcomeData as any).message,
-        isUser: false,
-        timestamp: new Date(),
-      };
-      setMessages(prev => {
-        if (prev.length === 0) return [welcomeMessage];
-        if (prev[0]?.id === 'welcome') return [welcomeMessage, ...prev.slice(1)];
-        return prev;
-      });
-    }
-  }, [welcomeData]);
-
-  useEffect(() => {
-    if (welcomeData?.message) return; // server provided message, do nothing
-
-    const userNickname = `${user?.nickname ?? '사용자'}님`;
-    let welcomeMessage: ChatMessage;
-
-    if (surveyResults && surveyResults.length > 0) {
-      const latestResult = surveyResults[0];
-      welcomeMessage = {
-        id: 'welcome',
-        content: `안녕하세요, ${userNickname}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다!\n\n이전 진단 결과를 확인해보니 "${latestResult.result_name || latestResult.result_tone.toUpperCase()} 타입"이시네요! \n\n${userNickname}의 이전 결과를 바탕으로 더 자세한 상담을 도와드릴 수도 있고, \n새롭게 대화를 통해 진단을 다시 받아보셔도 좋습니다! \n\n퍼스널컬러와 관련된 어떤 것이든 편하게 말씀해 주세요:\n✨ 색상 고민이나 궁금한 점\n💄 메이크업 팁이나 제품 추천  \n👗 옷 색깔이나 스타일링 조언\n🌈 새로운 퍼스널컬러 진단\n\n어떤 이야기부터 시작해볼까요, ${userNickname}?`,
-        isUser: false,
-        timestamp: new Date(),
-      };
-    } else {
-      welcomeMessage = {
-        id: 'welcome',
-        content: `안녕하세요, ${userNickname}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다!\n\n처음 방문해주셨네요! 반가워요 🎨\n\n저와 자연스러운 대화를 통해 ${userNickname}만의 퍼스널컬러를 찾아보세요!\n복잡한 설문지 없이도, 편안한 대화만으로 충분합니다.\n\n이런 것들에 대해 얘기해보면 도움이 될 거예요:\n✨ 평소 어떤 색깔 옷을 즐겨 입으시는지\n💄 어떤 립스틱이나 블러셔가 잘 어울리는지  \n👀 피부톤이나 혈관색에 대한 생각\n🌟 좋아하는 스타일이나 색감 취향\n\n어떤 이야기부터 시작해볼까요, ${userNickname}? \n편하게 말씀해 주세요! 😄`,
-        isUser: false,
-        timestamp: new Date(),
-      };
-    }
-
-    setMessages(prevMessages => {
-      if (prevMessages.length === 0) return [welcomeMessage];
-      if (prevMessages[0]?.id === 'welcome') return [welcomeMessage, ...prevMessages.slice(1)];
-      return prevMessages;
-    });
-  }, [surveyResults, welcomeData, user]);
 
   // 페이지 진입 시 명시적으로 새 채팅 세션을 시작합니다.
   // 이렇게 하면 이전 세션의 기록이 현재 세션에 섞이지 않고,
@@ -323,6 +318,51 @@ const ChatbotPage: React.FC = () => {
               console.warn('히스토리 불러오기 실패:', e);
             }
           }
+          // If this is a fresh session (not reused), request the welcome via analyze
+          if (!res.reused) {
+            try {
+              const welcomeResp = await analyze({ question: '', history_id: res.history_id });
+              const loaded: ChatMessage[] = [];
+              if (welcomeResp && Array.isArray(welcomeResp.items) && welcomeResp.items.length > 0) {
+                let baseTs = Date.now();
+                for (const it of welcomeResp.items) {
+                  const botMsg: ChatMessage = {
+                    id: `w-${res.history_id}-${it.question_id || 0}-b`,
+                    content: it.answer || (it.chat_res && it.chat_res.description) || '',
+                    isUser: false,
+                    timestamp: new Date(baseTs),
+                    chatRes: it.chat_res,
+                  };
+                  loaded.push(botMsg);
+                  baseTs += 1000;
+                }
+              } else {
+                // Fallback: ensure a welcome message is shown even if backend returns empty
+                const fallbackText = '안녕하세요! 퍼스널컬러 AI 컨설턴트입니다. 궁금한 점을 알려주시면 도와드릴게요.';
+                loaded.push({
+                  id: `w-${res.history_id}-0-b-fallback`,
+                  content: fallbackText,
+                  isUser: false,
+                  timestamp: new Date(),
+                  chatRes: { primary_tone: '', sub_tone: '', description: fallbackText, recommendations: [], emotion: 'neutral' } as any,
+                });
+              }
+
+              setMessages(prev => (prev.length > 0 ? [...prev, ...loaded] : loaded));
+            } catch (e) {
+              console.warn('환영 메시지 로드 실패:', e);
+              // On error, still show a local fallback welcome so the UI isn't blank
+              const fallbackText = '안녕하세요! 퍼스널컬러 AI 컨설턴트입니다. 네트워크 문제로 환영 메시지를 불러오지 못했어요.';
+              const fallbackMsg: ChatMessage = {
+                id: `w-${res.history_id}-0-b-error`,
+                content: fallbackText,
+                isUser: false,
+                timestamp: new Date(),
+                chatRes: { primary_tone: '', sub_tone: '', description: fallbackText, recommendations: [], emotion: 'neutral' } as any,
+              };
+              setMessages(prev => (prev.length > 0 ? [...prev, fallbackMsg] : [fallbackMsg]));
+            }
+          }
         }
         console.log('새 채팅 세션 시작, history_id=', res.history_id, 'reused=', res.reused);
       } catch (e) {
@@ -346,6 +386,7 @@ const ChatbotPage: React.FC = () => {
     if (/진단|리포트|분석/.test(content)) return true;
     return false;
   };
+
 
   // 진단 결과 상세보기 모달 열기
   const handleViewDiagnosisDetail = () => {
@@ -938,7 +979,432 @@ function isDiagnosisBubble(msg?: any): boolean {
   return false;
 }
 
+  // Helpers to group messages by date and format headers
+  const isSameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  const formatDateHeader = (d: Date) => {
+    const today = new Date();
+    if (isSameDay(d, today)) return '오늘';
+    const weekdays = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
+    return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${weekdays[d.getDay()]}`;
+  };
+
+  const groupMessagesByDate = (msgs: ChatMessage[]) => {
+    const map = new Map<string, ChatMessage[]>();
+    for (const m of msgs) {
+      // normalize to YYYY-MM-DD key
+      const d = new Date(m.timestamp);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+        d.getDate()
+      ).padStart(2, '0')}`;
+      if (!map.has(key)) {
+        map.set(key, []);
+      }
+      map.get(key)!.push(m);
+    }
+
+    // sort keys (YYYY-MM-DD strings) ascending so oldest date comes first
+    const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
+
+    return keys.map(k => {
+      const items = (map.get(k) || []).slice().sort((x, y) => new Date(x.timestamp).getTime() - new Date(y.timestamp).getTime());
+      const date = items.length > 0 ? new Date(items[0].timestamp) : new Date(k);
+      return { key: k, items, date };
+    });
+  };
+
+  // Memoized grouped sections so we don't recompute on every render
+  const groupedSections = useMemo(() => groupMessagesByDate(messages), [messages]);
+
+  // Small inline typing animation using SVG (no external CSS needed)
+  const TypingAnimation: React.FC<{ size?: number; color?: string }> = ({ size = 10, color = '#9CA3AF' }) => (
+    <svg width={size * 3 + 20} height={size} viewBox={`0 0 ${size * 3 + 20} ${size}`} xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      <circle cx={size / 2} cy={size / 2} r={size / 2} fill={color}>
+        <animate attributeName="opacity" values="0.2;1;0.2" dur="1s" repeatCount="indefinite" begin="0s" />
+      </circle>
+      <circle cx={size / 2 + size + 6} cy={size / 2} r={size / 2} fill={color}>
+        <animate attributeName="opacity" values="0.2;1;0.2" dur="1s" repeatCount="indefinite" begin="0.15s" />
+      </circle>
+      <circle cx={size / 2 + (size + 6) * 2} cy={size / 2} r={size / 2} fill={color}>
+        <animate attributeName="opacity" values="0.2;1;0.2" dur="1s" repeatCount="indefinite" begin="0.3s" />
+      </circle>
+    </svg>
+  );
+
+  const renderMessage = (msg: ChatMessage) => {
+    const idx = messages.findIndex(m => m.id === msg.id);
+    return (
+      <div
+        className={`flex mb-3 ${msg.isUser ? 'justify-end' : 'justify-start'}`}
+      >
+        <div
+          className={`flex max-w-lg items-start ${msg.isUser ? 'flex-row-reverse' : 'flex-row'}`}
+        >
+          {msg.isUser ? (
+            (() => {
+              const avatarConfig = getAvatarRenderInfo(
+                user?.gender,
+                user?.id
+              );
+              return (
+                <Avatar
+                  className={`!ml-3 ${avatarConfig.className}`}
+                  style={avatarConfig.style}
+                >
+                  {typeof avatarConfig.content === 'string' ? (
+                    <span style={{ fontSize: '18px' }}>
+                      {avatarConfig.content}
+                    </span>
+                  ) : (
+                    avatarConfig.content
+                  )}
+                </Avatar>
+              );
+            })()
+            ) : (
+            (() => {
+              // For bot messages, prefer the currently active influencer profile for avatar.
+              // If none selected, fall back to influencer info embedded in the message, then robot icon.
+              const inflKey = (msg as any).influencer || (msg as any).chatRes?.influencer || (msg as any).chatRes?.raw?.influencer || (msg as any).influencer_id || null;
+
+              const getInfluencerAvatarInfo = (s: any) => {
+                if (!s || typeof s !== 'string') return null;
+                const key = s.trim().toLowerCase();
+
+                if (Array.isArray(influencers) && influencers.length > 0) {
+                  for (const p of influencers) {
+                    const n = ((p as any).name || '').toString().toLowerCase();
+                    if (!n) continue;
+                    if (key === n || key.includes(n) || key.startsWith(n)) return p;
+                  }
+                }
+
+                const map: Record<string, any> = {
+                  '혜경': { name: '혜경', emoji: '🎨', color: '#F0E6FF', profile: '/profiles/혜경.png' },
+                  '원준': { name: '원준', emoji: '🌟', color: '#FFE4E6', profile: '/profiles/원준.png' },
+                  '종민': { name: '종민', emoji: '💰', color: '#FFF2CC', profile: '/profiles/종민.png' },
+                  '세현': { name: '세현', emoji: '🌿', color: '#E8F5E8', profile: '/profiles/세현.png' },
+                };
+                for (const k of Object.keys(map)) {
+                  if (key.includes(k) || key.startsWith(k.toLowerCase())) return map[k];
+                }
+
+                const prefix = key.split(/[_\s-]/)[0] || key;
+                return { name: s, emoji: '🌟', color: '#e5e7eb', prefix };
+              };
+
+              const inflFromMsg = getInfluencerAvatarInfo(inflKey);
+              const avatarProfile = activeInfluencerProfile || inflFromMsg;
+
+              if (avatarProfile) {
+                const inflName = (((avatarProfile as any)?.name || '') as string).toLowerCase();
+                const activeName = typeof activeInfluencerProfile === 'string'
+                  ? (activeInfluencerProfile as string).toLowerCase()
+                  : (((activeInfluencerProfile as any)?.name || '') as string).toLowerCase();
+                const activeId = (activeInfluencerProfile && (activeInfluencerProfile as any).id) ?? null;
+                const inflId = (avatarProfile && (avatarProfile as any).id) ?? null;
+                const isActive = (
+                  activeId != null && inflId != null
+                    ? String(activeId) === String(inflId)
+                    : activeName && inflName && activeName === inflName
+                );
+
+                return (
+                  <div
+                    className={`influencer-avatar-clickable !mr-3 ${isActive ? 'influencer-avatar-active' : ''}`}
+                    onClick={() => {
+                      if (autoCloseRef.current) {
+                        window.clearTimeout(autoCloseRef.current as any);
+                        autoCloseRef.current = null;
+                      }
+                      setActiveInfluencerProfile(avatarProfile);
+                      setInfluencerModalOpen(true);
+                    }}
+                    aria-label={`Open profile ${(avatarProfile as any).name}`}
+                    role="button"
+                    tabIndex={0}
+                    style={{ display: 'inline-flex', alignItems: 'center' }}
+                  >
+                    <Avatar
+                      size={50}
+                      style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff' }}
+                    >
+                      <InfluencerImage profile={avatarProfile} name={(avatarProfile as any).name} emoji={(avatarProfile as any).emoji} />
+                    </Avatar>
+                  </div>
+                );
+              }
+
+              return (
+                <Avatar
+                  icon={<RobotOutlined />}
+                  style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
+                  className="!mr-3"
+                />
+              );
+            })()
+          )}
+          <div className="flex flex-col gap-1">
+            {!msg.isUser && (idx === 0 || (msg.chatRes?.emotion && !isDiagnosisBubble(msg))) && (
+              <div
+                className="relative px-4 py-2 rounded-lg bg-white border border-gray-200 mb-1 flex items-center chatbot-balloon"
+                style={{ maxWidth: 'fit-content' }}
+              >
+                <span
+                  className="absolute left-[-10px] top-4 w-0 h-0"
+                  style={{
+                    borderTop: '8px solid transparent',
+                    borderBottom: '8px solid transparent',
+                    borderRight: '10px solid #fff',
+                    left: '-10px',
+                    top: '16px',
+                    zIndex: 1,
+                  }}
+                />
+                <span
+                  className="absolute left-[-12px] top-4 w-0 h-0"
+                  style={{
+                    borderTop: '9px solid transparent',
+                    borderBottom: '9px solid transparent',
+                    borderRight: '12px solid #e5e7eb',
+                    left: '-12px',
+                    top: '15px',
+                    zIndex: 0,
+                  }}
+                />
+                <AnimatedEmoji emotion={msg?.chatRes?.emotion ?? 'neutral'} size={40} />
+              </div>
+            )}
+            {(msg.isUser || !msg.chatRes?.emotion || delayedDescriptions[msg.id] || typeof delayedDescriptions[msg.id] === 'undefined') && (
+              <div
+                className={`relative px-4 py-2 rounded-lg ${
+                  msg.isUser
+                    ? 'bg-blue-500 text-white user-balloon'
+                    : 'bg-white chatbot-balloon'
+                }`}
+                style={{
+                  marginLeft: msg.isUser ? 0 : '0',
+                  marginRight: msg.isUser ? '0' : 0,
+                  maxWidth: '100%',
+                  border: msg.isUser ? undefined : '1.5px solid #e5e7eb',
+                  boxShadow: msg.isUser ? undefined : '0 2px 8px rgba(0,0,0,0.04)',
+                }}
+              >
+                {msg.isUser ? (
+                  <>
+                    <span
+                      className="absolute right-[-10px] top-4 w-0 h-0"
+                      style={{
+                        borderTop: '8px solid transparent',
+                        borderBottom: '8px solid transparent',
+                        borderLeft: '10px solid #3b82f6',
+                        right: '-10px',
+                        top: '16px',
+                        zIndex: 1,
+                      }}
+                    />
+                    <span
+                      className="absolute right-[-12px] top-4 w-0 h-0"
+                      style={{
+                        borderTop: '9px solid transparent',
+                        borderBottom: '9px solid transparent',
+                        borderLeft: '12px solid #2563eb',
+                        right: '-12px',
+                        top: '15px',
+                        zIndex: 0,
+                      }}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <span
+                      className="absolute left-[-10px] top-4 w-0 h-0"
+                      style={{
+                        borderTop: '8px solid transparent',
+                        borderBottom: '8px solid transparent',
+                        borderRight: '10px solid #fff',
+                        left: '-10px',
+                        top: '16px',
+                        zIndex: 1,
+                      }}
+                    />
+                    <span
+                      className="absolute left-[-12px] top-4 w-0 h-0"
+                      style={{
+                        borderTop: '9px solid transparent',
+                        borderBottom: '9px solid transparent',
+                        borderRight: '12px solid #e5e7eb',
+                        left: '-12px',
+                        top: '15px',
+                        zIndex: 0,
+                      }}
+                    />
+                  </>
+                )}
+                {msg.customContent ? (
+                  msg.customContent
+                ) : msg.content.includes('[상세보기]') ? (
+                  <div>
+                    {msg.content.includes('🌈 **추천 컬러 팔레트**') &&
+                    msg.diagnosisData ? (
+                      <div>
+                        <Text
+                          className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                        >
+                          {msg.content.split('🌈 **추천 컬러 팔레트**')[0]}
+                        </Text>
+
+                        <div className="mt-3">
+                          <Text
+                            strong
+                            className="block mb-2 !text-gray-700"
+                          >
+                            🌈 추천 컬러 팔레트
+                          </Text>
+                          <div className="flex flex-wrap gap-2 mb-3">
+                            {msg.diagnosisData.color_palette &&
+                            msg.diagnosisData.color_palette.length > 0 ? (
+                              msg.diagnosisData.color_palette.map(
+                                (color: string, index: number) => (
+                                  <div
+                                    key={index}
+                                    className="flex items-center gap-1"
+                                  >
+                                    <div
+                                      className="w-6 h-6 rounded-full border border-gray-300"
+                                      style={{ backgroundColor: color }}
+                                      title={color}
+                                    />
+                                    <Text className="text-xs text-gray-600">
+                                      {color}
+                                    </Text>
+                                  </div>
+                                )
+                              )
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    className="w-6 h-6 rounded-full border border-gray-300"
+                                    style={{ backgroundColor: '#FFB6C1' }}
+                                  />
+                                  <Text className="text-xs text-gray-600">
+                                    #FFB6C1
+                                  </Text>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    className="w-6 h-6 rounded-full border border-gray-300"
+                                    style={{ backgroundColor: '#FFA07A' }}
+                                  />
+                                  <Text className="text-xs text-gray-600">
+                                    #FFA07A
+                                  </Text>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    className="w-6 h-6 rounded-full border border-gray-300"
+                                    style={{ backgroundColor: '#FFFF99' }}
+                                  />
+                                  <Text className="text-xs text-gray-600">
+                                    #FFFF99
+                                  </Text>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    className="w-6 h-6 rounded-full border border-gray-300"
+                                    style={{ backgroundColor: '#98FB98' }}
+                                  />
+                                  <Text className="text-xs text-gray-600">
+                                    #98FB98
+                                  </Text>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <div
+                                    className="w-6 h-6 rounded-full border border-gray-300"
+                                    style={{ backgroundColor: '#87CEEB' }}
+                                  />
+                                  <Text className="text-xs text-gray-600">
+                                    #87CEEB
+                                  </Text>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <Text
+                          className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                        >
+                          {msg.content
+                            .split('🌈 **추천 컬러 팔레트**')[1]
+                            ?.replace(/🎨 #[A-Fa-f0-9]{6}/g, '')
+                            .replace('[상세보기]', '')
+                            .trim()}
+                        </Text>
+                      </div>
+                    ) : (
+                      <Text
+                        className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                      >
+                        {msg.content.replace('[상세보기]', '')}
+                      </Text>
+                    )}
+                    <div className="mt-3">
+                      <Button
+                        type="primary"
+                        size="small"
+                        onClick={handleViewDiagnosisDetail}
+                        className="bg-purple-500 hover:bg-purple-600 border-purple-500 hover:border-purple-600"
+                      >
+                        📊 상세보기
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Text
+                    className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
+                  >
+                    {msg.content}
+                  </Text>
+                )}
+
+                <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
+                  {shouldShowReportButton(msg) && (
+                    <Button
+                      type="default"
+                      size="small"
+                      onClick={() => {
+                        if (selectedResult) {
+                          setIsDetailModalOpen(true);
+                          return;
+                        }
+                        if (surveyResults && surveyResults.length > 0) {
+                          setSelectedResult(surveyResults[0] as SurveyResultDetail);
+                          setIsDetailModalOpen(true);
+                          return;
+                        }
+                        handleViewDiagnosisDetail();
+                      }}
+                      className="border-purple-300 text-purple-600 hover:border-purple-500 hover:text-purple-700"
+                    >
+                      🎨 진단 결과
+                    </Button>
+                  )}
+                  {formatKoreanDate(msg.timestamp, true)}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // 로딩 상태
+  // `welcomeIsPending` used to be provided by a removed react-query welcome request; default to false.
+  const welcomeIsPending = false;
   if (userLoading || surveyLoading || welcomeIsPending) {
     return (
       <Loading />
@@ -1055,380 +1521,18 @@ function isDiagnosisBubble(msg?: any): boolean {
             className="flex-1 overflow-y-auto mb-3 p-3 bg-gray-50 rounded-lg"
             style={{ minHeight: '400px', paddingTop: '30px', position: 'relative' }}
           >
-            {messages.map((msg, idx) => (
-              <div
-                key={msg.id}
-                className={`flex mb-3 ${msg.isUser ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`flex max-w-lg items-start ${msg.isUser ? 'flex-row-reverse' : 'flex-row'}`}
-                >
-                  {msg.isUser ? (
-                    (() => {
-                      const avatarConfig = getAvatarRenderInfo(
-                        user?.gender,
-                        user?.id
-                      );
-                      return (
-                        <Avatar
-                          className={`!ml-3 ${avatarConfig.className}`}
-                          style={avatarConfig.style}
-                        >
-                          {typeof avatarConfig.content === 'string' ? (
-                            <span style={{ fontSize: '18px' }}>
-                              {avatarConfig.content}
-                            </span>
-                          ) : (
-                            avatarConfig.content
-                          )}
-                        </Avatar>
-                      );
-                    })()
-                  ) : (
-                    (() => {
-                      // try to render influencer avatar when provided by message
-                      const inflKey = (msg as any).influencer || (msg as any).chatRes?.influencer || (msg as any).chatRes?.raw?.influencer || (msg as any).influencer_id || null;
-                      const getInfluencerAvatarInfo = (s: any) => {
-                        if (!s || typeof s !== 'string') return null;
-                        const key = s.trim().toLowerCase();
-
-                        // prefer server-provided influencer profiles when available
-                        if (Array.isArray(influencers) && influencers.length > 0) {
-                          for (const p of influencers) {
-                            const n = ((p as any).name || '').toString().toLowerCase();
-                            if (!n) continue;
-                            if (key === n || key.includes(n) || key.startsWith(n)) return p;
-                          }
-                        }
-
-                        // fallback hard-coded map (kept for safety)
-                        const map: Record<string, any> = {
-                          '혜경': { name: '혜경', emoji: '🎨', color: '#F0E6FF', profile: '/profiles/혜경.png' },
-                          '원준': { name: '원준', emoji: '🌟', color: '#FFE4E6', profile: '/profiles/원준.png' },
-                          '종민': { name: '종민', emoji: '💰', color: '#FFF2CC', profile: '/profiles/종민.png' },
-                          '세현': { name: '세현', emoji: '🌿', color: '#E8F5E8', profile: '/profiles/세현.png' },
-                        };
-                        for (const k of Object.keys(map)) {
-                          if (key.includes(k) || key.startsWith(k.toLowerCase())) return map[k];
-                        }
-
-                        // fallback: return emoji/profile based on prefix
-                        const prefix = key.split(/[_\s-]/)[0] || key;
-                        return { name: s, emoji: '🌟', color: '#e5e7eb', prefix };
-                      };
-
-                      const infl = getInfluencerAvatarInfo(inflKey || activeInfluencerProfile?.name);
-
-                      if (infl) {
-                        const profileForAvatar = (activeInfluencerProfile && (activeInfluencerProfile as any).profile)
-                          ? activeInfluencerProfile
-                          : ((infl as any).profile ? infl : null);
-
-                        return (
-                          <div
-                            className={`influencer-avatar-clickable !mr-3 ${
-                              (activeInfluencerProfile && ((typeof activeInfluencerProfile === 'string' && activeInfluencerProfile.toLowerCase() === ((infl as any).name || '').toLowerCase()) || (activeInfluencerProfile as any).name && ((activeInfluencerProfile as any).name || '').toLowerCase() === ((infl as any).name || '').toLowerCase())) ? 'influencer-avatar-active' : ''
-                            }`}
-                            onClick={() => {
-                              if (autoCloseRef.current) {
-                                window.clearTimeout(autoCloseRef.current as any);
-                                autoCloseRef.current = null;
-                              }
-                              const profileToShow = (activeInfluencerProfile && (activeInfluencerProfile as any).profile) ? activeInfluencerProfile : infl;
-                              setActiveInfluencerProfile(profileToShow);
-                              setInfluencerModalOpen(true);
-                            }}
-                            aria-label={`Open profile ${(infl as any).name}`}
-                            role="button"
-                            tabIndex={0}
-                            style={{ display: 'inline-flex', alignItems: 'center' }}
-                          >
-                            <Avatar
-                              size={50}
-                              style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff' }}
-                            >
-                              <InfluencerImage profile={profileForAvatar} name={(infl as any).name} emoji={infl.emoji} />
-                            </Avatar>
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <Avatar
-                          icon={<RobotOutlined />}
-                          style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
-                          className="!mr-3"
-                        />
-                      );
-                    })()
-                  )}
-                  <div className="flex flex-col gap-1">
-                    {/* 이모티콘 애니메이션 버블 (bot 메시지에만, 먼저 표시) */}
-                    {/* 퍼스널컬러 진단 챗봇 버블(분석/추천/진단 등)에는 이모티콘 미표시 */}
-                    {!msg.isUser && (idx === 0 || (msg.chatRes?.emotion && !isDiagnosisBubble(msg))) && (
-                      <div
-                        className="relative px-4 py-2 rounded-lg bg-white border border-gray-200 mb-1 flex items-center chatbot-balloon"
-                        style={{ maxWidth: 'fit-content' }}
-                      >
-                        {/* 말풍선 꼬리 (챗봇) + border */}
-                        <span
-                          className="absolute left-[-10px] top-4 w-0 h-0"
-                          style={{
-                            borderTop: '8px solid transparent',
-                            borderBottom: '8px solid transparent',
-                            borderRight: '10px solid #fff',
-                            left: '-10px',
-                            top: '16px',
-                            zIndex: 1,
-                          }}
-                        />
-                        {/* border용 꼬리 */}
-                        <span
-                          className="absolute left-[-12px] top-4 w-0 h-0"
-                          style={{
-                            borderTop: '9px solid transparent',
-                            borderBottom: '9px solid transparent',
-                            borderRight: '12px solid #e5e7eb',
-                            left: '-12px',
-                            top: '15px',
-                            zIndex: 0,
-                          }}
-                        />
-                        <AnimatedEmoji emotion={msg?.chatRes?.emotion ?? "neutral"} size={40} />
-                      </div>
-                    )}
-                    {/* description/텍스트 버블 (딜레이 후 표시) */}
-                    {(msg.isUser || !msg.chatRes?.emotion || delayedDescriptions[msg.id] || typeof delayedDescriptions[msg.id] === 'undefined') && (
-                      <div
-                        className={`relative px-4 py-2 rounded-lg ${
-                          msg.isUser
-                            ? 'bg-blue-500 text-white user-balloon'
-                            : 'bg-white chatbot-balloon'
-                        }`}
-                        style={{
-                          marginLeft: msg.isUser ? 0 : '0',
-                          marginRight: msg.isUser ? '0' : 0,
-                          maxWidth: '100%',
-                          border: msg.isUser ? undefined : '1.5px solid #e5e7eb',
-                          boxShadow: msg.isUser ? undefined : '0 2px 8px rgba(0,0,0,0.04)',
-                        }}
-                      >
-                        {/* 말풍선 꼬리 */}
-                        {msg.isUser ? (
-                          <>
-                            <span
-                              className="absolute right-[-10px] top-4 w-0 h-0"
-                              style={{
-                                borderTop: '8px solid transparent',
-                                borderBottom: '8px solid transparent',
-                                borderLeft: '10px solid #3b82f6',
-                                right: '-10px',
-                                top: '16px',
-                                zIndex: 1,
-                              }}
-                            />
-                            {/* border용 꼬리 */}
-                            <span
-                              className="absolute right-[-12px] top-4 w-0 h-0"
-                              style={{
-                                borderTop: '9px solid transparent',
-                                borderBottom: '9px solid transparent',
-                                borderLeft: '12px solid #2563eb',
-                                right: '-12px',
-                                top: '15px',
-                                zIndex: 0,
-                              }}
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <span
-                              className="absolute left-[-10px] top-4 w-0 h-0"
-                              style={{
-                                borderTop: '8px solid transparent',
-                                borderBottom: '8px solid transparent',
-                                borderRight: '10px solid #fff',
-                                left: '-10px',
-                                top: '16px',
-                                zIndex: 1,
-                              }}
-                            />
-                            {/* border용 꼬리 */}
-                            <span
-                              className="absolute left-[-12px] top-4 w-0 h-0"
-                              style={{
-                                borderTop: '9px solid transparent',
-                                borderBottom: '9px solid transparent',
-                                borderRight: '12px solid #e5e7eb',
-                                left: '-12px',
-                                top: '15px',
-                                zIndex: 0,
-                              }}
-                            />
-                          </>
-                        )}
-                        {/* 메시지 내용 렌더링 - customContent 또는 일반 content */}
-                        {msg.customContent ? (
-                          msg.customContent
-                        ) : msg.content.includes('[상세보기]') ? (
-                          <div>
-                            {/* 컬러 팔레트가 포함된 진단 결과 메시지인지 확인 */}
-                            {msg.content.includes('🌈 **추천 컬러 팔레트**') &&
-                            msg.diagnosisData ? (
-                              <div>
-                                {/* 메인 텍스트 (컬러 팔레트 부분 제외) */}
-                                <Text
-                                  className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                                >
-                                  {msg.content.split('🌈 **추천 컬러 팔레트**')[0]}
-                                </Text>
-
-                                {/* 컬러 팔레트 시각적 표시 */}
-                                <div className="mt-3">
-                                  <Text
-                                    strong
-                                    className="block mb-2 !text-gray-700"
-                                  >
-                                    🌈 추천 컬러 팔레트
-                                  </Text>
-                                  <div className="flex flex-wrap gap-2 mb-3">
-                                    {msg.diagnosisData.color_palette &&
-                                    msg.diagnosisData.color_palette.length > 0 ? (
-                                      msg.diagnosisData.color_palette.map(
-                                        (color: string, index: number) => (
-                                          <div
-                                            key={index}
-                                            className="flex items-center gap-1"
-                                          >
-                                            <div
-                                              className="w-6 h-6 rounded-full border border-gray-300"
-                                              style={{ backgroundColor: color }}
-                                              title={color}
-                                            />
-                                            <Text className="text-xs text-gray-600">
-                                              {color}
-                                            </Text>
-                                          </div>
-                                        )
-                                      )
-                                    ) : (
-                                      <>
-                                        <div className="flex items-center gap-1">
-                                          <div
-                                            className="w-6 h-6 rounded-full border border-gray-300"
-                                            style={{ backgroundColor: '#FFB6C1' }}
-                                          />
-                                          <Text className="text-xs text-gray-600">
-                                            #FFB6C1
-                                          </Text>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                          <div
-                                            className="w-6 h-6 rounded-full border border-gray-300"
-                                            style={{ backgroundColor: '#FFA07A' }}
-                                          />
-                                          <Text className="text-xs text-gray-600">
-                                            #FFA07A
-                                          </Text>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                          <div
-                                            className="w-6 h-6 rounded-full border border-gray-300"
-                                            style={{ backgroundColor: '#FFFF99' }}
-                                          />
-                                          <Text className="text-xs text-gray-600">
-                                            #FFFF99
-                                          </Text>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                          <div
-                                            className="w-6 h-6 rounded-full border border-gray-300"
-                                            style={{ backgroundColor: '#98FB98' }}
-                                          />
-                                          <Text className="text-xs text-gray-600">
-                                            #98FB98
-                                          </Text>
-                                        </div>
-                                        <div className="flex items-center gap-1">
-                                          <div
-                                            className="w-6 h-6 rounded-full border border-gray-300"
-                                            style={{ backgroundColor: '#87CEEB' }}
-                                          />
-                                          <Text className="text-xs text-gray-600">
-                                            #87CEEB
-                                          </Text>
-                                        </div>
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* 나머지 텍스트 */}
-                                <Text
-                                  className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                                >
-                                  {msg.content
-                                    .split('🌈 **추천 컬러 팔레트**')[1]
-                                    ?.replace(/🎨 #[A-Fa-f0-9]{6}/g, '')
-                                    .replace('[상세보기]', '')
-                                    .trim()}
-                                </Text>
-                              </div>
-                            ) : (
-                              <Text
-                                className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                              >
-                                {msg.content.replace('[상세보기]', '')}
-                              </Text>
-                            )}
-                            <div className="mt-3">
-                              <Button
-                                type="primary"
-                                size="small"
-                                onClick={handleViewDiagnosisDetail}
-                                className="bg-purple-500 hover:bg-purple-600 border-purple-500 hover:border-purple-600"
-                              >
-                                📊 상세보기
-                              </Button>
-                            </div>
-                          </div>
-                        ) : (
-                          <Text
-                            className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
-                          >
-                            {msg.content}
-                          </Text>
-                        )}
-
-                        <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
-                          {/* 리포트 관련 메시지에 리포트 상세보기 버튼 추가 */}
-                          {shouldShowReportButton(msg) && (
-                        <Button
-                          type="default"
-                          size="small"
-                          onClick={() => {
-                            if (selectedResult) {
-                              setIsDetailModalOpen(true);
-                              return;
-                            }
-                            if (surveyResults && surveyResults.length > 0) {
-                              setSelectedResult(surveyResults[0] as SurveyResultDetail);
-                              setIsDetailModalOpen(true);
-                              return;
-                            }
-                            handleViewDiagnosisDetail();
-                          }}
-                          className="border-purple-300 text-purple-600 hover:border-purple-500 hover:text-purple-700"
-                        >
-                          🎨 진단 결과
-                        </Button>
-                          )}
-                          {formatKoreanDate(msg.timestamp, true)}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+            {groupedSections.map((sec) => (
+              <div key={`sec-${sec.key}`} className="mb-3">
+                <div className="flex items-center justify-center my-4">
+                  <div className="flex-1 border-t border-gray-200" />
+                  <span className="mx-4 px-4 py-1 bg-white text-sm text-gray-600 rounded-full shadow-sm">
+                    {formatDateHeader(sec.date)}
+                  </span>
+                  <div className="flex-1 border-t border-gray-200" />
                 </div>
+                {sec.items.map((msg) => (
+                  <div key={msg.id}>{renderMessage(msg)}</div>
+                ))}
               </div>
             ))}
 
@@ -1436,18 +1540,67 @@ function isDiagnosisBubble(msg?: any): boolean {
             {isTyping && (
               <div className="flex justify-start mb-3">
                 <div className="flex items-start">
-                      <div className={`chatbot-avatar-container !mr-2 ${isTyping ? 'chatbot-active' : ''}`}>
-                        <Avatar
-                          icon={<RobotOutlined />}
-                          style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
-                        />
-                        {(isTyping) && <span className="chatbot-active-badge" aria-hidden="true" />}
-                      </div>
-                  <div className="bg-white border border-gray-200 px-4 py-2 rounded-lg">
-                    <Spin size="small" />
-                    <Text className="ml-2 !text-gray-500">
-                      답변을 생성하고 있습니다...
-                    </Text>
+                  {/* Avatar: prefer active influencer, else infer from last bot message, else robot */}
+                  <div className={`chatbot-avatar-container !mr-2 ${isTyping ? 'chatbot-active' : ''}`}>
+                    {
+                      (() => {
+                        // find last bot message to infer influencer if needed
+                        const lastBot = [...messages].slice().reverse().find(m => !m.isUser);
+                        const inflKey = (lastBot as any)?.influencer || (lastBot as any)?.chatRes?.influencer || (lastBot as any)?.chatRes?.raw?.influencer || (lastBot as any)?.influencer_id || null;
+
+                        let found: any = null;
+                        if (activeInfluencerProfile) {
+                          found = activeInfluencerProfile;
+                        } else if (inflKey && Array.isArray(influencers) && influencers.length > 0) {
+                          const key = String(inflKey).toLowerCase();
+                          for (const p of influencers) {
+                            const n = ((p as any).name || '').toString().toLowerCase();
+                            if (!n) continue;
+                            if (key === n || key.includes(n) || key.startsWith(n)) {
+                              found = p;
+                              break;
+                            }
+                          }
+                        }
+
+                        if (found) {
+                          return (
+                            <div
+                              className="influencer-avatar-clickable !mr-3 influencer-avatar-active"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => {
+                                if (autoCloseRef.current) {
+                                  window.clearTimeout(autoCloseRef.current as any);
+                                  autoCloseRef.current = null;
+                                }
+                                setActiveInfluencerProfile(found);
+                                setInfluencerModalOpen(true);
+                              }}
+                            >
+                              <Avatar
+                                size={50}
+                                style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff' }}
+                              >
+                                <InfluencerImage profile={found} name={(found as any).name} emoji={(found as any).emoji} />
+                              </Avatar>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <Avatar
+                            icon={<RobotOutlined />}
+                            style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
+                          />
+                        );
+                      })()
+                    }
+                  </div>
+
+                  <div className="bg-white border border-gray-200 px-4 py-2 rounded-lg flex items-center">
+                    <TypingAnimation size={8} color="#6b7280" />
+                    <span className="sr-only">답변을 생성하고 있습니다</span>
                   </div>
                 </div>
               </div>
