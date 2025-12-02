@@ -25,7 +25,6 @@ class EmotionResponse(BaseModel):
     # 추가 메타 정보
     confidence: Optional[float] = None  # 0.0 - 1.0
     tone_tags: Optional[List[str]] = None
-    emojis: Optional[List[str]] = None
     raw: Optional[Dict[str, Any]] = None
     # canonical 6-class label (one of: happy, sad, angry, love, fearful, neutral)
     canonical_label: Optional[str] = None
@@ -182,8 +181,8 @@ async def generate_emotion(payload: EmotionRequest):
         "\n\n중요: 설명 없이 단 하나의 유효한 JSON 객체만 반환하세요. "
         "JSON은 다음 키들을 반드시 포함해야 합니다: primary_tone (짧은 문자열), sub_tone (선택, 문자열 또는 null), description (한 단락으로 된 설명), "
         "recommendations (짧은 문자열들의 배열). 또한 반드시 하나의 `canonical_label` 필드를 포함하세요. 이 값은 정확히 하나의 단어여야 하며 다음 중 하나여야 합니다: [happy, sad, angry, love, fearful, neutral]. "
-        "선택적으로 추가할 수 있는 메타 필드: confidence (0.0-1.0), tone_tags (감정 태그 배열), emojis (추천 이모지 배열). "
-        "예시: {\"primary_tone\":\"calm\", \"sub_tone\": null, \"description\":\"사용자는 차분해 보입니다.\", \"recommendations\":[\"부드러운 색상 사용\"], \"confidence\":0.92, \"tone_tags\":[\"calm\"], \"emojis\":[\"neutral\"], \"canonical_label\": \"neutral\" }"
+        "선택적으로 추가할 수 있는 메타 필드: confidence (0.0-1.0), tone_tags (감정 태그 배열). "
+        "예시: {\"primary_tone\":\"calm\", \"sub_tone\": null, \"description\":\"사용자는 차분해 보입니다.\", \"recommendations\":[\"부드러운 색상 사용\"], \"confidence\":0.92, \"tone_tags\":[\"calm\"], \"canonical_label\": \"neutral\" }"
     )
 
     # Additional few-shot examples to bias the model towards the canonical 6 labels
@@ -291,8 +290,7 @@ async def generate_emotion(payload: EmotionRequest):
                             return c
                     except Exception:
                         pass
-            # 2) check emojis field if present
-            ems = parsed.get('emojis') or []
+            ems = []
             if isinstance(ems, str):
                 ems = [ems]
             if isinstance(ems, list):
@@ -340,28 +338,6 @@ async def generate_emotion(payload: EmotionRequest):
             if not tone_tags:
                 tone_tags = None
 
-        # emojis: prefer model-provided, otherwise return canonical_label or detected label
-        emojis = parsed.get("emojis")
-        valid_emotions = ["happy", "sad", "angry", "love", "fearful", "neutral"]
-        if emojis:
-            normalized = []
-            for e in (emojis if isinstance(emojis, list) else [emojis]):
-                if not e:
-                    continue
-                el = str(e).strip().lower()
-                if el in valid_emotions:
-                    normalized.append(el)
-            emojis = normalized or None
-        else:
-            if canonical and canonical in valid_emotions:
-                emojis = [canonical]
-            else:
-                try:
-                    label = _detect_emotion_label(payload.user_text if payload and getattr(payload, 'user_text', None) else description)
-                    emojis = [label] if label else None
-                except Exception:
-                    emojis = None
-
         return EmotionResponse(
             primary_tone=primary or (canonical if canonical else "neutral"),
             sub_tone=sub,
@@ -369,7 +345,6 @@ async def generate_emotion(payload: EmotionRequest):
             recommendations=recommendations,
             confidence=confidence,
             tone_tags=tone_tags,
-            emojis=emojis,
             raw={"model_output": parsed},
             canonical_label=canonical,
         )
