@@ -1323,72 +1323,79 @@ async def analyze(
     msgs = db.query(models.ChatMessage).filter_by(history_id=chat_history.id).order_by(models.ChatMessage.id.asc()).all()
     items = []
     qid = 1
-    for i in range(0,len(msgs)-1,2):
-        if msgs[i].role=="user" and msgs[i+1].role=="ai":
-            # msgs[i+1].text may be plain text (we store human-readable description)
-            # or a JSON string for older records. Try to parse JSON, otherwise
-            # Prefer structured `raw` field (newer records) which contains the
-            # serialized structured payload (including emotion/emotion_lottie).
-            # Fallback to `text` when `raw` is not present.
-            raw_blob = getattr(msgs[i+1], 'raw', None) or (msgs[i+1].text or "")
-            d = None
-            try:
-                if isinstance(raw_blob, str):
-                    d = json.loads(raw_blob)
-                elif isinstance(raw_blob, dict):
-                    d = raw_blob
-                else:
-                    d = {"description": str(raw_blob)}
-            except Exception:
-                # If parsing fails, fallback to using the human-readable text
-                try:
-                    text_blob = msgs[i+1].text or ""
-                    d = json.loads(text_blob)
-                except Exception:
-                    d = {"description": msgs[i+1].text or ""}
-            # 기존 데이터의 recommendations 필드도 정리
-            # normalize structure: description may itself be a JSON string produced
-            # by older flows. If so, parse and merge.
-            if isinstance(d.get("description"), str):
-                desc_text = d.get("description", "").strip()
-                if desc_text.startswith("{") or desc_text.startswith("["):
+    i = 0
+    # Robust pairing: for each user message, find the next AI message (if any)
+    while i < len(msgs):
+        try:
+            if msgs[i].role == 'user':
+                # find next ai message
+                j = i + 1
+                while j < len(msgs) and msgs[j].role != 'ai':
+                    j += 1
+                if j < len(msgs) and msgs[j].role == 'ai':
+                    ai_msg = msgs[j]
+                    raw_blob = getattr(ai_msg, 'raw', None) or (ai_msg.text or "")
+                    d = None
                     try:
-                        parsed_desc = json.loads(desc_text)
-                        if isinstance(parsed_desc, dict):
-                            # merge keys from parsed_desc into d without overwriting existing top-level fields
-                            for k, v in parsed_desc.items():
-                                if k not in d or (k == 'description'):
-                                    d[k] = v
+                        if isinstance(raw_blob, str):
+                            d = json.loads(raw_blob)
+                        elif isinstance(raw_blob, dict):
+                            d = raw_blob
+                        else:
+                            d = {"description": str(raw_blob)}
                     except Exception:
-                        pass
+                        try:
+                            text_blob = ai_msg.text or ""
+                            d = json.loads(text_blob)
+                        except Exception:
+                            d = {"description": ai_msg.text or ""}
 
-            recommendations = d.get("recommendations", [])
-            if isinstance(recommendations, dict):
-                recommendations = list(recommendations.values())
-            elif isinstance(recommendations, list):
-                flattened_recommendations = []
-                for item in recommendations:
-                    if isinstance(item, list):
-                        flattened_recommendations.extend(item)
-                    elif isinstance(item, str):
-                        flattened_recommendations.append(item)
-                recommendations = flattened_recommendations
-            else:
-                recommendations = []
-            d["recommendations"] = recommendations
-            # Ensure required ChatResModel fields exist with safe defaults
-            d.setdefault('primary_tone', '')
-            d.setdefault('sub_tone', '')
-            d.setdefault('emotion', d.get('emotion', 'neutral') or 'neutral')
-            d.setdefault('description', d.get('description') or '')
-            items.append(ChatItemModel(
-                question_id=qid,
-                question=msgs[i].text,
-                answer=d.get("description",""),
-                chat_res=ChatResModel.model_validate(d),
-                emotion=d.get("emotion", "neutral")
-            ))
-            qid += 1
+                    # normalize nested description/json
+                    if isinstance(d.get("description"), str):
+                        desc_text = d.get("description", "").strip()
+                        if desc_text.startswith("{") or desc_text.startswith("["):
+                            try:
+                                parsed_desc = json.loads(desc_text)
+                                if isinstance(parsed_desc, dict):
+                                    for k, v in parsed_desc.items():
+                                        if k not in d or k == 'description':
+                                            d[k] = v
+                            except Exception:
+                                pass
+
+                    recommendations = d.get("recommendations", [])
+                    if isinstance(recommendations, dict):
+                        recommendations = list(recommendations.values())
+                    elif isinstance(recommendations, list):
+                        flattened_recommendations = []
+                        for item in recommendations:
+                            if isinstance(item, list):
+                                flattened_recommendations.extend(item)
+                            elif isinstance(item, str):
+                                flattened_recommendations.append(item)
+                        recommendations = flattened_recommendations
+                    else:
+                        recommendations = []
+                    d["recommendations"] = recommendations
+                    d.setdefault('primary_tone', '')
+                    d.setdefault('sub_tone', '')
+                    d.setdefault('emotion', d.get('emotion', 'neutral') or 'neutral')
+                    d.setdefault('description', d.get('description') or '')
+
+                    items.append(ChatItemModel(
+                        question_id=qid,
+                        question=msgs[i].text,
+                        answer=d.get("description",""),
+                        chat_res=ChatResModel.model_validate(d),
+                        emotion=d.get("emotion", "neutral")
+                    ))
+                    qid += 1
+                    # advance i to after this ai message
+                    i = j + 1
+                    continue
+            i += 1
+        except Exception:
+            i += 1
     return {"history_id": chat_history.id, "items": items}
 
 
@@ -1687,60 +1694,66 @@ def get_chat_history(history_id: int, current_user: models.User = Depends(get_cu
         msgs = db.query(models.ChatMessage).filter_by(history_id=history.id).order_by(models.ChatMessage.id.asc()).all()
         items = []
         qid = 1
-        # pair user + ai messages into items (same logic as in /analyze)
-        for i in range(0, len(msgs) - 1, 2):
+        # Robust pairing: for each user message, find the next AI/system/assistant message
+        i = 0
+        while i < len(msgs):
             try:
-                if msgs[i].role == 'user' and msgs[i+1].role in ('ai', 'system', 'assistant'):
-                    # Prefer structured `raw` field (newer records) which contains
-                    # the serialized structured payload (including emotion/emotion_lottie).
-                    # Fallback to `text` when `raw` is not present.
-                    raw_blob = getattr(msgs[i+1], 'raw', None) or (msgs[i+1].text or "")
-                    d = None
-                    try:
-                        if isinstance(raw_blob, str):
-                            d = json.loads(raw_blob)
-                        elif isinstance(raw_blob, dict):
-                            d = raw_blob
-                        else:
-                            d = {"description": str(raw_blob)}
-                    except Exception:
+                if msgs[i].role == 'user':
+                    j = i + 1
+                    while j < len(msgs) and msgs[j].role not in ('ai', 'system', 'assistant'):
+                        j += 1
+                    if j < len(msgs):
+                        ai_msg = msgs[j]
+                        raw_blob = getattr(ai_msg, 'raw', None) or (ai_msg.text or "")
+                        d = None
                         try:
-                            text_blob = msgs[i+1].text or ""
-                            d = json.loads(text_blob)
+                            if isinstance(raw_blob, str):
+                                d = json.loads(raw_blob)
+                            elif isinstance(raw_blob, dict):
+                                d = raw_blob
+                            else:
+                                d = {"description": str(raw_blob)}
                         except Exception:
-                            d = {"description": msgs[i+1].text or ""}
+                            try:
+                                text_blob = ai_msg.text or ""
+                                d = json.loads(text_blob)
+                            except Exception:
+                                d = {"description": ai_msg.text or ""}
 
-                    # normalize recommendations field
-                    recommendations = d.get('recommendations', [])
-                    if isinstance(recommendations, dict):
-                        recommendations = list(recommendations.values())
-                    elif isinstance(recommendations, list):
-                        flattened_recommendations = []
-                        for item in recommendations:
-                            if isinstance(item, list):
-                                flattened_recommendations.extend(item)
-                            elif isinstance(item, str):
-                                flattened_recommendations.append(item)
-                        recommendations = flattened_recommendations
-                    else:
-                        recommendations = []
-                    d['recommendations'] = recommendations
-                    d.setdefault('primary_tone', '')
-                    d.setdefault('sub_tone', '')
-                    d.setdefault('emotion', d.get('emotion', 'neutral') or 'neutral')
-                    d.setdefault('description', d.get('description') or '')
+                        # normalize recommendations field
+                        recommendations = d.get('recommendations', [])
+                        if isinstance(recommendations, dict):
+                            recommendations = list(recommendations.values())
+                        elif isinstance(recommendations, list):
+                            flattened_recommendations = []
+                            for item in recommendations:
+                                if isinstance(item, list):
+                                    flattened_recommendations.extend(item)
+                                elif isinstance(item, str):
+                                    flattened_recommendations.append(item)
+                            recommendations = flattened_recommendations
+                        else:
+                            recommendations = []
+                        d['recommendations'] = recommendations
+                        d.setdefault('primary_tone', '')
+                        d.setdefault('sub_tone', '')
+                        d.setdefault('emotion', d.get('emotion', 'neutral') or 'neutral')
+                        d.setdefault('description', d.get('description') or '')
 
-                    # create ChatItemModel-like structure
-                    item = {
-                        'question_id': qid,
-                        'question': msgs[i].text,
-                        'answer': d.get('description', ''),
-                        'chat_res': d,
-                    }
-                    items.append(item)
-                    qid += 1
+                        # create ChatItemModel-like structure
+                        item = {
+                            'question_id': qid,
+                            'question': msgs[i].text,
+                            'answer': d.get('description', ''),
+                            'chat_res': d,
+                        }
+                        items.append(item)
+                        qid += 1
+                        i = j + 1
+                        continue
+                i += 1
             except Exception:
-                continue
+                i += 1
 
         return {"history_id": history.id, "items": items}
     except HTTPException:
