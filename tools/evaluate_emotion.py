@@ -83,8 +83,8 @@ async def call_api_emotion(text):
     if isinstance(canonical, str) and canonical:
         canon = to_canonical(canonical)
         return {'pred': canon, 'raw': resp}
-    # Prefer tone_tags/emojis (they often contain more specific tokens).
-    tokens = resp.get('tone_tags') or resp.get('emojis') or resp.get('tags')
+    # Prefer tone_tags (they often contain more specific tokens).
+    tokens = resp.get('tone_tags') or resp.get('tags')
     if tokens:
         # normalize list/str to list
         if isinstance(tokens, str):

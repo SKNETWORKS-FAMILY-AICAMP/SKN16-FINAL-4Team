@@ -877,18 +877,6 @@ def _extract_emotion_from_orchestrator(emotion_res: dict) -> str:
             if lab:
                 return lab
 
-    # Last resort: emojis (can be noisy/inconsistent), use only if nothing else found
-    emojis = emotion_res.get('emojis') or emotion_res.get('emoji')
-    if emojis:
-        if isinstance(emojis, list) and emojis:
-            lab = _normalize_emotion_label(emojis[0])
-            if lab:
-                return lab
-        elif isinstance(emojis, str):
-            lab = _normalize_emotion_label(emojis)
-            if lab:
-                return lab
-
     return ""
 
 
@@ -913,8 +901,8 @@ async def _resolve_emotion_tag(emotion_res: dict, conversation_history: list | N
                     return to_canonical(canon_label)
                 except Exception:
                     return _normalize_emotion_label(canon_label) or ''
-            # Prefer tone_tags/emojis (they often contain more specific tokens)
-            tokens = api_resp.get('tone_tags') or api_resp.get('emojis') or api_resp.get('tags')
+            # Prefer tone_tags (they often contain more specific tokens)
+            tokens = api_resp.get('tone_tags') or api_resp.get('tags')
             if tokens:
                 if isinstance(tokens, str):
                     tokens = [tokens]
@@ -1144,50 +1132,29 @@ async def analyze(
     except Exception:
         influencer_info = influencer_info
 
-    # Extract emojis from nested raw_model_output or raw.model_output if top-level emojis missing
     try:
-        emojis = None
-        # check parsed emotion first
-        if isinstance(emotion_res, dict):
-            emojis = emotion_res.get('emojis') or emotion_res.get('emoji')
-
         # if not found, check wrapped/raw payloads (various shapes)
-        if not emojis and isinstance(emotion_wrapped, dict):
+        if isinstance(emotion_wrapped, dict):
             # common nested locations
             candidates = [emotion_wrapped.get('raw_model_output'), emotion_wrapped.get('raw'), emotion_wrapped.get('parsed')]
             for cand in candidates:
                 try:
                     if isinstance(cand, dict):
                         mo = cand.get('model_output') or cand
-                        if isinstance(mo, dict):
-                            emojis = mo.get('emojis') or mo.get('emoji')
-                            if emojis:
-                                break
                 except Exception:
                     continue
 
         # also check orch_resp top-level dict forms if available
-        if (not emojis) and isinstance(orch_resp, dict):
+        if isinstance(orch_resp, dict):
             try:
                 er = orch_resp.get('emotion') or {}
                 if isinstance(er, dict):
                     rm = er.get('raw_model_output') or er.get('raw') or er.get('parsed')
                     if isinstance(rm, dict):
                         mo = rm.get('model_output') or rm
-                        if isinstance(mo, dict):
-                            emojis = mo.get('emojis') or mo.get('emoji')
             except Exception:
                 pass
 
-        # If we found emojis, ensure they appear under emotion_res.parsed path
-        if emojis:
-            try:
-                if not isinstance(emotion_res, dict):
-                    emotion_res = {}
-                # set into parsed/emotion_res structure used later
-                emotion_res['emojis'] = emojis
-            except Exception:
-                pass
     except Exception:
         pass
 
