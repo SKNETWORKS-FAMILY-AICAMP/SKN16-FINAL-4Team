@@ -187,12 +187,7 @@ def get_db():
         db.close()
 
 
-@router.get("/welcome")
-async def welcome(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-    influencer_id: str | None = Query(None, alias='influencer_id')
-):
+def generate_welcome(db: Session, current_user: models.User, influencer_id: str | None = None):
     """
     Simple welcome endpoint used by frontend to provide a server-side welcome message
     and an optional influencer suggestion. This is intentionally lightweight so the
@@ -861,19 +856,15 @@ def _extract_emotion_from_orchestrator(emotion_res: dict) -> str:
     """Try to extract a canonical emotion label from the orchestrator's parsed emotion dict."""
     if not emotion_res or not isinstance(emotion_res, dict):
         return ""
-    # 1) normalized emojis field (list)
-    emojis = emotion_res.get('emojis') or emotion_res.get('emoji')
-    if emojis:
-        if isinstance(emojis, list) and emojis:
-            lab = _normalize_emotion_label(emojis[0])
-            if lab:
-                return lab
-        elif isinstance(emojis, str):
-            lab = _normalize_emotion_label(emojis)
+    # Prefer explicit canonical labels or primary tone fields returned by the model/orchestrator
+    for key in ('canonical_label', 'canonical', 'primary_tone', 'primary', 'label', 'emotion'):
+        val = emotion_res.get(key)
+        if isinstance(val, str) and val:
+            lab = _normalize_emotion_label(val)
             if lab:
                 return lab
 
-    # 2) tone_tags
+    # Next, prefer tone_tags (they often contain more descriptive tokens)
     tags = emotion_res.get('tone_tags') or emotion_res.get('tags')
     if tags and isinstance(tags, list):
         # Prefer explicit anger tokens if present (increase sensitivity)
@@ -886,11 +877,15 @@ def _extract_emotion_from_orchestrator(emotion_res: dict) -> str:
             if lab:
                 return lab
 
-    # 3) direct fields
-    for key in ('primary_tone', 'primary', 'label', 'tag', 'emotion'):
-        val = emotion_res.get(key)
-        if isinstance(val, str):
-            lab = _normalize_emotion_label(val)
+    # Last resort: emojis (can be noisy/inconsistent), use only if nothing else found
+    emojis = emotion_res.get('emojis') or emotion_res.get('emoji')
+    if emojis:
+        if isinstance(emojis, list) and emojis:
+            lab = _normalize_emotion_label(emojis[0])
+            if lab:
+                return lab
+        elif isinstance(emojis, str):
+            lab = _normalize_emotion_label(emojis)
             if lab:
                 return lab
 
@@ -979,6 +974,13 @@ async def analyze(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # Debug: log incoming request and user for tracing 400 errors
+    try:
+        print(f"[analyze] incoming request: history_id={request.history_id}, question={request.question}")
+        print(f"[analyze] current_user.id={getattr(current_user,'id',None)}")
+    except Exception:
+        pass
+
     # 신규 세션 생성 또는 기존 세션 이어받기
     if not request.history_id:
         chat_history = models.ChatHistory(user_id=current_user.id)
@@ -990,11 +992,53 @@ async def analyze(
         if not chat_history:
             raise HTTPException(status_code=404, detail="해당 history_id 세션 없음")
         if chat_history.ended_at:
+            # Log ended session to help debugging
+            print(f"[analyze] requested history_id {request.history_id} is already ended at {chat_history.ended_at}")
             raise HTTPException(status_code=400, detail="이미 종료된 세션입니다.")
     user_msg = models.ChatMessage(history_id=chat_history.id, role="user", text=request.question)
     db.add(user_msg)
     db.commit()
     db.refresh(user_msg)
+
+    # If the incoming request has an empty question, treat this call as a "welcome" request
+    # and return the same welcome message that `/welcome` provides so clients can use
+    # a single endpoint for both welcome + normal analyze flows.
+    if not request.question or (isinstance(request.question, str) and request.question.strip() == ""):
+        try:
+            # Reuse the existing welcome helper to build the message. Pass current db and user.
+            welcome_resp = generate_welcome(db=db, current_user=current_user)
+            welcome_text = (welcome_resp or {}).get('message') or '안녕하세요! 퍼스널컬러 AI입니다.'
+        except Exception as e:
+            print(f"[analyze] welcome generation failed: {e}")
+            welcome_text = '안녕하세요! 퍼스널컬러 AI입니다.'
+
+        # persist AI welcome message
+        ai_msg = models.ChatMessage(
+            history_id=chat_history.id,
+            role='ai',
+            text=welcome_text,
+            raw=json.dumps({'description': welcome_text}, ensure_ascii=False),
+        )
+        db.add(ai_msg)
+        db.commit()
+        db.refresh(ai_msg)
+
+        # build items response compatible with frontend ChatbotHistoryResponse
+        item = {
+            'question_id': 0,
+            'question': '',
+            'answer': welcome_text,
+            'chat_res': {
+                'primary_tone': '',
+                'sub_tone': '',
+                'description': welcome_text,
+                'recommendations': [],
+                'emotion': 'neutral',
+            }
+        }
+        # ensure top-level `emotion` exists to satisfy ChatItemModel response validation
+        item['emotion'] = item['chat_res'].get('emotion', 'neutral')
+        return {'history_id': chat_history.id, 'items': [item]}
     # 이전 대화 히스토리에서 사용자 정보 수집
     prev_messages = db.query(models.ChatMessage).filter_by(history_id=chat_history.id).order_by(models.ChatMessage.id.asc()).all()
     # 닉네임 사용: current_user.nickname이 있으면, 없으면 '사용자'
@@ -1043,12 +1087,37 @@ async def analyze(
             except Exception:
                 pass
         orch_resp = await orchestrator_service.analyze(orch_payload)
+
+        # Debug: print orchestrator full response for troubleshooting
+        try:
+            orch_serializable = None
+            if hasattr(orch_resp, 'dict'):
+                try:
+                    orch_serializable = orch_resp.dict()
+                except Exception:
+                    # some pydantic models may require .dict(exclude_none=True)
+                    try:
+                        orch_serializable = orch_resp.dict(exclude_none=True)
+                    except Exception:
+                        orch_serializable = None
+            elif isinstance(orch_resp, dict):
+                orch_serializable = orch_resp
+
+            if orch_serializable is not None:
+                try:
+                    print("[analyze] orch_resp:", json.dumps(orch_serializable, ensure_ascii=False)[:4000])
+                except Exception:
+                    print("[analyze] orch_resp (repr):", repr(orch_serializable)[:4000])
+            else:
+                print("[analyze] orch_resp (raw):", repr(orch_resp)[:4000])
+        except Exception as e:
+            print(f"[analyze] orch_resp logging failed: {e}")
     except Exception as e:
         print(f"❌ Orchestrator error: {e}")
         raise HTTPException(status_code=500, detail=f"Orchestrator failed: {str(e)}")
     # Extract results (orchestrator now returns namespaced structures)
-    raw_emotion = orch_resp.emotion or {}
-    raw_color = orch_resp.color or {}
+    raw_emotion = orch_resp.emotion if getattr(orch_resp, 'emotion', None) is not None else (orch_resp.get('emotion') if isinstance(orch_resp, dict) else {})
+    raw_color = orch_resp.color if getattr(orch_resp, 'color', None) is not None else (orch_resp.get('color') if isinstance(orch_resp, dict) else {})
 
     # unwrap parsed parts if present
     def _unwrap(parsed_like):
@@ -1067,6 +1136,104 @@ async def analyze(
             influencer_info = inf.get("parsed")
         else:
             influencer_info = inf
+
+    # Defensive fixes: if influencer_info contains an error object, ignore it
+    try:
+        if isinstance(influencer_info, dict) and influencer_info.get('error'):
+            influencer_info = None
+    except Exception:
+        influencer_info = influencer_info
+
+    # Extract emojis from nested raw_model_output or raw.model_output if top-level emojis missing
+    try:
+        emojis = None
+        # check parsed emotion first
+        if isinstance(emotion_res, dict):
+            emojis = emotion_res.get('emojis') or emotion_res.get('emoji')
+
+        # if not found, check wrapped/raw payloads (various shapes)
+        if not emojis and isinstance(emotion_wrapped, dict):
+            # common nested locations
+            candidates = [emotion_wrapped.get('raw_model_output'), emotion_wrapped.get('raw'), emotion_wrapped.get('parsed')]
+            for cand in candidates:
+                try:
+                    if isinstance(cand, dict):
+                        mo = cand.get('model_output') or cand
+                        if isinstance(mo, dict):
+                            emojis = mo.get('emojis') or mo.get('emoji')
+                            if emojis:
+                                break
+                except Exception:
+                    continue
+
+        # also check orch_resp top-level dict forms if available
+        if (not emojis) and isinstance(orch_resp, dict):
+            try:
+                er = orch_resp.get('emotion') or {}
+                if isinstance(er, dict):
+                    rm = er.get('raw_model_output') or er.get('raw') or er.get('parsed')
+                    if isinstance(rm, dict):
+                        mo = rm.get('model_output') or rm
+                        if isinstance(mo, dict):
+                            emojis = mo.get('emojis') or mo.get('emoji')
+            except Exception:
+                pass
+
+        # If we found emojis, ensure they appear under emotion_res.parsed path
+        if emojis:
+            try:
+                if not isinstance(emotion_res, dict):
+                    emotion_res = {}
+                # set into parsed/emotion_res structure used later
+                emotion_res['emojis'] = emojis
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # If influencer_info is missing or invalid, try a safe fallback: generate a short
+    # influencer-styled message using the available color/emotion outputs via OpenAI.
+    # This ensures the response follows the desired chain: color -> emotion -> influencer.
+    try:
+        if not influencer_info:
+            # build a compact prompt summarizing color + emotion outputs
+            try:
+                color_summary = ''
+                if isinstance(color_res, dict):
+                    hints = color_res.get('detected_color_hints') or color_res.get('detected_color_hints') or {}
+                    if isinstance(hints, dict):
+                        color_summary = hints.get('result_name') or hints.get('reason') or ''
+                emotion_summary = ''
+                if isinstance(emotion_res, dict):
+                    emotion_summary = emotion_res.get('description') or emotion_res.get('primary_tone') or ''
+
+                system_msg = (
+                    "당신은 한국어로 자연스럽고 친근한 인플루언서 말투를 모방하는 카피라이터입니다. "
+                    "사용자에게 바로 보여줄 수 있는 2~3문장 분량의 응답을 생성하세요."
+                )
+                user_msg = (
+                    f"사용자 상황: {emotion_summary}\n퍼스널 컬러 힌트: {color_summary}\n"
+                    "위 정보를 바탕으로 친근하고 상담자다운 말투로 간단한 응답을 만들어주세요."
+                )
+
+                resp = client.chat.completions.create(
+                    model=get_model_to_use(),
+                    messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
+                    max_tokens=200,
+                    temperature=0.7,
+                )
+                styled = ''
+                try:
+                    styled = resp.choices[0].message.content.strip()
+                except Exception:
+                    styled = str(resp)[:500]
+                if styled:
+                    influencer_info = {"styled_text": styled, "generated_by": "fallback_openai"}
+            except Exception as e:
+                # if OpenAI fallback fails, keep influencer_info as None
+                print(f"[analyze] influencer fallback generation failed: {e}")
+    except Exception:
+        pass
 
     # Compose the data payload to store and return (keep structure compatible with frontend)
     data = {}
@@ -1094,12 +1261,24 @@ async def analyze(
     data["primary_tone"] = primary or ""
     data["sub_tone"] = sub or ""
 
-    # description: influencer styled text > emotion.description > color.description
+    # description: influencer styled text (string) > influencer fields > emotion.description > color.description
     desc = None
-    if influencer_info and isinstance(influencer_info, dict):
-        desc = influencer_info.get("styled_text")
+    try:
+        # influencer_info might be a string (already-styled text) or a dict with fields
+        if isinstance(influencer_info, str) and influencer_info.strip():
+            desc = influencer_info
+        elif isinstance(influencer_info, dict):
+            # prefer explicit styled_text, then description, then model_output.description
+            desc = influencer_info.get('styled_text') or influencer_info.get('description')
+            if not desc:
+                mo = influencer_info.get('model_output') or influencer_info.get('raw') or None
+                if isinstance(mo, dict):
+                    desc = mo.get('description') or mo.get('styled_text')
+    except Exception:
+        desc = None
+
     if not desc:
-        desc = (emotion_res.get("description") if isinstance(emotion_res, dict) else None) or color_res.get("description") if isinstance(color_res, dict) else None
+        desc = (emotion_res.get("description") if isinstance(emotion_res, dict) else None) or (color_res.get("description") if isinstance(color_res, dict) else None)
     data["description"] = desc or "안녕하세요! 퍼스널컬러 전문가입니다. 어떤 부분이 고민이신가요?"
 
     # recommendations: merge lists from emotion, color, and influencer (if any)
@@ -1181,12 +1360,25 @@ async def analyze(
         if msgs[i].role=="user" and msgs[i+1].role=="ai":
             # msgs[i+1].text may be plain text (we store human-readable description)
             # or a JSON string for older records. Try to parse JSON, otherwise
-            # wrap the text into a minimal dict so downstream code can operate.
-            raw_text = (msgs[i+1].text or "")
+            # Prefer structured `raw` field (newer records) which contains the
+            # serialized structured payload (including emotion/emotion_lottie).
+            # Fallback to `text` when `raw` is not present.
+            raw_blob = getattr(msgs[i+1], 'raw', None) or (msgs[i+1].text or "")
+            d = None
             try:
-                d = json.loads(raw_text)
+                if isinstance(raw_blob, str):
+                    d = json.loads(raw_blob)
+                elif isinstance(raw_blob, dict):
+                    d = raw_blob
+                else:
+                    d = {"description": str(raw_blob)}
             except Exception:
-                d = {"description": raw_text}
+                # If parsing fails, fallback to using the human-readable text
+                try:
+                    text_blob = msgs[i+1].text or ""
+                    d = json.loads(text_blob)
+                except Exception:
+                    d = {"description": msgs[i+1].text or ""}
             # 기존 데이터의 recommendations 필드도 정리
             # normalize structure: description may itself be a JSON string produced
             # by older flows. If so, parse and merge.
@@ -1439,6 +1631,7 @@ def get_influencer_histories(current_user: models.User = Depends(get_current_use
             except Exception:
                 recent_msg = None
 
+            short = None
             if recent_msg:
                 text = getattr(recent_msg, 'text', '') or ''
                 short = text.replace('\n', ' ').strip()
@@ -1459,33 +1652,45 @@ def get_influencer_histories(current_user: models.User = Depends(get_current_use
             except Exception:
                 profile_meta = None
 
+            # prefer message-level timestamp for last_activity when available
+            last_activity_val = g.get('last_activity')
+            try:
+                if recent_msg and getattr(recent_msg, 'created_at', None):
+                    # if recent_msg is newer than the history-level last_activity, prefer it
+                    if not last_activity_val or getattr(recent_msg, 'created_at') > last_activity_val:
+                        last_activity_val = getattr(recent_msg, 'created_at')
+            except Exception:
+                pass
+
             item = {
                 'influencer_id': g['influencer_id'],
                 'influencer_name': g['influencer_name'],
                 'total_sessions': len(g['histories']),
                 'total_messages': g['total_messages'],
-                'last_activity': g['last_activity'],
+                'last_activity': last_activity_val,
             }
-            if profile_meta:
-                # Merge the full profile metadata when available so the frontend
-                # can rely on a single API response for both history summaries
-                # and detailed profile fields used by the profile modal.
-                try:
-                    # If the profile provider returned a rich dict, attach it directly.
-                    # Normalize common alternate field names to keep shape predictable.
-                    full_profile = dict(profile_meta) if isinstance(profile_meta, dict) else profile_meta
-                    # normalize small set of aliases into common keys
-                    if not full_profile.get('id'):
-                        full_profile['id'] = full_profile.get('influencer_id') or full_profile.get('name')
-                    if not full_profile.get('image'):
-                        full_profile['image'] = full_profile.get('profile') or full_profile.get('avatar') or full_profile.get('image')
-                    if not full_profile.get('short_description'):
-                        full_profile['short_description'] = full_profile.get('short_description') or full_profile.get('short_name') or full_profile.get('description')
 
-                    item['profile'] = full_profile
-                except Exception:
-                    # fallback: do nothing and keep item without profile
-                    pass
+            # Ensure profile object exists and attach short_description inside profile
+            try:
+                if profile_meta and isinstance(profile_meta, dict):
+                    full_profile = dict(profile_meta)
+                else:
+                    # create a minimal profile object so frontend always finds `profile.short_description`
+                    full_profile = {'id': g['influencer_id'] or g['influencer_name'], 'name': g['influencer_name']}
+
+                # normalize aliases
+                if not full_profile.get('id'):
+                    full_profile['id'] = full_profile.get('influencer_id') or full_profile.get('name')
+
+                # prefer recent message; otherwise keep existing profile short_description or description
+                existing_short = full_profile.get('short_description') or full_profile.get('short_name') or full_profile.get('description') or ''
+                full_profile['short_description'] = short or existing_short or ''
+
+                item['profile'] = full_profile
+
+            except Exception:
+                # fallback: attach a minimal profile with empty short_description
+                item['profile'] = {'id': g['influencer_id'] or g['influencer_name'], 'name': g['influencer_name'], 'short_description': short or ''}
 
             out.append(item)
 
@@ -1519,17 +1724,38 @@ def get_chat_history(history_id: int, current_user: models.User = Depends(get_cu
         for i in range(0, len(msgs) - 1, 2):
             try:
                 if msgs[i].role == 'user' and msgs[i+1].role in ('ai', 'system', 'assistant'):
-                    raw_text = (msgs[i+1].text or "")
+                    # Prefer structured `raw` field (newer records) which contains
+                    # the serialized structured payload (including emotion/emotion_lottie).
+                    # Fallback to `text` when `raw` is not present.
+                    raw_blob = getattr(msgs[i+1], 'raw', None) or (msgs[i+1].text or "")
+                    d = None
                     try:
-                        d = json.loads(raw_text)
+                        if isinstance(raw_blob, str):
+                            d = json.loads(raw_blob)
+                        elif isinstance(raw_blob, dict):
+                            d = raw_blob
+                        else:
+                            d = {"description": str(raw_blob)}
                     except Exception:
-                        d = {"description": raw_text}
+                        try:
+                            text_blob = msgs[i+1].text or ""
+                            d = json.loads(text_blob)
+                        except Exception:
+                            d = {"description": msgs[i+1].text or ""}
 
                     # normalize recommendations field
                     recommendations = d.get('recommendations', [])
                     if isinstance(recommendations, dict):
                         recommendations = list(recommendations.values())
-                    elif not isinstance(recommendations, list):
+                    elif isinstance(recommendations, list):
+                        flattened_recommendations = []
+                        for item in recommendations:
+                            if isinstance(item, list):
+                                flattened_recommendations.extend(item)
+                            elif isinstance(item, str):
+                                flattened_recommendations.append(item)
+                        recommendations = flattened_recommendations
+                    else:
                         recommendations = []
                     d['recommendations'] = recommendations
                     d.setdefault('primary_tone', '')
@@ -1580,16 +1806,103 @@ def get_messages_for_influencer(influencer_id: str, current_user: models.User = 
         history_ids = [h.id for h in histories]
         msgs = db.query(models.ChatMessage).filter(models.ChatMessage.history_id.in_(history_ids)).order_by(models.ChatMessage.created_at.asc()).all()
 
-        items = [
-            {
-                'history_id': m.history_id,
-                'role': m.role,
-                'text': m.text,
-                'raw': m.raw,
-                'created_at': m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
-            }
-            for m in msgs
-        ]
+        items = []
+        for m in msgs:
+            try:
+                raw_val = getattr(m, 'raw', None)
+                parsed = None
+                # Try to obtain a parsed dict from raw (preferred)
+                if raw_val:
+                    if isinstance(raw_val, dict):
+                        parsed = raw_val
+                    elif isinstance(raw_val, str):
+                        try:
+                            parsed = json.loads(raw_val)
+                        except Exception:
+                            parsed = None
+                # If we couldn't parse raw, try parsing the text (older records stored JSON in text)
+                if parsed is None:
+                    txt = getattr(m, 'text', '') or ''
+                    if isinstance(txt, dict):
+                        parsed = txt
+                    elif isinstance(txt, str) and (txt.strip().startswith('{') or txt.strip().startswith('[')):
+                        try:
+                            parsed = json.loads(txt)
+                        except Exception:
+                            parsed = None
+
+                # Normalize parsed into a dict-like structure for the frontend
+                if not isinstance(parsed, dict):
+                    # fallback: keep raw as-is inside a description
+                    parsed = {'description': (getattr(m, 'text', '') or '')}
+
+                # If the parsed payload contains nested JSON inside `description` or `styled_text`, try to unwrap
+                if isinstance(parsed.get('description'), str):
+                    desc_candidate = parsed.get('description').strip()
+                    if desc_candidate.startswith('{') or desc_candidate.startswith('['):
+                        try:
+                            inner = json.loads(desc_candidate)
+                            if isinstance(inner, dict):
+                                # merge keys from parsed_desc into d without overwriting existing top-level fields
+                                for k, v in inner.items():
+                                    if k not in parsed or k == 'description':
+                                        parsed[k] = v
+                        except Exception:
+                            pass
+
+                # Prefer influencer.styled_text when available
+                styled_text = None
+                infl = parsed.get('influencer')
+                if isinstance(infl, dict):
+                    # some records embed another JSON string inside influencer.raw/raw.model_output
+                    st = infl.get('styled_text') or infl.get('description') or None
+                    if isinstance(st, str) and (st.strip().startswith('{') or st.strip().startswith('[')):
+                        try:
+                            stp = json.loads(st)
+                            if isinstance(stp, dict) and stp.get('styled_text'):
+                                styled_text = stp.get('styled_text')
+                            else:
+                                # If the nested value is actually a dict describing styled_text, try common keys
+                                styled_text = stp.get('styled_text') or stp.get('description') or None
+                        except Exception:
+                            styled_text = st
+                    else:
+                        styled_text = st
+
+                # fallback to top-level styled_text or description
+                if not styled_text:
+                    top_st = parsed.get('styled_text') or parsed.get('description') or None
+                    if isinstance(top_st, str) and (top_st.strip().startswith('{') or top_st.strip().startswith('[')):
+                        try:
+                            inner_top = json.loads(top_st)
+                            if isinstance(inner_top, dict):
+                                styled_text = inner_top.get('styled_text') or inner_top.get('description') or None
+                            else:
+                                styled_text = str(top_st)
+                        except Exception:
+                            styled_text = str(top_st)
+                    else:
+                        styled_text = top_st
+
+                # final_clean_text: ensure it's a simple string
+                final_text = styled_text if isinstance(styled_text, str) and styled_text.strip() else (parsed.get('description') or (getattr(m, 'text', '') or ''))
+
+                items.append({
+                    'history_id': m.history_id,
+                    'role': m.role,
+                    'text': final_text,
+                    'raw': parsed,
+                    'created_at': m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
+                })
+            except Exception:
+                # fallback to original minimal representation on unexpected errors
+                items.append({
+                    'history_id': m.history_id,
+                    'role': m.role,
+                    'text': getattr(m, 'text', '') or '',
+                    'raw': getattr(m, 'raw', None),
+                    'created_at': m.created_at.isoformat() if getattr(m, 'created_at', None) else None,
+                })
 
         return {'history_ids': history_ids, 'items': items}
     except Exception as e:

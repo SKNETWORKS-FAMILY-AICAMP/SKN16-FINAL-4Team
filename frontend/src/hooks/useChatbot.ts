@@ -46,6 +46,10 @@ export function useChatbot(options?: UseChatbotOptions) {
     mutationFn: (params: { question: string; history_id?: number | undefined }) =>
       chatbotApi.analyze(params as any),
     onSuccess: (data: any) => {
+      // Invalidate influencer histories so UI (MyPage) can refresh with latest messages
+      try {
+        queryClient.invalidateQueries({ queryKey: ['influencerHistories'] });
+      } catch (e) {}
       options?.onAnalyzeSuccess?.(data);
     },
     onError: (error: any) => {

@@ -29,6 +29,7 @@ export interface InfluencerProfile {
   closing: string;
   characteristics: string;
   expertise: string[];
+  short_description: string;
 }
 
 export interface ChatItemModel {
@@ -69,17 +70,42 @@ class ChatbotApi {
    * 챗봇에게 메시지 전송 및 분석
    */
   async analyze(request: ChatbotRequest): Promise<ChatbotHistoryResponse> {
-    const response = await apiClient.post<ChatbotHistoryResponse>(
-      '/chatbot/analyze',
-      request,
-      {
-        timeout: 30000, // 30초 타임아웃
-        headers: {
-          'Content-Type': 'application/json',
-        },
+    try {
+      const response = await apiClient.post<ChatbotHistoryResponse>(
+        '/chatbot/analyze',
+        request,
+        {
+          timeout: 30000, // 30초 타임아웃
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      return response.data;
+    } catch (err: any) {
+      // Defensive retry: if backend reports that the requested session is already ended
+      // (400 with detail '이미 종료된 세션입니다.'), attempt to start a fresh session and retry once.
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail || '';
+      if (status === 400 && typeof detail === 'string' && detail.includes('이미 종료된 세션')) {
+        try {
+          const startResp = await this.startSession();
+          const newHistoryId = (startResp as any)?.history_id;
+          if (newHistoryId) {
+            const retryReq: any = { ...request, history_id: newHistoryId };
+            const retryResp = await apiClient.post<ChatbotHistoryResponse>('/chatbot/analyze', retryReq, {
+              timeout: 30000,
+              headers: { 'Content-Type': 'application/json' },
+            });
+            return retryResp.data;
+          }
+        } catch (retryErr) {
+          // ignore and fall through to rethrow original error
+          console.warn('analyze: retry after startSession failed', retryErr);
+        }
       }
-    );
-    return response.data;
+      throw err;
+    }
   }
 
   /** Get existing history items for a given history id */
@@ -104,10 +130,14 @@ class ChatbotApi {
 
   /** 서버가 생성한 환영 메시지 가져오기 */
   async getWelcome(influencer?: string): Promise<{ message: string; influencer?: string; has_previous: boolean; previous_summary?: string }>{
-    const params: any = {};
-    if (influencer) params.influencer_id = influencer;
-    const response = await apiClient.get(`/chatbot/welcome`, { params });
-    return response.data;
+    // Deprecated: welcome is handled via analyze({ question: '' }) now.
+    // Keep a thin compatibility layer that calls analyze if needed.
+    const body: any = { question: '' };
+    if (influencer) body.influencer_id = influencer;
+    const response = await apiClient.post('/chatbot/analyze', body, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return { message: response.data.items?.[0]?.answer || '', influencer: response.data.items?.[0]?.chat_res?.influencer || null, has_previous: false };
   }
 
   /** 등록된 인플루언서 프로필 목록을 가져옵니다. 실패 시 빈 배열을 반환합니다. */
@@ -127,8 +157,76 @@ class ChatbotApi {
   /** Get all messages for a given influencer across histories */
   async getMessagesForInfluencer(influencerId: string): Promise<InfluencerMessageItem[]> {
     try {
-      const response = await apiClient.get<InfluencerMessageItem[]>(`/chatbot/history/influencer/${encodeURIComponent(influencerId)}`);
-      return response.data;
+      const response = await apiClient.get<any>(`/chatbot/history/influencer/${encodeURIComponent(influencerId)}`);
+      const payload = response.data;
+      // backend may return { history_ids: [...], items: [...] } or directly an array
+      const rawItems: any[] = Array.isArray(payload) ? payload : (payload?.items || payload?.items || payload?.data || []);
+
+      const normalized = rawItems.map((m: any) => {
+        const out: InfluencerMessageItem = {
+          id: m.id || m.history_id || undefined,
+          history_id: m.history_id,
+          role: m.role,
+          text: m.text,
+          created_at: m.created_at,
+          raw: m.raw,
+        };
+
+        // Normalize raw: if it's a JSON string, try to parse it
+        try {
+          if (typeof out.raw === 'string') {
+            try {
+              out.raw = JSON.parse(out.raw);
+            } catch (e) {
+              // keep as string if parsing fails
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        // If raw wasn't present or parsing failed, try to parse the text (legacy records)
+        if ((!out.raw || typeof out.raw !== 'object') && out.text && typeof out.text === 'string') {
+          const t = out.text.trim();
+          if ((t.startsWith('{') || t.startsWith('['))) {
+            try {
+              const parsed = JSON.parse(t);
+              if (parsed && typeof parsed === 'object') {
+                out.raw = parsed;
+              }
+            } catch (e) {
+              // ignore
+            }
+          }
+        }
+
+        // Prefer influencer.styled_text -> raw.styled_text -> raw.description -> existing text
+        try {
+          let finalText = out.text || '';
+          const rawObj = out.raw && typeof out.raw === 'object' ? out.raw : null;
+          if (rawObj) {
+            // influencer may be nested
+            const infl = rawObj.influencer;
+            if (infl && typeof infl === 'object') {
+              const st = infl.styled_text || infl.description || infl?.model_output || null;
+              if (typeof st === 'string' && st.trim()) finalText = st;
+            }
+            if ((!finalText || finalText.trim() === '') && typeof rawObj.styled_text === 'string' && rawObj.styled_text.trim()) {
+              finalText = rawObj.styled_text;
+            }
+            if ((!finalText || finalText.trim() === '') && typeof rawObj.description === 'string' && rawObj.description.trim()) {
+              finalText = rawObj.description;
+            }
+          }
+          out.text = finalText;
+        } catch (e) {
+          // ignore
+        }
+
+        return out;
+      });
+
+      return normalized;
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('Failed to fetch messages for influencer', influencerId, e);
