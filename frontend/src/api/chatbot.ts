@@ -145,7 +145,10 @@ class ChatbotApi {
   /** Get influencer grouped histories (aggregated) */
   async getInfluencerHistories(): Promise<InfluencerHistoryItem[]> {
     try {
-      const response = await apiClient.get<InfluencerHistoryItem[]>(`/chatbot/history/influencers`);
+      // This endpoint may occasionally be slower; allow a longer timeout here
+      const response = await apiClient.get<InfluencerHistoryItem[]>(`/chatbot/history/influencers`, {
+        timeout: 60000,
+      });
       return response.data;
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -157,7 +160,10 @@ class ChatbotApi {
   /** Get all messages for a given influencer across histories */
   async getMessagesForInfluencer(influencerId: string): Promise<InfluencerMessageItem[]> {
     try {
-      const response = await apiClient.get<any>(`/chatbot/history/influencer/${encodeURIComponent(influencerId)}`);
+      // Fetch messages for an influencer — allow extra time for aggregation queries
+      const response = await apiClient.get<any>(`/chatbot/history/influencer/${encodeURIComponent(influencerId)}`, {
+        timeout: 60000,
+      });
       const payload = response.data;
       // backend may return { history_ids: [...], items: [...] } or directly an array
       const rawItems: any[] = Array.isArray(payload) ? payload : (payload?.items || payload?.items || payload?.data || []);
@@ -272,8 +278,12 @@ class ChatbotApi {
     report_data?: any;
   }>
   {
+    // Report generation can involve heavier processing (OpenAI calls, aggregation).
+    // Use an extended timeout for this specific request to avoid client-side aborts.
     const response = await apiClient.post(`/chatbot/report/save`, {
       history_id: historyId,
+    }, {
+      timeout: 60000,
     });
     return response.data;
   }

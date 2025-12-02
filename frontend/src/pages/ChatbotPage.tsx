@@ -98,6 +98,108 @@ const ChatbotPage: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
+  // Small helpers to reduce duplicated parsing/mapping logic
+  const parseRawChatRes = (raw: any): ChatResModel | undefined => {
+    if (!raw) return undefined;
+    try {
+      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (e) {
+      return undefined;
+    }
+  };
+
+  const mapInfluencerRespItems = (items: any[], inflId: string | number) => {
+    return (items || []).map((m: any, idx: number) => {
+      const isUser = (m.role || '').toString().toLowerCase() === 'user';
+      let chatRes = undefined as any;
+      try {
+        if (m.raw) chatRes = parseRawChatRes(m.raw);
+      } catch (e) {
+        chatRes = undefined;
+      }
+      return {
+        id: `infl-${inflId}-${idx}-${m.history_id || ''}`,
+        content: m.text || '',
+        isUser,
+        timestamp: m.created_at ? new Date(m.created_at) : new Date(),
+        chatRes,
+        questionId: undefined,
+      } as ChatMessage;
+    });
+  };
+
+  const historyItemsToChatMessages = (items: any[], historyId?: number) => {
+    const out: ChatMessage[] = [];
+    let baseTs = Date.now() - (items?.length || 0) * 2000;
+    for (const it of items || []) {
+      out.push({
+        id: `h-${historyId}-${it.question_id}-u`,
+        content: it.question || '',
+        isUser: true,
+        timestamp: new Date(baseTs),
+      });
+      baseTs += 1000;
+      out.push({
+        id: `h-${historyId}-${it.question_id}-b`,
+        content: it.answer || '',
+        isUser: false,
+        timestamp: new Date(baseTs),
+        chatRes: it.chat_res,
+      });
+      baseTs += 1000;
+    }
+    return out;
+  };
+
+  const analyzeItemsToBotMessages = (items: any[], historyId?: number) => {
+    const out: ChatMessage[] = [];
+    let baseTs = Date.now();
+    for (const it of items || []) {
+      out.push({
+        id: `w-${historyId}-${it.question_id || 0}-b`,
+        content: it.answer || (it.chat_res && it.chat_res.description) || '',
+        isUser: false,
+        timestamp: new Date(baseTs),
+        chatRes: it.chat_res,
+      });
+      baseTs += 1000;
+    }
+    return out;
+  };
+
+  const extractBotContentFromItem = (item: any) => {
+    let botContent = item.answer;
+    if (!botContent || botContent.trim() === '') {
+      botContent = item.chat_res?.description || '답변을 준비 중입니다...';
+    }
+    try {
+      const trimmed = (botContent || '').trim();
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') {
+          return parsed.description || parsed.answer || item.chat_res?.description || '답변을 준비 중입니다...';
+        }
+      }
+    } catch (e) {
+      // ignore parse errors and return raw content
+    }
+    return botContent;
+  };
+
+  // Scroll helper: scroll messages container to bottom only when it overflows
+  const scrollToBottom = (smooth: boolean = true) => {
+    try {
+      const container = messagesContainerRef.current as HTMLDivElement | null;
+      if (!container) return;
+      // Only programmatically scroll when content is larger than the container
+      if (container.scrollHeight > container.clientHeight) {
+        container.scrollTo({ top: container.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
   const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<any | null>(null);
   const autoCloseRef = useRef<number | null>(null);
@@ -136,26 +238,7 @@ const ChatbotPage: React.FC = () => {
           historyIds = (resp as any).history_ids || [];
         }
 
-        const loaded: ChatMessage[] = items.map((m: any, idx: number) => {
-          const isUser = (m.role || '').toString().toLowerCase() === 'user';
-          let chatRes = undefined;
-          try {
-            if (m.raw) {
-              const parsed = typeof m.raw === 'string' ? JSON.parse(m.raw) : m.raw;
-              chatRes = parsed;
-            }
-          } catch (e) {
-            chatRes = undefined;
-          }
-          return {
-            id: `infl-${inflId}-${idx}-${m.history_id || ''}`,
-            content: m.text || '',
-            isUser,
-            timestamp: m.created_at ? new Date(m.created_at) : new Date(),
-            chatRes,
-            questionId: undefined,
-          } as ChatMessage;
-        });
+        const loaded: ChatMessage[] = mapInfluencerRespItems(items, inflId);
 
         if (!mounted) return;
 
@@ -286,56 +369,43 @@ const ChatbotPage: React.FC = () => {
               const hist = await chatbotApi.getHistory(res.history_id);
               if (hist && Array.isArray(hist.items) && hist.items.length > 0) {
                 // convert items to ChatMessage array (chronological)
-                const loaded: ChatMessage[] = [];
-                let baseTs = Date.now() - hist.items.length * 2000;
-                for (const it of hist.items) {
-                  const userMsg: ChatMessage = {
-                    id: `h-${res.history_id}-${it.question_id}-u`,
-                    content: it.question || '',
-                    isUser: true,
-                    timestamp: new Date(baseTs),
-                  };
-                  loaded.push(userMsg);
-                  baseTs += 1000;
-                  const botMsg: ChatMessage = {
-                    id: `h-${res.history_id}-${it.question_id}-b`,
-                    content: it.answer || '',
-                    isUser: false,
-                    timestamp: new Date(baseTs),
-                    chatRes: it.chat_res,
-                  };
-                  loaded.push(botMsg);
-                  baseTs += 1000;
-                }
+                const loaded: ChatMessage[] = historyItemsToChatMessages(hist.items, res.history_id);
                 // merge with existing welcome message if present
                 setMessages(prev => {
                   // if prev already has welcome at index 0, keep it, otherwise prepend nothing
                   if (prev.length > 0 && prev[0]?.id === 'welcome') return [prev[0], ...loaded];
                   return loaded;
                 });
+                // ensure we scroll to the bottom after messages render
+                setTimeout(() => scrollToBottom(false), 50);
               }
             } catch (e) {
               console.warn('히스토리 불러오기 실패:', e);
+            }
+            // Ensure a welcome message is present even when reusing an existing session.
+            // Call analyze({question: ''}) to get the current welcome text (may vary by influencer/persona).
+            try {
+              const welcomeResp2 = await analyze({ question: '', history_id: res.history_id });
+              if (welcomeResp2 && Array.isArray(welcomeResp2.items) && welcomeResp2.items.length > 0) {
+                const wmsgs: ChatMessage[] = analyzeItemsToBotMessages(welcomeResp2.items, res.history_id);
+                // Prepend welcome only if the first message isn't already a welcome
+                setMessages(prev => {
+                  if (prev.length > 0 && prev[0] && prev[0].id && String(prev[0].id).startsWith('w-')) return prev;
+                  return [...wmsgs, ...prev];
+                });
+                setTimeout(() => scrollToBottom(false), 50);
+              }
+            } catch (e) {
+              // ignore welcome fetch failures for reused sessions
             }
           }
           // If this is a fresh session (not reused), request the welcome via analyze
           if (!res.reused) {
             try {
               const welcomeResp = await analyze({ question: '', history_id: res.history_id });
-              const loaded: ChatMessage[] = [];
+              let loaded: ChatMessage[] = [];
               if (welcomeResp && Array.isArray(welcomeResp.items) && welcomeResp.items.length > 0) {
-                let baseTs = Date.now();
-                for (const it of welcomeResp.items) {
-                  const botMsg: ChatMessage = {
-                    id: `w-${res.history_id}-${it.question_id || 0}-b`,
-                    content: it.answer || (it.chat_res && it.chat_res.description) || '',
-                    isUser: false,
-                    timestamp: new Date(baseTs),
-                    chatRes: it.chat_res,
-                  };
-                  loaded.push(botMsg);
-                  baseTs += 1000;
-                }
+                loaded = analyzeItemsToBotMessages(welcomeResp.items, res.history_id);
               } else {
                 // Fallback: ensure a welcome message is shown even if backend returns empty
                 const fallbackText = '안녕하세요! 퍼스널컬러 AI 컨설턴트입니다. 궁금한 점을 알려주시면 도와드릴게요.';
@@ -349,6 +419,8 @@ const ChatbotPage: React.FC = () => {
               }
 
               setMessages(prev => (prev.length > 0 ? [...prev, ...loaded] : loaded));
+              // after inserting welcome for fresh session, scroll to bottom immediately
+              setTimeout(() => scrollToBottom(false), 50);
             } catch (e) {
               console.warn('환영 메시지 로드 실패:', e);
               // On error, still show a local fallback welcome so the UI isn't blank
@@ -484,33 +556,7 @@ const ChatbotPage: React.FC = () => {
       console.log('📋 Latest Item:', latestItem);
 
       if (latestItem) {
-        // answer 필드 안전 처리 (더 견고한 JSON 감지/파싱)
-        let botContent = latestItem.answer;
-
-        console.log('🔤 원본 answer:', botContent);
-        console.log('🎯 chat_res:', latestItem.chat_res);
-
-        // Prefer chat_res.description when answer is empty
-        if (!botContent || botContent.trim() === '') {
-          botContent = latestItem.chat_res?.description || '답변을 준비 중입니다...';
-          console.log('🔄 대체된 content (빈 answer 대체):', botContent);
-        }
-
-        // Attempt to parse JSON robustly: trim, then try JSON.parse regardless of surrounding whitespace/newlines
-        try {
-          const trimmed = (botContent || '').trim();
-          if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-            const parsed = JSON.parse(trimmed);
-            if (parsed && typeof parsed === 'object') {
-              // Prefer explicit description field, then answer field
-              botContent = parsed.description || parsed.answer || latestItem.chat_res?.description || '답변을 준비 중입니다...';
-              console.log('📖 JSON 파싱 후:', botContent);
-            }
-          }
-        } catch (e) {
-          // JSON 파싱 실패 시 그대로 사용 (이미 handled by chat_res fallback)
-          console.log('❌ JSON 파싱 실패, 원본 사용', e);
-        }
+        const botContent = extractBotContentFromItem(latestItem);
 
         const botMessage: ChatMessage = {
           id: (Date.now() + 1).toString(),
@@ -1518,9 +1564,11 @@ function isDiagnosisBubble(msg?: any): boolean {
           {/* 메시지 목록 */}
           <div
             ref={messagesContainerRef}
-            className="flex-1 overflow-y-auto mb-3 p-3 bg-gray-50 rounded-lg"
+            className="flex-1 overflow-y-auto mb-3 p-3 bg-gray-50 rounded-lg flex flex-col"
             style={{ minHeight: '400px', paddingTop: '30px', position: 'relative' }}
           >
+            {/* spacer pushes messages to bottom when there's extra space, but collapses when content overflows */}
+            <div style={{ flex: 1 }} />
             {groupedSections.map((sec) => (
               <div key={`sec-${sec.key}`} className="mb-3">
                 <div className="flex items-center justify-center my-4">
