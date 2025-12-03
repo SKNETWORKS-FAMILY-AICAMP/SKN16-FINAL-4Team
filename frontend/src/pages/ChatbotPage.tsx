@@ -1,14 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { formatKoreanDate } from '@/utils/dateUtils';
-import {
-  Card,
-  Input,
-  Button,
-  Typography,
-  message,
-  Avatar,
-  Tag,
-} from 'antd';
+import * as antd from 'antd';
 import {
   SendOutlined,
   RobotOutlined,
@@ -31,9 +23,10 @@ import type { SurveyResultDetail } from '@/api/survey';
 import AnimatedEmoji from '@/components/AnimatedEmoji';
 import { Loading } from '@/components';
 import InfluencerImage from '@/components/InfluencerImage';
+import type { InfluencerHistoryItem } from '@/api/chatbot';
 
-const { Title, Text } = Typography;
-const { TextArea } = Input;
+const { Title, Text } = antd.Typography;
+const { TextArea } = antd.Input;
 
 interface ChatMessage {
   id: string;
@@ -85,6 +78,7 @@ const ChatbotPage: React.FC = () => {
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const isBusy = isTyping || isAnalyzing || isDiagnosing;
+
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [isLeavingPage, setIsLeavingPage] = useState(false);
   const [currentHistoryId, setCurrentHistoryId] = useState<number | undefined>(
@@ -95,6 +89,7 @@ const ChatbotPage: React.FC = () => {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false); // 진단 상세보기 모달
   const [selectedResult, setSelectedResult] =
     useState<SurveyResultDetail | null>(null); // 선택된 진단 결과
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -201,7 +196,7 @@ const ChatbotPage: React.FC = () => {
   };
 
   const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
-  const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<any | null>(null);
+  const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<InfluencerHistoryItem | null>(null);
   const autoCloseRef = useRef<number | null>(null);
 
   const location = useLocation();
@@ -225,7 +220,8 @@ const ChatbotPage: React.FC = () => {
     let mounted = true;
     (async () => {
       try {
-        const inflId = activeInfluencerProfile.id || activeInfluencerProfile.name;
+        const inflId = activeInfluencerProfile.influencer_id || activeInfluencerProfile.influencer_name;
+
         if (!inflId) return;
         const resp = await fetchMessagesForInfluencer(inflId);
         // resp may be either an array of message items or an object { history_ids, items }
@@ -262,7 +258,7 @@ const ChatbotPage: React.FC = () => {
     };
     // only depend on influencer id to avoid re-running when function refs or profile objects change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeInfluencerProfile?.id]);
+  }, [activeInfluencerProfile?.influencer_id]);
 
   // 대화가 있는지 확인하는 함수
   const hasConversation = () => messages.length > 1;
@@ -309,18 +305,18 @@ const ChatbotPage: React.FC = () => {
     if (analyzeError) {
       try {
         const errMsg = (analyzeError?.response?.data?.detail as string) || analyzeError?.message || '분석 중 오류가 발생했습니다.';
-        message.error(errMsg);
+        antd.message.error(errMsg);
       } catch (e) {
-        message.error('분석 중 오류가 발생했습니다.');
+        antd.message.error('분석 중 오류가 발생했습니다.');
       }
     }
 
     if (diagnoseError) {
       try {
         const errMsg = (diagnoseError?.response?.data?.detail as string) || diagnoseError?.message || '진단 저장 중 오류가 발생했습니다.';
-        message.error(errMsg);
+        antd.message.error(errMsg);
       } catch (e) {
-        message.error('진단 저장 중 오류가 발생했습니다.');
+        antd.message.error('진단 저장 중 오류가 발생했습니다.');
       }
     }
   }, [analyzeError, diagnoseError]);
@@ -352,7 +348,7 @@ const ChatbotPage: React.FC = () => {
       try {
         const params = new URLSearchParams((location as any).search || window.location.search);
         const inflIdFromQuery = params.get('infl_id');
-        const inflNameFromState = (location as any).state?.influencerProfile?.name || activeInfluencerProfile?.name;
+        const inflNameFromState = (location as any).state?.influencerProfile?.influencer_name || activeInfluencerProfile?.influencer_name;
         // prefer explicit query param infl_id (slug) if provided
         const startWith = inflIdFromQuery || inflNameFromState;
         const res = await startSession(startWith as any);
@@ -470,7 +466,7 @@ const ChatbotPage: React.FC = () => {
     const lastBotMessage = messages.filter(msg => !msg.isUser && msg.chatRes).pop();
 
     if (!lastBotMessage || !lastBotMessage.chatRes) {
-      message.warning('진단 데이터를 찾을 수 없습니다.');
+      antd.message.warning('진단 데이터를 찾을 수 없습니다.');
       return;
     }
 
@@ -641,7 +637,7 @@ const ChatbotPage: React.FC = () => {
                 setSelectedResult(previewResultOuter);
                 // 자동으로 모달을 열지 않고, 사용자에게 준비되었음을 알립니다.
                 try {
-                  message.success('진단이 완료되었습니다. 아래의 "🎨 진단 결과" 버튼을 눌러 확인하세요.');
+                  antd.message.success('진단이 완료되었습니다. 아래의 "🎨 진단 결과" 버튼을 눌러 확인하세요.');
                 } catch (e) {
                   console.warn('토스트 알림 표시 실패', e);
                 }
@@ -785,7 +781,7 @@ const ChatbotPage: React.FC = () => {
                         .map((color: string, index: number) => {
                           const isWhite = color.toLowerCase() === '#ffffff';
                           return (
-                            <Tag
+                            <antd.Tag
                               key={index}
                               style={
                                 isWhite
@@ -813,7 +809,7 @@ const ChatbotPage: React.FC = () => {
                               }
                             >
                               {color}
-                            </Tag>
+                            </antd.Tag>
                           );
                         })}
                     </div>
@@ -924,7 +920,7 @@ const ChatbotPage: React.FC = () => {
       };
 
       setMessages(prev => [...prev, errorMessage]);
-      message.error(errorTitle);
+      antd.message.error(errorTitle);
     } finally {
       setIsTyping(false);
     }
@@ -967,15 +963,30 @@ const ChatbotPage: React.FC = () => {
     }
   };
 
-  // 피드백 선택 처리
-  const handleFeedback = async (isPositive: boolean) => {
+  // 피드백 선택 처리: rating은 1..5 숫자
+  const handleFeedback = async (rating: number) => {
     try {
-      await submitFeedback({ historyId: currentHistoryId, isPositive });
+      // Ensure we have a historyId. If not, try to obtain or start a session.
+      let hid = currentHistoryId;
+      if (!hid) {
+        try {
+          const startRes = await startSession();
+          hid = startRes?.history_id;
+          console.log('handleFeedback: started/retrieved session, history_id=', hid);
+        } catch (e) {
+          console.warn('handleFeedback: startSession failed', e);
+        }
+      }
+
+      if (!hid) throw new Error('historyId is required to submit feedback');
+
+      // send numeric rating to backend; backend will compute legacy feedback string as needed
+      await submitFeedback({ historyId: hid, rating });
 
       // 성공 시 UI 처리
       setIsFeedbackModalOpen(false);
       setIsLeavingPage(true);
-      message.success(`피드백 감사합니다!`, 2);
+      antd.message.success(`피드백 감사합니다!`, 2);
 
       if (blocker.state === 'blocked') {
         blocker.proceed();
@@ -984,7 +995,7 @@ const ChatbotPage: React.FC = () => {
       }
     } catch (error) {
       console.error('피드백 제출 중 오류:', error);
-      message.error('피드백 제출 중 오류가 발생했습니다.');
+      antd.message.error('피드백 제출 중 오류가 발생했습니다.');
 
       // 오류 시에도 플래그 초기화
       setIsFeedbackModalOpen(false);
@@ -1094,7 +1105,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                 user?.id
               );
               return (
-                <Avatar
+                <antd.Avatar
                   className={`!ml-3 ${avatarConfig.className}`}
                   style={avatarConfig.style}
                 >
@@ -1105,7 +1116,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                   ) : (
                     avatarConfig.content
                   )}
-                </Avatar>
+                </antd.Avatar>
               );
             })()
             ) : (
@@ -1144,12 +1155,12 @@ function isDiagnosisBubble(msg?: any): boolean {
               const avatarProfile = activeInfluencerProfile || inflFromMsg;
 
               if (avatarProfile) {
-                const inflName = (((avatarProfile as any)?.name || '') as string).toLowerCase();
+                const inflName = ((avatarProfile?.influencer_name || '') as string).toLowerCase();
                 const activeName = typeof activeInfluencerProfile === 'string'
                   ? (activeInfluencerProfile as string).toLowerCase()
-                  : (((activeInfluencerProfile as any)?.name || '') as string).toLowerCase();
-                const activeId = (activeInfluencerProfile && (activeInfluencerProfile as any).id) ?? null;
-                const inflId = (avatarProfile && (avatarProfile as any).id) ?? null;
+                  : ((activeInfluencerProfile?.influencer_name || '') as string).toLowerCase();
+                const activeId = (activeInfluencerProfile && activeInfluencerProfile.influencer_id) ?? null;
+                const inflId = (avatarProfile && avatarProfile.influencer_id) ?? null;
                 const isActive = (
                   activeId != null && inflId != null
                     ? String(activeId) === String(inflId)
@@ -1167,23 +1178,23 @@ function isDiagnosisBubble(msg?: any): boolean {
                       setActiveInfluencerProfile(avatarProfile);
                       setInfluencerModalOpen(true);
                     }}
-                    aria-label={`Open profile ${(avatarProfile as any).name}`}
+                    aria-label={`Open profile ${avatarProfile.influencer_name} details`}
                     role="button"
                     tabIndex={0}
                     style={{ display: 'inline-flex', alignItems: 'center' }}
                   >
-                    <Avatar
+                    <antd.Avatar
                       size={50}
                       style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff' }}
                     >
-                      <InfluencerImage profile={avatarProfile} name={(avatarProfile as any).name} emoji={(avatarProfile as any).emoji} />
-                    </Avatar>
+                      <InfluencerImage profile={avatarProfile.profile} name={avatarProfile.influencer_name} emoji={avatarProfile.emoji} />
+                    </antd.Avatar>
                   </div>
                 );
               }
 
               return (
-                <Avatar
+                <antd.Avatar
                   icon={<RobotOutlined />}
                   style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
                   className="!mr-3"
@@ -1398,14 +1409,14 @@ function isDiagnosisBubble(msg?: any): boolean {
                       </Text>
                     )}
                     <div className="mt-3">
-                      <Button
+                      <antd.Button
                         type="primary"
                         size="small"
                         onClick={handleViewDiagnosisDetail}
                         className="bg-purple-500 hover:bg-purple-600 border-purple-500 hover:border-purple-600"
                       >
                         📊 상세보기
-                      </Button>
+                      </antd.Button>
                     </div>
                   </div>
                 ) : (
@@ -1418,7 +1429,7 @@ function isDiagnosisBubble(msg?: any): boolean {
 
                 <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
                   {shouldShowReportButton(msg) && (
-                    <Button
+                    <antd.Button
                       type="default"
                       size="small"
                       onClick={() => {
@@ -1436,7 +1447,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                       className="border-purple-300 text-purple-600 hover:border-purple-500 hover:text-purple-700"
                     >
                       🎨 진단 결과
-                    </Button>
+                    </antd.Button>
                   )}
                   {formatKoreanDate(msg.timestamp, true)}
                 </div>
@@ -1461,7 +1472,7 @@ function isDiagnosisBubble(msg?: any): boolean {
   if (!user) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-blue-50 flex items-center justify-center">
-        <Card
+        <antd.Card
           className="shadow-xl border-0 max-w-md"
           style={{ borderRadius: '16px' }}
         >
@@ -1469,12 +1480,12 @@ function isDiagnosisBubble(msg?: any): boolean {
             <Title level={3}>로그인이 필요합니다</Title>
             <Text>챗봇을 사용하려면 로그인해주세요.</Text>
             <div className="mt-6">
-              <Button type="primary" onClick={() => navigate('/login')}>
+              <antd.Button type="primary" onClick={() => navigate('/login')}>
                 로그인
-              </Button>
+              </antd.Button>
             </div>
           </div>
-        </Card>
+        </antd.Card>
       </div>
     );
   }
@@ -1527,7 +1538,7 @@ function isDiagnosisBubble(msg?: any): boolean {
         {/* 헤더 */}
         <div className="flex items-center justify-between mb-4 flex-shrink-0">
           <div className="flex items-center">
-            <Button
+            <antd.Button
               type="text"
               icon={<ArrowLeftOutlined />}
               onClick={handleGoBack}
@@ -1543,13 +1554,13 @@ function isDiagnosisBubble(msg?: any): boolean {
               </Text>
             </div>
           </div>
-          <Button type="default" onClick={() => navigate('/mypage')}>
+          <antd.Button type="default" onClick={() => navigate('/mypage')}>
             진단 기록 보기
-          </Button>
+          </antd.Button>
         </div>
 
         {/* 채팅 영역 */}
-        <Card
+        <antd.Card
           className="shadow-lg border-0 flex-1 flex flex-col"
           style={{ borderRadius: '16px', minHeight: 0 }}
           styles={{
@@ -1626,18 +1637,18 @@ function isDiagnosisBubble(msg?: any): boolean {
                                 setInfluencerModalOpen(true);
                               }}
                             >
-                              <Avatar
+                              <antd.Avatar
                                 size={50}
                                 style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff' }}
                               >
-                                <InfluencerImage profile={found} name={(found as any).name} emoji={(found as any).emoji} />
-                              </Avatar>
+                                <InfluencerImage profile={found.profile} name={(found as any).name} emoji={(found as any).emoji} />
+                              </antd.Avatar>
                             </div>
                           );
                         }
 
                         return (
-                          <Avatar
+                          <antd.Avatar
                             icon={<RobotOutlined />}
                             style={{ backgroundColor: '#8b5cf6', flexShrink: 0 }}
                           />
@@ -1667,7 +1678,7 @@ function isDiagnosisBubble(msg?: any): boolean {
             </Text>
             <div className="flex flex-wrap gap-1">
               {sampleQuestions.map((item, index) => (
-                <Button
+                <antd.Button
                   key={index}
                   size="small"
                   onClick={() => handleSampleQuestion(item.question)}
@@ -1675,7 +1686,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                   style={{ fontSize: '11px' }}
                 >
                   {item.label}
-                </Button>
+                </antd.Button>
               ))}
             </div>
           </div>
@@ -1699,7 +1710,7 @@ function isDiagnosisBubble(msg?: any): boolean {
               disabled={isBusy}
               style={{ fontSize: '14px' }}
             />
-            <Button
+            <antd.Button
               type="primary"
               icon={<SendOutlined />}
               onClick={() => {
@@ -1711,9 +1722,9 @@ function isDiagnosisBubble(msg?: any): boolean {
               className="h-auto"
             >
               전송
-            </Button>
+            </antd.Button>
           </div>
-        </Card>
+        </antd.Card>
 
         {/* 피드백 모달 */}
         <FeedbackModal
@@ -1763,7 +1774,7 @@ function isDiagnosisBubble(msg?: any): boolean {
               autoCloseRef.current = null;
             }
           }}
-          profile={activeInfluencerProfile}
+          influencerInfo={activeInfluencerProfile}
         />
       </div>
     </div>

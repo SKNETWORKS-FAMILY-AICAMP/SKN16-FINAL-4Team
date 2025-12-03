@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from typing import List
 from routers.user_router import get_current_user
 import models
 import json
-from schemas import UserFeedbackRequest, UserFeedbackResponse
+from schemas import UserFeedbackRequest, UserFeedbackResponse, InfluencerRating
 from utils.shared import get_db, client
 
 router = APIRouter(prefix="/api/feedback", tags=["Feedback"])
@@ -193,10 +195,19 @@ def submit_user_feedback(
     existing = db.query(models.UserFeedback).filter_by(history_id=req.history_id, user_id=current_user.id).first()
     if existing:
         raise HTTPException(status_code=400, detail="이미 제출된 피드백입니다.")
+    # Determine legacy feedback string from rating if not provided
+    feedback_str = req.feedback
+    if feedback_str is None and req.rating is not None:
+        feedback_str = "좋다" if req.rating >= 4 else "싫다"
+    # As a safety, ensure we have at least a feedback string (schemas should enforce one present)
+    if feedback_str is None:
+        raise HTTPException(status_code=400, detail="feedback 또는 rating 필요")
+
     user_feedback = models.UserFeedback(
         history_id=req.history_id,
         user_id=current_user.id,
-        feedback=req.feedback
+        feedback=feedback_str,
+        rating=req.rating
     )
     db.add(user_feedback)
     db.commit()
@@ -205,7 +216,8 @@ def submit_user_feedback(
         user_feedback_id=user_feedback.id,
         history_id=user_feedback.history_id,
         user_id=user_feedback.user_id,
-        feedback=user_feedback.feedback
+        feedback=user_feedback.feedback,
+        rating=user_feedback.rating
     )
 
 @router.get("/user_feedback/{history_id}", response_model=UserFeedbackResponse)
@@ -223,5 +235,40 @@ def get_user_feedback(
         user_feedback_id=user_feedback.id,
         history_id=user_feedback.history_id,
         user_id=user_feedback.user_id,
-        feedback=user_feedback.feedback
+        feedback=user_feedback.feedback,
+        rating=user_feedback.rating
     )
+
+
+@router.get("/influencer/ratings", response_model=List[InfluencerRating])
+def get_influencer_ratings(db: Session = Depends(get_db)):
+    """Aggregate average rating and count per influencer from user feedbacks.
+
+    Joins ChatHistory -> UserFeedback and groups by influencer id/name. Only
+    includes entries where numeric rating is present.
+    """
+    q = (
+        db.query(
+            models.ChatHistory.influencer_id,
+            models.ChatHistory.influencer_name,
+            func.avg(models.UserFeedback.rating).label("average_rating"),
+            func.count(models.UserFeedback.id).label("rating_count"),
+        )
+        .join(models.UserFeedback, models.ChatHistory.id == models.UserFeedback.history_id)
+        .filter(models.UserFeedback.rating != None)
+        .group_by(models.ChatHistory.influencer_id, models.ChatHistory.influencer_name)
+        .order_by(func.count(models.UserFeedback.id).desc())
+    )
+
+    results = []
+    for row in q.all():
+        results.append(
+            InfluencerRating(
+                influencer_id=row.influencer_id,
+                influencer_name=row.influencer_name,
+                average_rating=float(row.average_rating) if row.average_rating is not None else None,
+                rating_count=int(row.rating_count),
+            )
+        )
+
+    return results

@@ -199,10 +199,28 @@ class ReportResponse(BaseModel):
 
 class UserFeedbackRequest(BaseModel):
     history_id: int
-    feedback: str  # "좋다" 또는 "싫다"
+    feedback: Optional[str] = None  # "좋다" 또는 "싫다" (legacy)
+    rating: Optional[int] = None  # Numeric rating 1..5
+
+    @model_validator(mode='after')
+    def validate_feedback_or_rating(self):
+        if (self.feedback is None or self.feedback == "") and self.rating is None:
+            raise ValueError('feedback 또는 rating 중 하나는 반드시 제공되어야 합니다.')
+        if self.rating is not None:
+            if not (1 <= self.rating <= 5):
+                raise ValueError('rating은 1에서 5 사이여야 합니다.')
+        return self
 
 class UserFeedbackResponse(BaseModel):
     user_feedback_id: int
     history_id: int
     user_id: int
-    feedback: str
+    feedback: Optional[str] = None
+    rating: Optional[int] = None
+
+
+class InfluencerRating(BaseModel):
+    influencer_id: Optional[str] = None
+    influencer_name: Optional[str] = None
+    average_rating: Optional[float] = None
+    rating_count: int = 0

@@ -7,7 +7,10 @@ import { message } from 'antd';
 
 type FeedbackPayload = {
   historyId?: number | undefined;
-  isPositive: boolean;
+  // Prefer sending numeric rating (1..5). For backward compatibility, callers may still
+  // provide `isPositive` which will be converted to a legacy feedback string.
+  isPositive?: boolean;
+  rating?: number;
 };
 
 type UseChatbotOptions = {
@@ -76,8 +79,10 @@ export function useChatbot(options?: UseChatbotOptions) {
   // ------------------ feedback mutation ------------------
   const feedbackMutation = useMutation({
     mutationFn: async (payload: FeedbackPayload) => {
-      const { historyId, isPositive } = payload;
-      const feedbackType = isPositive ? '좋다' : '싫다';
+      const { historyId, isPositive, rating } = payload;
+      // If a numeric rating is provided, prefer it. Otherwise fall back to legacy boolean.
+      const useRating = typeof rating === 'number' ? rating : undefined;
+      const feedbackType = useRating === undefined ? (isPositive ? '좋다' : '싫다') : undefined;
 
       // try to end session but do not fail on end errors
       if (historyId) {
@@ -89,6 +94,10 @@ export function useChatbot(options?: UseChatbotOptions) {
       }
 
       if (historyId) {
+        // send rating when available; otherwise send legacy feedback string
+        if (useRating !== undefined) {
+          return await userFeedbackApi.submitUserFeedback({ history_id: historyId, rating: useRating, feedback: feedbackType });
+        }
         return await userFeedbackApi.submitUserFeedback({ history_id: historyId, feedback: feedbackType });
       }
 
