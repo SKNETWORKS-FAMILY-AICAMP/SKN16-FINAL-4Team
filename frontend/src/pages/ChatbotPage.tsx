@@ -13,6 +13,8 @@ import { useSurveyResultsLive } from '@/hooks/useSurvey';
 import useChatbot from '@/hooks/useChatbot';
 import type { ChatResModel } from '@/api/chatbot';
 import { chatbotApi } from '@/api/chatbot';
+import { analyzeImage } from '@/api/image';
+import ImageUploader from '@/components/ImageUploader';
 import localInfluencers from '@/data/influencers';
 import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
 import { normalizePersonalColor } from '@/utils/personalColorUtils';
@@ -198,7 +200,6 @@ const ChatbotPage: React.FC = () => {
   const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
   const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<InfluencerHistoryItem | null>(null);
   const autoCloseRef = useRef<number | null>(null);
-
   const location = useLocation();
 
   // 라우터 state로 전달된 인플루언서 프로필(예: MyPage에서 클릭으로 전달)을 수신
@@ -1671,6 +1672,44 @@ function isDiagnosisBubble(msg?: any): boolean {
 
           {/* 샘플 질문 */}
           <div className="mb-2 flex-shrink-0">
+            {/* 이미지 업로드 UI (Ant Design Upload, picture-card 스타일) */}
+            <div className="mb-2">
+              {/* 업로드 UI를 분리된 컴포넌트로 대체하여 ChatbotPage 크기 축소 */}
+              <React.Suspense fallback={<div>로딩 중...</div>}>
+                {/* ImageUploader는 uploadImageToS3를 호출하고 업로드 완료 시 onUpload 콜백을 호출합니다. */}
+                {/* onUpload 내부에서 ChatbotPage가 분석 요청 및 메시지 삽입을 수행합니다. */}
+                <ImageUploader onUpload={async (up, file) => {
+                  try {
+                    // 업로드 후 ChatbotPage 기존 분석 흐름 실행
+                    const s3Key = up.key;
+                    antd.message.success('이미지 업로드 완료, 분석을 시작합니다.');
+
+                    const imgRes = await analyzeImage(s3Key, currentHistoryId, activeInfluencerProfile?.influencer_name, user?.nickname);
+
+                    const primary = imgRes?.image_result?.primary_tone || imgRes?.image_result?.primary || '';
+                    const sub = imgRes?.image_result?.sub_tone || imgRes?.image_result?.sub || '';
+
+                    const userMsg: ChatMessage = { id: `img-u-${Date.now()}`, content: `이미지 업로드: ${file.name}`, isUser: true, timestamp: new Date() };
+                    setMessages(prev => [...prev, userMsg]);
+
+                    try {
+                      const hint = `이미지에서 감지된 퍼스널컬러는 ${primary}${sub ? ' / ' + sub : ''} 입니다. 이 정보를 바탕으로 추가 질문을 해주세요.`;
+                      const resp = await chatbotApi.analyze({ question: hint, history_id: currentHistoryId });
+                      setCurrentHistoryId(resp.history_id);
+                      const botMsgs = analyzeItemsToBotMessages(resp.items || [], resp.history_id);
+                      setMessages(prev => [...prev, ...botMsgs]);
+                    } catch (e) {
+                      const summary = (imgRes?.orchestrator?.color && (imgRes.orchestrator.color.parsed?.description || imgRes.orchestrator.color.parsed?.detected_color_hints)) || (imgRes?.orchestrator?.emotion && imgRes.orchestrator.emotion.parsed?.description) || '이미지 분석 결과를 불러오지 못했습니다.';
+                      const botMsg: ChatMessage = { id: `img-b-${Date.now()}`, content: `이미지 분석 요약: ${primary}${sub ? ' / ' + sub : ''}\n${typeof summary === 'string' ? summary : JSON.stringify(summary)}`, isUser: false, timestamp: new Date() };
+                      setMessages(prev => [...prev, botMsg]);
+                    }
+                  } catch (err: any) {
+                    console.error('이미지 업로드/분석 오류', err);
+                    antd.message.error('이미지 업로드 또는 분석 중 오류가 발생했습니다.');
+                  }
+                }} />
+              </React.Suspense>
+            </div>
             <Text strong className="!text-gray-700 block mb-1 text-xs">
               {!surveyResults || surveyResults.length === 0
                 ? '💡 이런 대화로 시작해보세요!'

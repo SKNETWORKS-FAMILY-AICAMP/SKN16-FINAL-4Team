@@ -7,7 +7,7 @@
 """
 import cv2
 import numpy as np
-from personal_color_classifier import PersonalColorClassifier
+from image_modeling.personal_color_classifier import PersonalColorClassifier
 
 
 class RobustLandmarkClassifier(PersonalColorClassifier):

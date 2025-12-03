@@ -46,6 +46,7 @@ pytest-asyncio
 
 # Other utilities
 pillow>=10.0.0
+boto3>=1.28.0
 
 # Platform-specific packages
 pywin32>=310; sys_platform == "win32"
