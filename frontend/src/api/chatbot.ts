@@ -50,6 +50,7 @@ export interface InfluencerHistoryItem {
   total_sessions?: number;
   total_messages?: number;
   last_activity?: string;
+  average_rating?: number;
   profile?: InfluencerProfile;
 }
 

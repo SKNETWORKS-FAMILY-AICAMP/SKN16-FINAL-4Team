@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, Body, Query
 from openai import OpenAI
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import datetime, timezone
 import models
 from routers.user_router import get_current_user
@@ -1643,6 +1644,22 @@ def get_influencer_histories(current_user: models.User = Depends(get_current_use
                 'total_messages': g['total_messages'],
                 'last_activity': last_activity_val,
             }
+
+            # Aggregate numeric ratings for this influencer across its histories
+            try:
+                avg_cnt = db.query(
+                    func.avg(models.UserFeedback.rating),
+                    func.count(models.UserFeedback.id)
+                ).filter(
+                    models.UserFeedback.history_id.in_(g['histories']),
+                    models.UserFeedback.rating != None
+                ).one()
+                avg_val, cnt_val = avg_cnt[0], avg_cnt[1]
+                item['average_rating'] = float(avg_val) if avg_val is not None else None
+                item['rating_count'] = int(cnt_val or 0)
+            except Exception:
+                item['average_rating'] = None
+                item['rating_count'] = 0
 
             # Ensure profile object exists and attach short_description inside profile
             try:

@@ -79,6 +79,8 @@ class UserFeedback(Base):
     history_id = Column(Integer, ForeignKey("chat_history.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("user.id"), nullable=False)
     feedback = Column(String(10))  # "좋다" or "싫다"
+    # Numeric rating from frontend (1..5). Nullable for backward compatibility.
+    rating = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     history = relationship("ChatHistory", back_populates="user_feedback")
 

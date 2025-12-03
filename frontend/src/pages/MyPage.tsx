@@ -81,9 +81,9 @@ const InfluencerList: React.FC = () => {
   };
 
   const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [activeProfile, setActiveProfile] = useState<any | null>(null);
+  const [activeProfile, setActiveProfile] = useState<InfluencerHistoryItem | null>(null);
 
-  const openProfile = (p: any) => {
+  const openProfile = (p: InfluencerHistoryItem): void => {
     setActiveProfile(p);
     setProfileModalOpen(true);
   };
@@ -99,7 +99,7 @@ const InfluencerList: React.FC = () => {
 
           return (
             <div key={idx} className="flex items-center p-3 bg-white rounded shadow-sm w-full">
-              <div role="button" tabIndex={0} onClick={() => openProfile(influencer.profile)}>
+              <div role="button" tabIndex={0} onClick={() => openProfile(influencer)}>
                 <Avatar
                   size={64}
                   src={imageSrc}
@@ -135,7 +135,7 @@ const InfluencerList: React.FC = () => {
                   block
                   type="primary"
                   size="small"
-                  onClick={() => navigate(`/chatbot?infl_id=${slug || encodeURIComponent(influencer.profile?.name || '')}`, { state: { influencerProfile: influencer.profile } })}
+                  onClick={() => navigate(`/chatbot?infl_id=${slug || encodeURIComponent(influencer.influencer_id || '')}`, { state: { influencerProfile: influencer } })}
                 >
                   상담하기
                 </Button>
@@ -144,11 +144,10 @@ const InfluencerList: React.FC = () => {
           );
         })
       )}
-
       <InfluencerProfileModal
         open={profileModalOpen}
         onCancel={() => setProfileModalOpen(false)}
-        profile={activeProfile}
+        influencerInfo={activeProfile}
       />
     </div>
   );

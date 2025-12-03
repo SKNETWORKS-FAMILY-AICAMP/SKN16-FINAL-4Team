@@ -6,14 +6,17 @@ import apiClient from './client';
 
 export interface UserFeedbackRequest {
   history_id: number;
-  feedback: string; // "좋다" 또는 "싫다"
+  // Either provide legacy feedback string or numeric rating (1..5) or both.
+  feedback?: string; // "좋다" 또는 "싫다"
+  rating?: number; // 1..5
 }
 
 export interface UserFeedbackResponse {
   user_feedback_id: number;
   history_id: number;
   user_id: number;
-  feedback: string;
+  feedback?: string;
+  rating?: number;
 }
 
 /**
