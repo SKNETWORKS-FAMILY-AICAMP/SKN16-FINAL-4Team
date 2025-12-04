@@ -402,10 +402,29 @@ def style_emotion_chain(payload: EmotionChainRequest):
     else:
         salutation = default_sub
 
-    if influencer:
-        user_content += f"\n(호칭: {salutation})\n위 내용을 {influencer}의 말투로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+    # If caller marked this as a welcome prompt, instruct the model to emit a
+    # short, friendly welcome message requesting an image upload (single sentence)
+    # while preserving the influencer style when available.
+    try:
+        meta = None
+        if isinstance(payload.emotion_result, dict):
+            meta = payload.emotion_result.get('_meta') or payload.emotion_result.get('meta')
+    except Exception:
+        meta = None
+
+    if meta and isinstance(meta, dict) and meta.get('is_welcome'):
+        # Prefer including the original welcome_prompt as an example/context
+        wp = (meta.get('welcome_prompt') or payload.user_text or '').strip()
+        example_line = f"예시 요청: {wp}" if wp else ''
+        if influencer:
+            user_content += f"\n(호칭: {salutation})\n사용자에게 친절하게 사진(얼굴 정면) 업로드를 요청하는 한 문장 환영 메시지를 {influencer}의 말투로 작성하세요. {example_line} 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+        else:
+            user_content += f"\n(호칭: {salutation})\n사용자에게 친절하게 사진(얼굴 정면) 업로드를 요청하는 한 문장 환영 메시지를 작성하세요. {example_line} 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
     else:
-        user_content += f"\n(호칭: {salutation})\n위 내용을 친근하고 전문적인 어조로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+        if influencer:
+            user_content += f"\n(호칭: {salutation})\n위 내용을 {influencer}의 말투로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+        else:
+            user_content += f"\n(호칭: {salutation})\n위 내용을 친근하고 전문적인 어조로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
 
     try:
         resp = shared.client.chat.completions.create(

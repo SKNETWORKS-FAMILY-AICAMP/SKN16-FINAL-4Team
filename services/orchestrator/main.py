@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import re
 
 from services.api_emotion import main as api_emotion
 from services.api_color import main as api_color
@@ -223,6 +224,25 @@ async def analyze(payload: OrchestratorRequest):
             user_nickname=payload.user_nickname,
             influencer_name=payload.influencer_name if getattr(payload, 'influencer_name', None) else None,
         )
+        # Detect if this analyze call is actually a welcome/message-seeding request
+        # by looking for common welcome/upload keywords in the original user_text.
+        try:
+            is_welcome = False
+            if isinstance(payload.user_text, str) and re.search(r"이미지|업로드|환영|환영해|환영합니다", payload.user_text):
+                is_welcome = True
+            if is_welcome:
+                # attach a small meta flag so api_influencer can generate a welcome-style message
+                try:
+                    if isinstance(chain_payload.emotion_result, dict):
+                        chain_payload.emotion_result.setdefault('_meta', {})
+                        chain_payload.emotion_result['_meta'].update({'is_welcome': True, 'welcome_prompt': payload.user_text})
+                    else:
+                        chain_payload.emotion_result = {'_meta': {'is_welcome': True, 'welcome_prompt': payload.user_text}}
+                except Exception:
+                    pass
+        except Exception:
+            # non-fatal; continue without welcome flag
+            pass
         chain_resp = api_influencer.style_emotion_chain(chain_payload)
         influencer_result = chain_resp.dict() if hasattr(chain_resp, "dict") else chain_resp
         # Wrap influencer result

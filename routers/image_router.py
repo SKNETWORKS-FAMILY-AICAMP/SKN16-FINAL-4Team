@@ -7,6 +7,10 @@ import httpx
 import logging
 import traceback
 from starlette.datastructures import UploadFile as StarletteUploadFile
+import json
+
+from database import SessionLocal
+import models
 
 logger = logging.getLogger(__name__)
 
@@ -219,5 +223,73 @@ async def analyze_image(req: ImageAnalyzeRequest):
         traceback.print_exc()
         logger.error("orchestrator analyze failed: %s", e, exc_info=True)
         orch_resp = {"error": str(e)}
+
+    # If caller provided a history_id, persist the orchestrator result as an AI ChatMessage
+    try:
+        if req.history_id:
+            db = SessionLocal()
+            try:
+                chat_history = db.query(models.ChatHistory).filter_by(id=req.history_id).first()
+                if chat_history:
+                    # persist influencer_name on the chat history when provided
+                    try:
+                        if req.influencer_name and not getattr(chat_history, 'influencer_name', None):
+                            chat_history.influencer_name = req.influencer_name
+                            db.add(chat_history)
+                            db.commit()
+                            db.refresh(chat_history)
+                    except Exception:
+                        pass
+                    # try to produce a human-friendly description from orchestrator
+                    orch_serializable = None
+                    if hasattr(orch_resp, 'dict'):
+                        try:
+                            orch_serializable = orch_resp.dict()
+                        except Exception:
+                            orch_serializable = None
+                    elif isinstance(orch_resp, dict):
+                        orch_serializable = orch_resp
+
+                    desc = None
+                    try:
+                        if isinstance(orch_serializable, dict):
+                            # color parsed description
+                            c = orch_serializable.get('color') or {}
+                            if isinstance(c, dict):
+                                parsed = c.get('parsed') or c.get('detected_color_hints') or c
+                                if isinstance(parsed, dict):
+                                    desc = parsed.get('description') or parsed.get('reason') or None
+                            if not desc:
+                                e = orch_serializable.get('emotion') or {}
+                                if isinstance(e, dict):
+                                    parsed_e = e.get('parsed') or e
+                                    if isinstance(parsed_e, dict):
+                                        desc = parsed_e.get('description') or parsed_e.get('summary') or None
+                    except Exception:
+                        desc = None
+
+                    text = desc or '이미지 분석 결과가 저장되었습니다.'
+                    raw_text = orch_serializable if orch_serializable is not None else str(orch_resp)
+                    try:
+                        raw_json = json.dumps(raw_text, ensure_ascii=False)
+                    except Exception:
+                        raw_json = json.dumps({'orchestrator': str(orch_resp)})
+
+                    ai_msg = models.ChatMessage(
+                        history_id=req.history_id,
+                        role='ai',
+                        text=text,
+                        raw=raw_json,
+                    )
+                    db.add(ai_msg)
+                    db.commit()
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+    except Exception:
+        # non-fatal: if DB write fails, log and continue returning the analysis
+        logger.exception('이미지 분석 결과를 채팅 히스토리에 저장하지 못했습니다')
 
     return {"image_result": res, "orchestrator": orch_resp}

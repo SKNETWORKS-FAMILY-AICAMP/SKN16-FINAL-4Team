@@ -137,7 +137,7 @@
 .ant-avatar-image img {
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover !important; /* preserve aspect and avoid vertical squash */
+  object-fit: fill !important; /* preserve aspect and avoid vertical squash */
   object-position: center center !important;
   border-radius: 50% !important;
 }
