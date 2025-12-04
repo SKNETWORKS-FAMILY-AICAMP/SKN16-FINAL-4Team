@@ -389,7 +389,14 @@ class PersonalColorClassifier:
             분류 결과 딕셔너리
         """
         # 1. 얼굴 검출 및 피부 영역 추출
-        skin_pixels, skin_mask, vis_image = self.detect_face_and_extract_skin(image)
+        # Support subclasses that may return either (skin, mask, vis) or
+        # (skin, masks_tuple, vis, eyes_detected). Be lenient for backward
+        # compatibility.
+        dfes = self.detect_face_and_extract_skin(image)
+        if isinstance(dfes, tuple) and len(dfes) == 4:
+            skin_pixels, skin_mask, vis_image, _eyes = dfes
+        else:
+            skin_pixels, skin_mask, vis_image = dfes
 
         # 2. LAB 값 추출
         L, a, b = self.extract_lab_values(skin_pixels, skin_mask)

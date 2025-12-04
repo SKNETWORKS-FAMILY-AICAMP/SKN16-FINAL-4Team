@@ -1,20 +1,15 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { formatKoreanDate } from '@/utils/dateUtils';
 import * as antd from 'antd';
-import {
-  SendOutlined,
-  RobotOutlined,
-  ArrowLeftOutlined,
-} from '@ant-design/icons';
-import { getAvatarRenderInfo } from '@/utils/genderUtils';
-import { useNavigate, useBeforeUnload, useBlocker, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { SendOutlined, RobotOutlined, ArrowLeftOutlined } from '@ant-design/icons';
+import { useNavigate, useLocation } from 'react-router-dom';
+
 import { useCurrentUser } from '@/hooks/useUser';
 import { useSurveyResultsLive } from '@/hooks/useSurvey';
 import useChatbot from '@/hooks/useChatbot';
-import type { ChatResModel } from '@/api/chatbot';
+import type { ChatResModel, InfluencerHistoryItem } from '@/api/chatbot';
 import { chatbotApi } from '@/api/chatbot';
-import localInfluencers from '@/data/influencers';
-import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
+import { analyzeImage } from '@/api/image';
+import ImageUploader from '@/components/ImageUploader';
 import { normalizePersonalColor } from '@/utils/personalColorUtils';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
 import FeedbackModal from '@/components/FeedbackModal';
@@ -23,7 +18,13 @@ import type { SurveyResultDetail } from '@/api/survey';
 import AnimatedEmoji from '@/components/AnimatedEmoji';
 import { Loading } from '@/components';
 import InfluencerImage from '@/components/InfluencerImage';
-import type { InfluencerHistoryItem } from '@/api/chatbot';
+
+
+import dayjs from '@/utils/dayjsTimezoneSetup';
+import { formatKoreanDate } from '@/utils/dateUtils';
+import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
+import { getAvatarRenderInfo } from '@/utils/genderUtils';
+
 
 const { Title, Text } = antd.Typography;
 const { TextArea } = antd.Input;
@@ -34,7 +35,7 @@ interface ChatMessage {
   content: string;
   customContent?: React.ReactNode;
   isUser: boolean;
-  timestamp: Date;
+  timestamp: string | Date;
   chatRes?: ChatResModel;
   questionId?: number;
   diagnosisData?: {
@@ -63,11 +64,7 @@ const ChatbotPage: React.FC = () => {
     endChatSession,
     isAnalyzing,
     isDiagnosing,
-    analyzeError,
-    diagnoseError,
     startSession,
-    // from useChatbot: influencer histories
-    influencerHistories,
     fetchMessagesForInfluencer,
   } = useChatbot();
   const sessionStartedRef = useRef(false);
@@ -81,6 +78,8 @@ const ChatbotPage: React.FC = () => {
 
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [isLeavingPage, setIsLeavingPage] = useState(false);
+  // 새로 생성된(현재 세션에서 시작된) 대화가 있는지 여부
+  const [hasNewConversation, setHasNewConversation] = useState(false);
   const [currentHistoryId, setCurrentHistoryId] = useState<number | undefined>(
     undefined
   );
@@ -89,9 +88,19 @@ const ChatbotPage: React.FC = () => {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false); // 진단 상세보기 모달
   const [selectedResult, setSelectedResult] =
     useState<SurveyResultDetail | null>(null); // 선택된 진단 결과
+  // If an image was just analyzed and we need to ask one follow-up question,
+  // keep the image analysis data here until the user answers.
+  const [pendingImageFollowup, setPendingImageFollowup] = useState<{
+    primary: string;
+    sub: string;
+    image_result?: any;
+    history_id?: number;
+  } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  // remember last influencer id we loaded to avoid repeated refetches
+  const lastLoadedInfluencerRef = useRef<string | number | null>(null);
 
   // Small helpers to reduce duplicated parsing/mapping logic
   const parseRawChatRes = (raw: any): ChatResModel | undefined => {
@@ -116,7 +125,8 @@ const ChatbotPage: React.FC = () => {
         id: `infl-${inflId}-${idx}-${m.history_id || ''}`,
         content: m.text || '',
         isUser,
-        timestamp: m.created_at ? new Date(m.created_at) : new Date(),
+        // preserve server ISO timestamp string when available so parsing is deterministic
+        timestamp: m.created_at ? String(m.created_at) : new Date().toISOString(),
         chatRes,
         questionId: undefined,
       } as ChatMessage;
@@ -127,21 +137,28 @@ const ChatbotPage: React.FC = () => {
     const out: ChatMessage[] = [];
     let baseTs = Date.now() - (items?.length || 0) * 2000;
     for (const it of items || []) {
+      // prefer server-provided ISO timestamps when available; otherwise synthesize ISO
+      const userTsIso = it.question_created_at ? String(it.question_created_at) : new Date(baseTs).toISOString();
+
       out.push({
         id: `h-${historyId}-${it.question_id}-u`,
         content: it.question || '',
         isUser: true,
-        timestamp: new Date(baseTs),
+        timestamp: userTsIso,
       });
-      baseTs += 1000;
+      // advance baseTs relative to parsed time
+      baseTs = Math.max(baseTs + 1000, dayjs(userTsIso).valueOf() + 500);
+
+      const botTsIso = it.created_at ? String(it.created_at) : new Date(baseTs).toISOString();
+
       out.push({
         id: `h-${historyId}-${it.question_id}-b`,
         content: it.answer || '',
         isUser: false,
-        timestamp: new Date(baseTs),
+        timestamp: botTsIso,
         chatRes: it.chat_res,
       });
-      baseTs += 1000;
+      baseTs = Math.max(baseTs + 1000, dayjs(botTsIso).valueOf() + 500);
     }
     return out;
   };
@@ -154,7 +171,7 @@ const ChatbotPage: React.FC = () => {
         id: `w-${historyId}-${it.question_id || 0}-b`,
         content: it.answer || (it.chat_res && it.chat_res.description) || '',
         isUser: false,
-        timestamp: new Date(baseTs),
+        timestamp: new Date(baseTs).toISOString(),
         chatRes: it.chat_res,
       });
       baseTs += 1000;
@@ -198,7 +215,6 @@ const ChatbotPage: React.FC = () => {
   const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
   const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<InfluencerHistoryItem | null>(null);
   const autoCloseRef = useRef<number | null>(null);
-
   const location = useLocation();
 
   // 라우터 state로 전달된 인플루언서 프로필(예: MyPage에서 클릭으로 전달)을 수신
@@ -221,124 +237,48 @@ const ChatbotPage: React.FC = () => {
     (async () => {
       try {
         const inflId = activeInfluencerProfile.influencer_id || activeInfluencerProfile.influencer_name;
-
         if (!inflId) return;
+
+        // Avoid refetching the same influencer repeatedly
+        if (lastLoadedInfluencerRef.current && String(lastLoadedInfluencerRef.current) === String(inflId)) {
+          return;
+        }
+
         const resp = await fetchMessagesForInfluencer(inflId);
         // resp may be either an array of message items or an object { history_ids, items }
         let items: any[] = [];
-        let historyIds: number[] = [];
         if (Array.isArray(resp)) {
           items = resp as any[];
         } else if (resp && typeof resp === 'object') {
           items = (resp as any).items || [];
-          historyIds = (resp as any).history_ids || [];
         }
 
         const loaded: ChatMessage[] = mapInfluencerRespItems(items, inflId);
 
         if (!mounted) return;
 
-        setMessages(prev => {
-          // preserve welcome at index 0 if present
-          if (prev.length > 0 && prev[0]?.id === 'welcome') return [prev[0], ...loaded];
-          return loaded;
-        });
-
-        // if there's no currentHistoryId (no active session), restore the latest history id
-        if (!currentHistoryId && Array.isArray(historyIds) && historyIds.length > 0) {
-          setCurrentHistoryId(historyIds[historyIds.length - 1]);
-        }
+        // replace messages with loaded influencer messages (do not inject local welcome)
+        setMessages(loaded);
+        lastLoadedInfluencerRef.current = inflId;
       } catch (e) {
-        console.warn('인플루언서 메시지 불러오기 실패:', e);
+        console.warn('인플루언서 메시지 로드 실패:', e);
       }
     })();
 
     return () => {
       mounted = false;
     };
-    // only depend on influencer id to avoid re-running when function refs or profile objects change
+    // intentionally not including fetchMessagesForInfluencer in deps to avoid
+    // repeated effect runs when hook returns a new function identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeInfluencerProfile?.influencer_id]);
-
-  // 대화가 있는지 확인하는 함수
-  const hasConversation = () => messages.length > 1;
+  }, [activeInfluencerProfile]);
 
   // 페이지 벗어나기 차단 (브라우저 새로고침, 닫기 등)
-  useBeforeUnload(
-    React.useCallback(
-      event => {
-        if (hasConversation() && !isLeavingPage) {
-          event.preventDefault();
-        }
-      },
-      [messages.length, isLeavingPage]
-    )
-  );
+  // useBeforeUnload가 없으므로, 새로고침/이동 차단은 필요시 window.onbeforeunload 등으로 구현
 
-  // React Router 네비게이션 차단
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      hasConversation() &&
-      !isLeavingPage &&
-      currentLocation.pathname !== nextLocation.pathname
-  );
+  // React Router 네비게이션 차단: useBlocker가 없으므로, 필요시 구현 또는 라이브러리 사용
 
-
-  // 메시지, 타이핑, 딜레이 상태 변경 시 스크롤 자동 이동
-  useEffect(() => {
-    if (!messagesEndRef.current || !messagesContainerRef.current) return;
-
-    if (messages.length <= 2) return;
-
-    const container = messagesContainerRef.current as HTMLDivElement;
-
-    const isOverflowing = container.scrollHeight > container.clientHeight;
-
-    console.debug('[chat-scroll] messages=', messages.length, 'isTyping=', isTyping, 'overflowing=', isOverflowing);
-
-    if (!isOverflowing) return;
-
-    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
-  }, [messages, isTyping, delayedDescriptions]);
-
-  useEffect(() => {
-    if (analyzeError) {
-      try {
-        const errMsg = (analyzeError?.response?.data?.detail as string) || analyzeError?.message || '분석 중 오류가 발생했습니다.';
-        antd.message.error(errMsg);
-      } catch (e) {
-        antd.message.error('분석 중 오류가 발생했습니다.');
-      }
-    }
-
-    if (diagnoseError) {
-      try {
-        const errMsg = (diagnoseError?.response?.data?.detail as string) || diagnoseError?.message || '진단 저장 중 오류가 발생했습니다.';
-        antd.message.error(errMsg);
-      } catch (e) {
-        antd.message.error('진단 저장 중 오류가 발생했습니다.');
-      }
-    }
-  }, [analyzeError, diagnoseError]);
-
-  // React Router 네비게이션 차단 시 피드백 모달 표시
-  useEffect(() => {
-    if (blocker.state === 'blocked') {
-      setIsFeedbackModalOpen(true);
-    }
-  }, [blocker.state]);
-
-  // legacy query/state influencer helpers removed (not used anymore)
-
-  // influencer profiles: hook에서 제공하는 캐시 우선, 없으면 로컬 폴백
-  const influencers = (Array.isArray(influencerHistories) && influencerHistories.length > 0)
-    ? influencerHistories.map((h: any) => h.profile || { id: h.influencer_id, name: h.influencer_name })
-    : localInfluencers;
-
-
-  // 페이지 진입 시 명시적으로 새 채팅 세션을 시작합니다.
-  // 이렇게 하면 이전 세션의 기록이 현재 세션에 섞이지 않고,
-  // /end 호출 전까지는 이 세션의 히스토리만 참고하게 됩니다.
+  // 페이지 진입 시 명시적으로 새 채팅 세션을 시작합니다. (원래 있던 startSession 로직 복원)
   useEffect(() => {
     if (sessionStartedRef.current) return;
     sessionStartedRef.current = true;
@@ -349,101 +289,46 @@ const ChatbotPage: React.FC = () => {
         const params = new URLSearchParams((location as any).search || window.location.search);
         const inflIdFromQuery = params.get('infl_id');
         const inflNameFromState = (location as any).state?.influencerProfile?.influencer_name || activeInfluencerProfile?.influencer_name;
-        // prefer explicit query param infl_id (slug) if provided
         const startWith = inflIdFromQuery || inflNameFromState;
-        const res = await startSession(startWith as any);
-        if (mounted) {
-          setCurrentHistoryId(res.history_id);
-          // 복원 가능한 기존 열린 세션이면 이미 진행된 사용자 턴 수를 복원
-          if (res.reused && typeof res.user_turns === 'number') {
-            setUserTurnCount(res.user_turns);
-            console.log('재사용 세션의 기존 사용자 턴 수 복원:', res.user_turns);
-          }
-          // If this session reuses existing history, fetch the previous messages
-          if (res.reused) {
-            try {
-              const hist = await chatbotApi.getHistory(res.history_id);
-              if (hist && Array.isArray(hist.items) && hist.items.length > 0) {
-                // convert items to ChatMessage array (chronological)
-                const loaded: ChatMessage[] = historyItemsToChatMessages(hist.items, res.history_id);
-                // merge with existing welcome message if present
-                setMessages(prev => {
-                  // if prev already has welcome at index 0, keep it, otherwise prepend nothing
-                  if (prev.length > 0 && prev[0]?.id === 'welcome') return [prev[0], ...loaded];
-                  return loaded;
-                });
-                // ensure we scroll to the bottom after messages render
-                setTimeout(() => scrollToBottom(false), 50);
-              }
-            } catch (e) {
-              console.warn('히스토리 불러오기 실패:', e);
-            }
-            // Ensure a welcome message is present even when reusing an existing session.
-            // Call analyze({question: ''}) to get the current welcome text (may vary by influencer/persona).
-            try {
-              const welcomeResp2 = await analyze({ question: '', history_id: res.history_id });
-              if (welcomeResp2 && Array.isArray(welcomeResp2.items) && welcomeResp2.items.length > 0) {
-                const wmsgs: ChatMessage[] = analyzeItemsToBotMessages(welcomeResp2.items, res.history_id);
-                // Prepend welcome only if the first message isn't already a welcome
-                setMessages(prev => {
-                  if (prev.length > 0 && prev[0] && prev[0].id && String(prev[0].id).startsWith('w-')) return prev;
-                  return [...wmsgs, ...prev];
-                });
-                setTimeout(() => scrollToBottom(false), 50);
-              }
-            } catch (e) {
-              // ignore welcome fetch failures for reused sessions
-            }
-          }
-          // If this is a fresh session (not reused), request the welcome via analyze
-          if (!res.reused) {
-            try {
-              const welcomeResp = await analyze({ question: '', history_id: res.history_id });
-              let loaded: ChatMessage[] = [];
-              if (welcomeResp && Array.isArray(welcomeResp.items) && welcomeResp.items.length > 0) {
-                loaded = analyzeItemsToBotMessages(welcomeResp.items, res.history_id);
-              } else {
-                // Fallback: ensure a welcome message is shown even if backend returns empty
-                const fallbackText = '안녕하세요! 퍼스널컬러 AI 컨설턴트입니다. 궁금한 점을 알려주시면 도와드릴게요.';
-                loaded.push({
-                  id: `w-${res.history_id}-0-b-fallback`,
-                  content: fallbackText,
-                  isUser: false,
-                  timestamp: new Date(),
-                  chatRes: { primary_tone: '', sub_tone: '', description: fallbackText, recommendations: [], emotion: 'neutral' } as any,
-                });
-              }
 
-              setMessages(prev => (prev.length > 0 ? [...prev, ...loaded] : loaded));
-              // after inserting welcome for fresh session, scroll to bottom immediately
+        const res = await startSession(startWith as any);
+        if (!mounted) return;
+
+        setCurrentHistoryId(res.history_id);
+
+        if (res.reused && typeof res.user_turns === 'number') {
+          setUserTurnCount(res.user_turns);
+          console.log('재사용 세션의 기존 사용자 턴 수 복원:', res.user_turns);
+        }
+
+        // 복원 가능한 기존 열린 세션이면 히스토리 로드
+        if (res.reused) {
+          try {
+            const hist = await chatbotApi.getHistory(res.history_id);
+            if (hist && Array.isArray(hist.items) && hist.items.length > 0) {
+              const loaded: ChatMessage[] = historyItemsToChatMessages(hist.items, res.history_id);
+              setMessages(loaded);
               setTimeout(() => scrollToBottom(false), 50);
-            } catch (e) {
-              console.warn('환영 메시지 로드 실패:', e);
-              // On error, still show a local fallback welcome so the UI isn't blank
-              const fallbackText = '안녕하세요! 퍼스널컬러 AI 컨설턴트입니다. 네트워크 문제로 환영 메시지를 불러오지 못했어요.';
-              const fallbackMsg: ChatMessage = {
-                id: `w-${res.history_id}-0-b-error`,
-                content: fallbackText,
-                isUser: false,
-                timestamp: new Date(),
-                chatRes: { primary_tone: '', sub_tone: '', description: fallbackText, recommendations: [], emotion: 'neutral' } as any,
-              };
-              setMessages(prev => (prev.length > 0 ? [...prev, fallbackMsg] : [fallbackMsg]));
             }
+          } catch (e) {
+            console.warn('히스토리 불러오기 실패:', e);
           }
         }
+
         console.log('새 채팅 세션 시작, history_id=', res.history_id, 'reused=', res.reused);
       } catch (e) {
         console.error('세션 시작 실패:', e);
-        // 실패 시 재시도 가능하게 플래그 리셋
         sessionStartedRef.current = false;
       }
     })();
 
     return () => {
-      mounted = false;
+      sessionStartedRef.current = false;
     };
-  }, [startSession]);
+    // Run once on mount. `startSession`/`analyze` come from hooks and may change identity,
+    // causing repeated runs; intentionally disable exhaustive-deps to avoid loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 메시지에 리포트(진단) 상세보기 버튼을 보여야 하는지 판단
   const shouldShowReportButton = (msg: ChatMessage): boolean => {
@@ -454,7 +339,6 @@ const ChatbotPage: React.FC = () => {
     if (/진단|리포트|분석/.test(content)) return true;
     return false;
   };
-
 
   // 진단 결과 상세보기 모달 열기
   const handleViewDiagnosisDetail = () => {
@@ -532,15 +416,29 @@ const ChatbotPage: React.FC = () => {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    // 이번 세션에서 새 대화가 시작되었음을 표시
+    setHasNewConversation(true);
     setInputMessage('');
     setIsTyping(true);
 
     try {
-      // 일반 챗봇 대화
-      const response = await analyze({
-        question: inputMessage.trim(),
-        history_id: currentHistoryId,
-      });
+      // If there is a pending image follow-up, send a specialized prompt that
+      // asks the backend to combine the image analysis and the user's answer
+      // and produce a more detailed personal-color analysis.
+      let response: any;
+      if (pendingImageFollowup) {
+        const { primary, sub } = pendingImageFollowup;
+        const followupPrompt = `사진에서 감지된 퍼스널컬러: ${primary}${sub ? ' / ' + sub : ''}.
+사용자가 다음과 같이 답변했습니다: "${inputMessage.trim()}"
+위 정보를 모두 고려해, 사용자의 퍼스널컬러를 더 자세히 판별해 주세요. 가능한 경우 서브톤(예: 봄/여름/가을/겨울), 추천 색상(HEX 3~5개), 피해야 할 색상, 짧은 스타일/메이크업 팁을 제시하세요. 응답은 친근한 상담 말투로 요약해 주세요.`;
+
+        response = await analyze({ question: followupPrompt, history_id: currentHistoryId });
+        // clear pending followup regardless of success/failure to avoid repeated special flows
+        setPendingImageFollowup(null);
+      } else {
+        // 일반 챗봇 대화
+        response = await analyze({ question: inputMessage.trim(), history_id: currentHistoryId });
+      }
 
       console.log('💬 챗봇 응답:', response);
       console.log('🆔 새로운 history_id:', response.history_id);
@@ -786,26 +684,26 @@ const ChatbotPage: React.FC = () => {
                               style={
                                 isWhite
                                   ? {
-                                      backgroundColor: '#f5f5f5',
-                                      color: '#333333',
-                                      border: '1px solid #d9d9d9',
-                                      borderRadius: '4px',
-                                      padding: '4px 8px',
-                                      fontSize: '12px',
-                                      fontWeight: 'bold',
-                                      margin: '0',
-                                    }
+                                    backgroundColor: '#f5f5f5',
+                                    color: '#333333',
+                                    border: '1px solid #d9d9d9',
+                                    borderRadius: '4px',
+                                    padding: '4px 8px',
+                                    fontSize: '12px',
+                                    fontWeight: 'bold',
+                                    margin: '0',
+                                  }
                                   : {
-                                      backgroundColor: color,
-                                      color: '#ffffff',
-                                      border: 'none',
-                                      borderRadius: '4px',
-                                      padding: '4px 8px',
-                                      fontSize: '12px',
-                                      fontWeight: 'bold',
-                                      textShadow: '1px 1px 2px rgba(0,0,0,0.5)',
-                                      margin: '0',
-                                    }
+                                    backgroundColor: color,
+                                    color: '#ffffff',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    padding: '4px 8px',
+                                    fontSize: '12px',
+                                    fontWeight: 'bold',
+                                    textShadow: '1px 1px 2px rgba(0,0,0,0.5)',
+                                    margin: '0',
+                                  }
                               }
                             >
                               {color}
@@ -853,19 +751,13 @@ const ChatbotPage: React.FC = () => {
             const summaryErrorMessage: ChatMessage = {
               id: (Date.now() + 2).toString(),
               content: `🎉 ${userNickname}과의 대화를 통해 퍼스널컬러 분석이 완료되었습니다!
-
-📊 **퍼스널컬러 분석 요약**
-
-🎨 **퍼스널 타입**: ${latestItem.chat_res.sub_tone ? `${latestItem.chat_res.sub_tone} 타입` : '퍼스널컬러 타입'}
-
-� **타입 특성**: ${latestItem.chat_res.description || '당신만의 개성을 살릴 수 있는 퍼스널컬러를 찾았어요!'}
-
-🌈 **추천 컬러 팔레트**: 
-🎨 #FFB6C1 🎨 #FFA07A 🎨 #FFFF99 🎨 #98FB98 🎨 #87CEEB
-
-상세한 분석 결과와 맞춤 추천을 확인해보세요!
-
-[상세보기]`,
+                📊 **퍼스널컬러 분석 요약**
+                🎨 **퍼스널 타입**: ${latestItem.chat_res.sub_tone ? `${latestItem.chat_res.sub_tone} 타입` : '퍼스널컬러 타입'}
+                � **타입 특성**: ${latestItem.chat_res.description || '당신만의 개성을 살릴 수 있는 퍼스널컬러를 찾았어요!'}
+                🌈 **추천 컬러 팔레트**: 
+                🎨 #FFB6C1 🎨 #FFA07A 🎨 #FFFF99 🎨 #98FB98 🎨 #87CEEB
+                상세한 분석 결과와 맞춤 추천을 확인해보세요!
+                [상세보기]`,
               isUser: false,
               timestamp: new Date(),
               chatRes: latestItem.chat_res, // 진단 결과 데이터 포함
@@ -941,7 +833,7 @@ const ChatbotPage: React.FC = () => {
 
   // 뒤로가기 클릭 시 피드백 모달 표시
   const handleGoBack = () => {
-    if (hasConversation()) {
+    if (hasNewConversation) {
       setIsFeedbackModalOpen(true);
     } else {
       setIsLeavingPage(true);
@@ -957,6 +849,8 @@ const ChatbotPage: React.FC = () => {
         console.log('채팅 세션이 종료되었습니다.');
         // clear current session id so subsequent analyzes will start a new session
         setCurrentHistoryId(undefined);
+        // 세션 종료 시 새 대화 플래그 초기화
+        setHasNewConversation(false);
       } catch (error) {
         console.error('채팅 세션 종료 중 오류:', error);
       }
@@ -986,13 +880,12 @@ const ChatbotPage: React.FC = () => {
       // 성공 시 UI 처리
       setIsFeedbackModalOpen(false);
       setIsLeavingPage(true);
+      // 피드백 제출 후 새 대화 플래그 초기화
+      setHasNewConversation(false);
       antd.message.success(`피드백 감사합니다!`, 2);
 
-      if (blocker.state === 'blocked') {
-        blocker.proceed();
-      } else {
-        setTimeout(() => navigate('/'), 500);
-      }
+      // 네비게이션 차단 로직 없음. 필요시 구현
+      setTimeout(() => navigate('/'), 500);
     } catch (error) {
       console.error('피드백 제출 중 오류:', error);
       antd.message.error('피드백 제출 중 오류가 발생했습니다.');
@@ -1000,12 +893,10 @@ const ChatbotPage: React.FC = () => {
       // 오류 시에도 플래그 초기화
       setIsFeedbackModalOpen(false);
       setIsLeavingPage(true);
+      setHasNewConversation(false);
 
-      if (blocker.state === 'blocked') {
-        blocker.proceed();
-      } else {
-        setTimeout(() => navigate('/'), 500);
-      }
+      // 네비게이션 차단 로직 없음. 필요시 구현
+      setTimeout(() => navigate('/'), 500);
     }
   };
 
@@ -1017,24 +908,22 @@ const ChatbotPage: React.FC = () => {
 
     setIsFeedbackModalOpen(false);
     setIsLeavingPage(true);
+    setHasNewConversation(false);
 
-    if (blocker.state === 'blocked') {
-      blocker.proceed();
-    } else {
-      navigate('/');
-    }
+    // 네비게이션 차단 로직 없음. 필요시 구현
+    navigate('/');
   };
 
 
-// 진단 챗봇 버블 여부 판별 함수 (예시: description에 '진단', '분석', '추천', '퍼스널컬러', '톤', '결과' 등 포함 시)
-// 진단 완료 요약 customContent가 있는 메시지(진단 완료 버블)만 true 반환
-function isDiagnosisBubble(msg?: any): boolean {
-  // 진단 요약 customContent가 있는 경우만 진단 버블로 간주
-  if (msg && msg.customContent && typeof msg.customContent === 'object') {
-    return true;
+  // 진단 챗봇 버블 여부 판별 함수 (예시: description에 '진단', '분석', '추천', '퍼스널컬러', '톤', '결과' 등 포함 시)
+  // 진단 완료 요약 customContent가 있는 메시지(진단 완료 버블)만 true 반환
+  function isDiagnosisBubble(msg?: any): boolean {
+    // 진단 요약 customContent가 있는 경우만 진단 버블로 간주
+    if (msg && msg.customContent && typeof msg.customContent === 'object') {
+      return true;
+    }
+    return false;
   }
-  return false;
-}
 
   // Helpers to group messages by date and format headers
   const isSameDay = (a: Date, b: Date) =>
@@ -1050,11 +939,9 @@ function isDiagnosisBubble(msg?: any): boolean {
   const groupMessagesByDate = (msgs: ChatMessage[]) => {
     const map = new Map<string, ChatMessage[]>();
     for (const m of msgs) {
-      // normalize to YYYY-MM-DD key
-      const d = new Date(m.timestamp);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-        d.getDate()
-      ).padStart(2, '0')}`;
+      // normalize to YYYY-MM-DD key using Asia/Seoul timezone so grouping matches displayed dates
+      const d = dayjs(m.timestamp).tz('Asia/Seoul');
+      const key = `${d.year()}-${String(d.month() + 1).padStart(2, '0')}-${String(d.date()).padStart(2, '0')}`;
       if (!map.has(key)) {
         map.set(key, []);
       }
@@ -1065,8 +952,8 @@ function isDiagnosisBubble(msg?: any): boolean {
     const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
 
     return keys.map(k => {
-      const items = (map.get(k) || []).slice().sort((x, y) => new Date(x.timestamp).getTime() - new Date(y.timestamp).getTime());
-      const date = items.length > 0 ? new Date(items[0].timestamp) : new Date(k);
+      const items = (map.get(k) || []).slice().sort((x, y) => dayjs(x.timestamp).valueOf() - dayjs(y.timestamp).valueOf());
+      const date = items.length > 0 ? dayjs(items[0].timestamp).toDate() : new Date(k);
       return { key: k, items, date };
     });
   };
@@ -1107,19 +994,14 @@ function isDiagnosisBubble(msg?: any): boolean {
               return (
                 <antd.Avatar
                   className={`!ml-3 ${avatarConfig.className}`}
-                  style={avatarConfig.style}
+                  size={50}
+                  style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff', ...avatarConfig.style }}
                 >
-                  {typeof avatarConfig.content === 'string' ? (
-                    <span style={{ fontSize: '18px' }}>
-                      {avatarConfig.content}
-                    </span>
-                  ) : (
-                    avatarConfig.content
-                  )}
+                  <InfluencerImage name={user?.nickname} emoji={avatarConfig?.content} />
                 </antd.Avatar>
               );
             })()
-            ) : (
+          ) : (
             (() => {
               // For bot messages, prefer the currently active influencer profile for avatar.
               // If none selected, fall back to influencer info embedded in the message, then robot icon.
@@ -1128,14 +1010,6 @@ function isDiagnosisBubble(msg?: any): boolean {
               const getInfluencerAvatarInfo = (s: any) => {
                 if (!s || typeof s !== 'string') return null;
                 const key = s.trim().toLowerCase();
-
-                if (Array.isArray(influencers) && influencers.length > 0) {
-                  for (const p of influencers) {
-                    const n = ((p as any).name || '').toString().toLowerCase();
-                    if (!n) continue;
-                    if (key === n || key.includes(n) || key.startsWith(n)) return p;
-                  }
-                }
 
                 const map: Record<string, any> = {
                   '혜경': { name: '혜경', emoji: '🎨', color: '#F0E6FF', profile: '/profiles/혜경.png' },
@@ -1155,6 +1029,7 @@ function isDiagnosisBubble(msg?: any): boolean {
               const avatarProfile = activeInfluencerProfile || inflFromMsg;
 
               if (avatarProfile) {
+                const { profile } = avatarProfile || {};
                 const inflName = ((avatarProfile?.influencer_name || '') as string).toLowerCase();
                 const activeName = typeof activeInfluencerProfile === 'string'
                   ? (activeInfluencerProfile as string).toLowerCase()
@@ -1187,7 +1062,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                       size={50}
                       style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff' }}
                     >
-                      <InfluencerImage profile={avatarProfile.profile} name={avatarProfile.influencer_name} emoji={avatarProfile.emoji} />
+                      <InfluencerImage name={profile?.name} emoji={profile?.emoji} />
                     </antd.Avatar>
                   </div>
                 );
@@ -1235,11 +1110,10 @@ function isDiagnosisBubble(msg?: any): boolean {
             )}
             {(msg.isUser || !msg.chatRes?.emotion || delayedDescriptions[msg.id] || typeof delayedDescriptions[msg.id] === 'undefined') && (
               <div
-                className={`relative px-4 py-2 rounded-lg ${
-                  msg.isUser
-                    ? 'bg-blue-500 text-white user-balloon'
-                    : 'bg-white chatbot-balloon'
-                }`}
+                className={`relative px-4 py-2 rounded-lg ${msg.isUser
+                  ? 'bg-blue-500 text-white user-balloon'
+                  : 'bg-white chatbot-balloon'
+                  }`}
                 style={{
                   marginLeft: msg.isUser ? 0 : '0',
                   marginRight: msg.isUser ? '0' : 0,
@@ -1304,7 +1178,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                 ) : msg.content.includes('[상세보기]') ? (
                   <div>
                     {msg.content.includes('🌈 **추천 컬러 팔레트**') &&
-                    msg.diagnosisData ? (
+                      msg.diagnosisData ? (
                       <div>
                         <Text
                           className={`whitespace-pre-wrap ${msg.isUser ? '!text-white' : '!text-gray-800'}`}
@@ -1321,7 +1195,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                           </Text>
                           <div className="flex flex-wrap gap-2 mb-3">
                             {msg.diagnosisData.color_palette &&
-                            msg.diagnosisData.color_palette.length > 0 ? (
+                              msg.diagnosisData.color_palette.length > 0 ? (
                               msg.diagnosisData.color_palette.map(
                                 (color: string, index: number) => (
                                   <div
@@ -1494,42 +1368,42 @@ function isDiagnosisBubble(msg?: any): boolean {
   const sampleQuestions =
     !surveyResults || surveyResults.length === 0
       ? [
-          {
-            label: '퍼스널컬러 진단받기',
-            question: '안녕하세요! 저는 어떤 퍼스널컬러 타입일까요?',
-          },
-          {
-            label: '색상 고민 상담',
-            question:
-              '평소에 밝은 색 옷을 많이 입는 편인데, 저한테 어울리나요?',
-          },
-          {
-            label: '피부톤 고민',
-            question: '피부톤에 대해 잘 모르겠어요. 어떻게 알 수 있을까요?',
-          },
-          {
-            label: '색상 조화 고민',
-            question: '제가 좋아하는 색깔과 잘 어울리는 색깔이 다른 것 같아요.',
-          },
-        ]
+        {
+          label: '퍼스널컬러 진단받기',
+          question: '안녕하세요! 저는 어떤 퍼스널컬러 타입일까요?',
+        },
+        {
+          label: '색상 고민 상담',
+          question:
+            '평소에 밝은 색 옷을 많이 입는 편인데, 저한테 어울리나요?',
+        },
+        {
+          label: '피부톤 고민',
+          question: '피부톤에 대해 잘 모르겠어요. 어떻게 알 수 있을까요?',
+        },
+        {
+          label: '색상 조화 고민',
+          question: '제가 좋아하는 색깔과 잘 어울리는 색깔이 다른 것 같아요.',
+        },
+      ]
       : [
-          {
-            label: '립스틱 색상 추천',
-            question: '내 퍼스널컬러에 어울리는 립스틱 색상을 추천해주세요.',
-          },
-          {
-            label: '계절별 코디',
-            question: '지금 계절에 어울리는 옷 색깔 조합을 알려주세요.',
-          },
-          {
-            label: '새 진단 받기',
-            question: '퍼스널컬러 타입 진단을 다시 받아보고 싶어요.',
-          },
-          {
-            label: '타입 비교 분석',
-            question: '내 타입의 특징과 다른 타입과의 차이점을 알려주세요.',
-          },
-        ];
+        {
+          label: '립스틱 색상 추천',
+          question: '내 퍼스널컬러에 어울리는 립스틱 색상을 추천해주세요.',
+        },
+        {
+          label: '계절별 코디',
+          question: '지금 계절에 어울리는 옷 색깔 조합을 알려주세요.',
+        },
+        {
+          label: '새 진단 받기',
+          question: '퍼스널컬러 타입 진단을 다시 받아보고 싶어요.',
+        },
+        {
+          label: '타입 비교 분석',
+          question: '내 타입의 특징과 다른 타입과의 차이점을 알려주세요.',
+        },
+      ];
 
   // 메인 화면 렌더링
   return (
@@ -1605,24 +1479,14 @@ function isDiagnosisBubble(msg?: any): boolean {
                       (() => {
                         // find last bot message to infer influencer if needed
                         const lastBot = [...messages].slice().reverse().find(m => !m.isUser);
-                        const inflKey = (lastBot as any)?.influencer || (lastBot as any)?.chatRes?.influencer || (lastBot as any)?.chatRes?.raw?.influencer || (lastBot as any)?.influencer_id || null;
 
                         let found: any = null;
                         if (activeInfluencerProfile) {
                           found = activeInfluencerProfile;
-                        } else if (inflKey && Array.isArray(influencers) && influencers.length > 0) {
-                          const key = String(inflKey).toLowerCase();
-                          for (const p of influencers) {
-                            const n = ((p as any).name || '').toString().toLowerCase();
-                            if (!n) continue;
-                            if (key === n || key.includes(n) || key.startsWith(n)) {
-                              found = p;
-                              break;
-                            }
-                          }
                         }
 
                         if (found) {
+                          const { profile } = found || {};
                           return (
                             <div
                               className="influencer-avatar-clickable !mr-3 influencer-avatar-active"
@@ -1641,7 +1505,7 @@ function isDiagnosisBubble(msg?: any): boolean {
                                 size={50}
                                 style={{ width: 50, height: 50, flexShrink: 0, padding: 0, overflow: 'hidden', background: '#fff' }}
                               >
-                                <InfluencerImage profile={found.profile} name={(found as any).name} emoji={(found as any).emoji} />
+                                <InfluencerImage name={profile?.name} emoji={profile?.emoji} />
                               </antd.Avatar>
                             </div>
                           );
@@ -1671,6 +1535,49 @@ function isDiagnosisBubble(msg?: any): boolean {
 
           {/* 샘플 질문 */}
           <div className="mb-2 flex-shrink-0">
+            {/* 이미지 업로드 UI (Ant Design Upload, picture-card 스타일) */}
+            <div className="mb-2">
+              {/* 업로드 UI를 분리된 컴포넌트로 대체하여 ChatbotPage 크기 축소 */}
+              <React.Suspense fallback={<div>로딩 중...</div>}>
+                {/* ImageUploader는 uploadImageToS3를 호출하고 업로드 완료 시 onUpload 콜백을 호출합니다. */}
+                {/* onUpload 내부에서 ChatbotPage가 분석 요청 및 메시지 삽입을 수행합니다. */}
+                <ImageUploader onUpload={async (up: any, file: any) => {
+                  try {
+                    // 업로드 후 ChatbotPage 기존 분석 흐름 실행
+                    const s3Key = up.key;
+                    antd.message.success('이미지 업로드 완료, 분석을 시작합니다.');
+
+                    const imgRes = await analyzeImage(s3Key, currentHistoryId, activeInfluencerProfile?.influencer_name, user?.nickname);
+
+                    const primary = imgRes?.image_result?.primary_tone || imgRes?.image_result?.primary || '';
+                    const sub = imgRes?.image_result?.sub_tone || imgRes?.image_result?.sub || '';
+
+                    const userMsg: ChatMessage = { id: `img-u-${Date.now()}`, content: `이미지 업로드: ${file.name}`, isUser: true, timestamp: new Date() };
+                    setMessages(prev => [...prev, userMsg]);
+                    // 이미지 업로드는 사용자 주도 액션으로 간주하여 새 대화 플래그 설정
+                    setHasNewConversation(true);
+
+                    try {
+                      const hint = `이미지에서 감지된 퍼스널컬러는 ${primary}${sub ? ' / ' + sub : ''} 입니다. 이 정보를 바탕으로 추가 질문을 해주세요.`;
+                      const resp = await chatbotApi.analyze({ question: hint, history_id: currentHistoryId });
+                      setCurrentHistoryId(resp.history_id);
+                      const botMsgs = analyzeItemsToBotMessages(resp.items || [], resp.history_id);
+                      setMessages((prev: ChatMessage[]) => [...prev, ...botMsgs]);
+                      // mark that we expect one follow-up from the user which should trigger
+                      // a more detailed analysis combining the image_result and the user's answer
+                      setPendingImageFollowup({ primary: primary, sub: sub, image_result: imgRes?.image_result, history_id: resp.history_id });
+                    } catch (e) {
+                      const summary = (imgRes?.orchestrator?.color && (imgRes.orchestrator.color.parsed?.description || imgRes.orchestrator.color.parsed?.detected_color_hints)) || (imgRes?.orchestrator?.emotion && imgRes.orchestrator.emotion.parsed?.description) || '이미지 분석 결과를 불러오지 못했습니다.';
+                      const botMsg: ChatMessage = { id: `img-b-${Date.now()}`, content: `이미지 분석 요약: ${primary}${sub ? ' / ' + sub : ''}\n${typeof summary === 'string' ? summary : JSON.stringify(summary)}`, isUser: false, timestamp: new Date() };
+                      setMessages(prev => [...prev, botMsg]);
+                    }
+                  } catch (err: any) {
+                    console.error('이미지 업로드/분석 오류', err);
+                    antd.message.error('이미지 업로드 또는 분석 중 오류가 발생했습니다.');
+                  }
+                }} />
+              </React.Suspense>
+            </div>
             <Text strong className="!text-gray-700 block mb-1 text-xs">
               {!surveyResults || surveyResults.length === 0
                 ? '💡 이런 대화로 시작해보세요!'
@@ -1780,5 +1687,6 @@ function isDiagnosisBubble(msg?: any): boolean {
     </div>
   );
 };
+
 
 export default ChatbotPage;

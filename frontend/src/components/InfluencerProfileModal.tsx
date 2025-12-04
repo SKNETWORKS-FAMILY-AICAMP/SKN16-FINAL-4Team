@@ -43,7 +43,7 @@ const InfluencerProfileModal: React.FC<Props> = ({ open, onCancel, influencerInf
           {/* Large image header */}
           <div style={{ width: '100%', height: 220, background: profile?.color || '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ width: 180, height: 180, borderRadius: 12, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', border: '6px solid rgba(255,255,255,0.9)', background: '#fff', position: 'relative' }}>
-              <InfluencerImage profile={profile} name={influencerInfo.influencer_name} emoji={profile?.emoji || '🌟'} imgStyle={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <InfluencerImage name={profile?.name} emoji={profile?.emoji || '🌟'} imgStyle={{ width: '100%', height: '100%', objectFit: 'fill' }} />
               {/* small emoji badge */}
               <div style={{ position: 'absolute', right: -22, top: -22 }}>
                 <Avatar size={48} style={{ background: 'rgba(255,255,255,0.5)', fontSize: 22 }}>{profile?.emoji || '🌟'}</Avatar>

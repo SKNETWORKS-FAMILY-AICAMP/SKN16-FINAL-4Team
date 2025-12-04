@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
 
 interface Props {
-  profile?: any | null;
   src?: string | null;
   name?: string | null;
   emoji?: string;
@@ -10,13 +9,10 @@ interface Props {
   imgStyle?: React.CSSProperties;
 }
 
-const resolveCandidate = (profile?: any | null, src?: string | null, name?: string | null) => {
+const resolveCandidate = (src?: string | null, name?: string | null) => {
   // prefer explicit src
   if (src) return src;
-  if (profile) {
-    const raw = profile.profile || profile.image || null;
-    if (raw) return String(raw);
-  }
+
   if (name) {
     // user said filenames match influencer.name exactly
     try {
@@ -28,10 +24,10 @@ const resolveCandidate = (profile?: any | null, src?: string | null, name?: stri
   return null;
 };
 
-const InfluencerImage: React.FC<Props> = ({ profile, src, name, emoji = '🌟', className, style, imgStyle }) => {
+const InfluencerImage: React.FC<Props> = ({ src, name, emoji = '🌟', className, style, imgStyle }) => {
   const [ok, setOk] = useState(true);
 
-  const candidate = useMemo(() => resolveCandidate(profile, src, name), [profile, src, name]);
+  const candidate = useMemo(() => resolveCandidate(src, name), [src, name]);
 
   if (!candidate) {
     return <span className={className} style={{ fontSize: style?.width ? undefined : 18, ...style }}>{emoji}</span>;
@@ -45,8 +41,8 @@ const InfluencerImage: React.FC<Props> = ({ profile, src, name, emoji = '🌟', 
     <img
       className={className}
       src={candidate}
-      alt={`${name || (profile && profile.name) || 'influencer'} profile`}
-      style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', ...imgStyle }}
+      alt={`${name || 'influencer'} profile`}
+      style={{ display: 'block', width: '100%', height: '100%', objectFit: 'fill', objectPosition: 'center', ...imgStyle }}
       onError={() => setOk(false)}
     />
   );

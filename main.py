@@ -11,6 +11,7 @@ from routers import chatbot_router
 from routers import survey_router
 from routers import feedback_router
 from routers import admin_router
+from routers import image_router
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -64,3 +65,4 @@ app.include_router(chatbot_router.router)
 app.include_router(survey_router.router)
 app.include_router(feedback_router.router)
 app.include_router(admin_router.router)
+app.include_router(image_router.router)

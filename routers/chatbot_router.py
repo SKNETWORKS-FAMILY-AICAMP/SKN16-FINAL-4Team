@@ -285,10 +285,13 @@ def generate_welcome(db: Session, current_user: models.User, influencer_id: str 
         if persona_notes:
             user_prompt_lines.append(f"말투 힌트: {persona_notes}")
 
+        # Mandatory instruction: Request image upload
+        user_prompt_lines.append("필수 포함 내용: 정확한 퍼스널컬러 진단을 위해 사용자의 얼굴이 잘 나온 사진(이미지)을 업로드해달라고 요청하는 문장을 반드시 포함하세요.")
+
         if has_prev and prev_summary:
-            user_prompt_lines.append(f"이 사용자는 이전에 '{prev_summary}' 타입으로 진단된 기록이 있습니다. 환영 인사에서 이를 자연스럽게 언급하고, 이전 결과를 참고해 어떤 도움을 줄 수 있는지 알려주세요. 인플루언서의 말투로 작성하세요.")
+            user_prompt_lines.append(f"이 사용자는 이전에 '{prev_summary}' 타입으로 진단된 기록이 있습니다. 환영 인사에서 '이전 진단 내역'이라는 단어를 포함하여 이를 언급하고, 이전 결과를 참고해 어떤 도움을 줄 수 있는지 알려주세요. 인플루언서의 말투로 작성하세요.")
         else:
-            user_prompt_lines.append("이 사용자는 이전 진단 기록이 없습니다. 자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 2~3개의 짧은 질문을 인플루언서의 말투로 해주세요. 질문은 대화형으로 자연스럽게 이어지도록 작성하세요.")
+            user_prompt_lines.append("이 사용자는 이전 진단 기록이 없습니다. 자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 안내하고, 인플루언서의 말투로 작성하세요.")
 
         user_prompt_lines.append("응답은 2~4개의 짧은 문단(또는 문장들)으로 요약해주고, 추가 지시나 메타 정보는 출력하지 마세요. 오직 환영 텍스트만 출력하세요.")
 
@@ -995,7 +998,8 @@ async def analyze(
     if not request.question or (isinstance(request.question, str) and request.question.strip() == ""):
         try:
             # Reuse the existing welcome helper to build the message. Pass current db and user.
-            welcome_resp = generate_welcome(db=db, current_user=current_user)
+            infl_id = chat_history.influencer_id or chat_history.influencer_name
+            welcome_resp = generate_welcome(db=db, current_user=current_user, influencer_id=infl_id)
             welcome_text = (welcome_resp or {}).get('message') or '안녕하세요! 퍼스널컬러 AI입니다.'
         except Exception as e:
             print(f"[analyze] welcome generation failed: {e}")
@@ -1286,7 +1290,35 @@ async def analyze(
     if precheck_label:
         user_emotion = precheck_label
     else:
-        user_emotion = await _resolve_emotion_tag(emotion_res, convo_list, request.question)
+        # If this analyze call appears to be a welcome / image-upload prompt,
+        # or the orchestrator explicitly marked it as a welcome, skip emotion
+        # resolution and default to neutral to avoid UX confusion.
+        try:
+            # detect welcome flag coming from orchestrator (various shapes)
+            is_welcome_meta = False
+            try:
+                meta = None
+                if isinstance(orch_resp, dict):
+                    meta = orch_resp.get('_meta') or orch_resp.get('meta')
+                elif hasattr(orch_resp, 'dict'):
+                    try:
+                        orch_dict = orch_resp.dict()
+                        meta = orch_dict.get('_meta') or orch_dict.get('meta')
+                    except Exception:
+                        meta = getattr(orch_resp, 'meta', None)
+                if isinstance(meta, dict) and meta.get('is_welcome'):
+                    is_welcome_meta = True
+            except Exception:
+                is_welcome_meta = False
+
+            qtxt = request.question or ''
+            if is_welcome_meta or (isinstance(qtxt, str) and re.search(r"이미지|업로드|환영|환영합니다|환영해", qtxt)):
+                print('[analyze] welcome-like detected (meta or question); forcing emotion=neutral')
+                user_emotion = 'neutral'
+            else:
+                user_emotion = await _resolve_emotion_tag(emotion_res, convo_list, request.question)
+        except Exception:
+            user_emotion = await _resolve_emotion_tag(emotion_res, convo_list, request.question)
     # canonicalize and attach emotion + lottie filename for frontend
     user_emotion = to_canonical(user_emotion)
     data["emotion"] = user_emotion
@@ -1763,6 +1795,9 @@ def get_chat_history(history_id: int, current_user: models.User = Depends(get_cu
                             'question': msgs[i].text,
                             'answer': d.get('description', ''),
                             'chat_res': d,
+                            # include timestamps so clients can render original message times
+                            'question_created_at': (msgs[i].created_at.isoformat() if getattr(msgs[i], 'created_at', None) else None),
+                            'created_at': (msgs[j].created_at.isoformat() if getattr(msgs[j], 'created_at', None) else None),
                         }
                         items.append(item)
                         qid += 1

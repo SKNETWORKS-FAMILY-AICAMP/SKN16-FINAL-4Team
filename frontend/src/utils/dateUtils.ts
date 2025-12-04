@@ -6,7 +6,10 @@ export function formatKoreanDate(
   withTime = false
 ): string {
   if (!dateInput) return '';
-  const d = dayjs(dateInput).tz('Asia/Seoul');
+  // Normalize input to UTC first, then convert to Asia/Seoul timezone.
+  // This handles ISO strings with or without explicit offsets and Date objects
+  // so the displayed time is correctly shown in Korean local time.
+  const d = dayjs(dateInput).utc().tz('Asia/Seoul');
   if (!d.isValid()) return '';
   if (withTime) {
     return d.format('YYYY.MM.DD HH:mm');
