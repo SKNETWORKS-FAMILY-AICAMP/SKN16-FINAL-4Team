@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { chatbotApi } from '@/api/chatbot';
 import { userFeedbackApi } from '@/api/feedback';
@@ -7,7 +7,10 @@ import { message } from 'antd';
 
 type FeedbackPayload = {
   historyId?: number | undefined;
-  isPositive: boolean;
+  // Prefer sending numeric rating (1..5). For backward compatibility, callers may still
+  // provide `isPositive` which will be converted to a legacy feedback string.
+  isPositive?: boolean;
+  rating?: number;
 };
 
 type UseChatbotOptions = {
@@ -31,9 +34,9 @@ export function useChatbot(options?: UseChatbotOptions) {
   const { data: user } = useCurrentUser();
 
   // start a new chat session explicitly
-  const startSession = useCallback(async () => {
+  const startSession = useCallback(async (influencerId?: string) => {
     try {
-      const res = await chatbotApi.startSession();
+      const res = await chatbotApi.startSession(influencerId);
       return res as { history_id: number; reused: boolean; user_turns: number };
     } catch (e) {
       console.error('채팅 세션 시작 실패', e);
@@ -46,6 +49,10 @@ export function useChatbot(options?: UseChatbotOptions) {
     mutationFn: (params: { question: string; history_id?: number | undefined }) =>
       chatbotApi.analyze(params as any),
     onSuccess: (data: any) => {
+      // Invalidate influencer histories so UI (MyPage) can refresh with latest messages
+      try {
+        queryClient.invalidateQueries({ queryKey: ['influencerHistories'] });
+      } catch (e) {}
       options?.onAnalyzeSuccess?.(data);
     },
     onError: (error: any) => {
@@ -72,8 +79,10 @@ export function useChatbot(options?: UseChatbotOptions) {
   // ------------------ feedback mutation ------------------
   const feedbackMutation = useMutation({
     mutationFn: async (payload: FeedbackPayload) => {
-      const { historyId, isPositive } = payload;
-      const feedbackType = isPositive ? '좋다' : '싫다';
+      const { historyId, isPositive, rating } = payload;
+      // If a numeric rating is provided, prefer it. Otherwise fall back to legacy boolean.
+      const useRating = typeof rating === 'number' ? rating : undefined;
+      const feedbackType = useRating === undefined ? (isPositive ? '좋다' : '싫다') : undefined;
 
       // try to end session but do not fail on end errors
       if (historyId) {
@@ -85,6 +94,10 @@ export function useChatbot(options?: UseChatbotOptions) {
       }
 
       if (historyId) {
+        // send rating when available; otherwise send legacy feedback string
+        if (useRating !== undefined) {
+          return await userFeedbackApi.submitUserFeedback({ history_id: historyId, rating: useRating, feedback: feedbackType });
+        }
         return await userFeedbackApi.submitUserFeedback({ history_id: historyId, feedback: feedbackType });
       }
 
@@ -116,27 +129,68 @@ export function useChatbot(options?: UseChatbotOptions) {
     return chatbotApi.endChatSession(historyId as any);
   };
 
+  // ------------------ influencer histories (react-query) ------------------
+  const {
+    data: influencerHistoriesData,
+    isLoading: isLoadingInfluencerHistories,
+    isError: isErrorInfluencerHistories,
+    refetch: refetchInfluencerHistories,
+  } = useQuery<any[]>({
+    queryKey: ['influencerHistories'],
+    queryFn: () => chatbotApi.getInfluencerHistories(),
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const getInfluencerHistories = async (forceRefresh = false) => {
+    if (forceRefresh) {
+      const r = await refetchInfluencerHistories();
+      return r.data || [];
+    }
+    return influencerHistoriesData || [];
+  };
+
+  const fetchMessagesForInfluencer = async (influencerId: string) => {
+    return await chatbotApi.getMessagesForInfluencer(influencerId);
+  };
+
+  // (influencerProfiles removed) use influencerHistories instead
+
   const submitFeedback = (payload: FeedbackPayload) => (feedbackMutation.mutateAsync as any)(payload);
+  const getPendingFlag = (m: any) => {
+    if (!m) return false;
+    // prefer isPending if available (per-call pending), otherwise fall back to isLoading
+    if (typeof m.isPending !== 'undefined') return !!m.isPending;
+    return !!m.isLoading;
+  };
 
   return {
     // session control
     startSession,
     // analyze mutation
     analyze,
-    isAnalyzing: (analyzeMutation as any).isLoading || false,
+    isAnalyzing: getPendingFlag(analyzeMutation),
     analyzeError: (analyzeMutation as any).error || null,
 
     // diagnosis (3-turn) mutation
     analyzeChatForDiagnosis,
-    isDiagnosing: (diagnosisMutation as any).isLoading || false,
+    isDiagnosing: getPendingFlag(diagnosisMutation),
     diagnoseError: (diagnosisMutation as any).error || null,
 
     // end session (direct API call)
     endChatSession,
 
+    // influencer profiles removed: prefer influencerHistories
+    // influencer histories
+    getInfluencerHistories,
+    influencerHistories: influencerHistoriesData || [],
+    isLoadingInfluencerHistories,
+    influencerHistoriesError: isErrorInfluencerHistories,
+    refetchInfluencerHistories,
+    fetchMessagesForInfluencer,
+
     // feedback
     submitFeedback,
-    isSubmittingFeedback: (feedbackMutation as any).isLoading || false,
+    isSubmittingFeedback: getPendingFlag(feedbackMutation),
     feedbackError: (feedbackMutation as any).error || null,
   };
 }

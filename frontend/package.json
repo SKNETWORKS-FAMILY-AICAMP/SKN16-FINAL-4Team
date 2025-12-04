@@ -21,6 +21,7 @@
     "@tanstack/react-query-devtools": "^5.90.2",
     "@types/react-router-dom": "^5.3.3",
     "antd": "^5.27.4",
+    "antd-img-crop": "^4.27.0",
     "axios": "^1.12.2",
     "clsx": "^2.1.1",
     "html2canvas": "^1.4.1",

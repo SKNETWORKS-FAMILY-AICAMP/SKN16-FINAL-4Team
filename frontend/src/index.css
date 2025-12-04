@@ -47,3 +47,97 @@
 .custom-avatar-default.ant-avatar {
   background: linear-gradient(135deg, #ede9fe 0%, #c4b5fd 100%) !important;
 }
+
+/* Animated colorful gradient ring to indicate active influencer.
+   The animation is applied to a ::before pseudo-element so the inner
+   profile image stays fixed (not rotated). The inner avatar is given
+   a solid background to mask the center of the gradient. */
+.influencer-avatar-active {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px; /* thickness of the visible ring */
+  border-radius: 9999px;
+}
+
+.influencer-avatar-active::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: conic-gradient(from 0deg, #ff6b6b, #fbaf2b, #0ac3e4, #7c3aed, #ff6b6b);
+  z-index: 0;
+  animation: influencer-ring-rotate 3s linear infinite;
+}
+
+.influencer-avatar-active > * {
+  position: relative;
+  z-index: 2; /* sit above the rotating ring */
+  border-radius: inherit;
+}
+
+/* Make sure avatar itself masks the middle of the ring (so profile image is not showing the gradient behind) */
+.influencer-avatar-active .ant-avatar,
+.influencer-avatar-active img {
+  background: #fff; /* adjust if your avatar has transparent background */
+  border-radius: inherit;
+}
+
+@keyframes influencer-ring-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Make sure clickable wrapper doesn't shift layout when ring added */
+.influencer-avatar-clickable {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.influencer-avatar-clickable:hover {
+  transform: translateY(-3px) scale(1.04);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+}
+
+/* Ensure influencer avatar images use contain and don't get cropped on the sides */
+.influencer-avatar-clickable .ant-avatar,
+.influencer-avatar-clickable .ant-avatar > img,
+.influencer-avatar-clickable .ant-avatar-image {
+  width: 50px !important;
+  height: 50px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  overflow: hidden !important;
+}
+
+.influencer-avatar-clickable .ant-avatar-image img,
+.influencer-avatar-clickable img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  object-position: center center !important;
+  border-radius: inherit !important;
+}
+
+.ant-avatar {
+  /* Ensure avatars are circular and clip their contents */
+  border-radius: 50% !important;
+  overflow: hidden !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.ant-avatar img,
+.ant-avatar-image img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: fill !important; /* preserve aspect and avoid vertical squash */
+  object-position: center center !important;
+  border-radius: 50% !important;
+}

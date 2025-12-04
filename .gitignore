@@ -96,6 +96,9 @@ poetry.lock
 # VS Code
 .vscode/
 
+# Local virtualenv
+.venv/
+
 # Alembic
 migrations/versions/
 

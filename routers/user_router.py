@@ -56,6 +56,33 @@ def user_signup(user_create: schemas.UserCreate, db: Session = Depends(get_db)):
     )
     db.add(new_user)
     db.commit()
+    db.refresh(new_user)
+
+    # Consent 기록 추가 (트랜잭션 내에서 간단히 추가)
+    try:
+        # 개인정보 수집 및 이용 (필수)
+        consent_personal = models.Consent(
+            user_id=new_user.id,
+            consent_type='personal_info',
+            consent=bool(user_create.consent_required),
+            version=os.getenv('TERMS_VERSION', 'v1'),
+            source='signup'
+        )
+        db.add(consent_personal)
+
+        # 마케팅 수신 (선택)
+        consent_marketing = models.Consent(
+            user_id=new_user.id,
+            consent_type='marketing',
+            consent=bool(user_create.consent_marketing),
+            version=os.getenv('TERMS_VERSION', 'v1'),
+            source='signup'
+        )
+        db.add(consent_marketing)
+        db.commit()
+    except Exception:
+        db.rollback()
+        # 이미 유저는 생성되었으므로, 에러는 로깅 후 무시하거나 별도 처리 필요
     return {"message": "회원가입이 완료되었습니다."}
 
 @router.post("/login", response_model=schemas.Token)

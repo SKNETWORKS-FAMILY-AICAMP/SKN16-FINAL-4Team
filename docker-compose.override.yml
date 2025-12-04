@@ -1,0 +1,17 @@
+# 로컬 개발 및 EC2 직접 빌드용 오버라이드 설정
+# docker-compose up 시 자동으로 적용됩니다.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # 로컬에서는 이미지를 빌드하고, pull 실패 시 빌드를 사용
+    pull_policy: build
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    # 로컬에서는 이미지를 빌드하고, pull 실패 시 빌드를 사용
+    pull_policy: build

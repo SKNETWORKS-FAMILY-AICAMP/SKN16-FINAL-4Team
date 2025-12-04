@@ -1,0 +1,191 @@
+[33m2058e5b[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Fix: Corrected YAML syntax error in deploy workflow
+[33mc336fdb[m Fix: Corrected YAML syntax error in deploy workflow
+[33m6a26c3d[m Fix: Corrected YAML syntax error in deploy workflow
+[33m1f6648d[m Fix: Corrected YAML syntax error in deploy workflow
+[33m8f8c402[m Fix: Corrected YAML syntax error in deploy workflow
+[33m6da8712[m Fix: Corrected YAML syntax error in deploy workflow
+[33m240a0fc[m Fix: Corrected YAML syntax error in deploy workflow
+[33m65ea7a1[m Merge branch 'main' of github.com:SKNETWORKS-FAMILY-AICAMP/SKN16-FINAL-4Team
+[33m7cf4dd2[m Merge branch 'main' of github.com:SKNETWORKS-FAMILY-AICAMP/SKN16-FINAL-4Team
+[33mfb0cbd9[m Merge branch 'main' of github.com:SKNETWORKS-FAMILY-AICAMP/SKN16-FINAL-4Team
+[33m0251de7[m Final resolve of recurring merge conflict and clean CI/CD YAML
+[33m34a20f6[m Final resolve of recurring merge conflict and clean CI/CD YAML
+[33mb3420f0[m Final resolve of recurring merge conflict and CI/CD fix
+[33m73c6769[m Final resolve of recurring merge conflict and CI/CD fix
+[33m32b2663[m Final resolve merge conflict and fix Dockerfile path for CI/CD
+[33m0c942be[m Final resolve merge conflict and fix Dockerfile path for CI/CD
+[33m9c95319[m Resolve merge conflict and finalize CI/CD paths
+[33m7352c5a[m Resolve merge conflict and finalize CI/CD paths
+[33m08fe040[m feat: setup github actions for auto deployment
+[33mb507c5a[m feat: setup github actions for auto deployment
+[33me2bef1f[m Update .gitignore
+[33m36f5c95[m Merge pull request #2 from SKNETWORKS-FAMILY-AICAMP/feature/emoji_reaction
+[33m6086aa8[m fix: frontend > 챗봇 페이지 하단 스크롤 버그 수정
+[33m53d3ca9[m fix: frontend > 챗봇 페이지에서 첫 화면 실행 시 스크롤 실행되지 않도록 처리
+[33m49821a1[m fix: frontend > 챗봇 이모티콘 애니메이션 및 스크롤 이벤트 수정
+[33m4b76d79[m fix: 유저 텍스트 감정 분석 프롬프트 개선
+[33m23f3d50[m style: frontend > 이모티콘 애니메이션 수정
+[33m240e6f4[m feat: frontend > 챗봇 페이지에서 감정 타입에 따라 이모티콘 반영
+[33m55b828e[m chore: 유저 텍스트를 분석하여 analyze API에 감정 추가
+[33m6904ae5[m Merge pull request #1 from SKNETWORKS-FAMILY-AICAMP/feature/train_emotion
+[33m8d2dc3a[m fix: frontend > 진단 결과 모달 확인 시 챗봇에서는 이전 진단 포함, 마이페이지에서는 클릭한 진단 타입만 보이도록 수정
+[33m26b2601[m fix: frontend > 챗봇 페이지 유저 프로필 수정, date format 수정, 리포트 생성 로직 수정
+[33m3e903d7[m feat: 대화 진행 후 퍼스널컬러 진단 및 결과 다운로드 기능 추가
+[33m003c6e3[m fix: 챗봇에서 퍼컬 진단 후 리포트 이미지 다운로드 기능 추가
+[33m6cfb087[m docs: 감정데이터 훈련 모델 학습 결과서 추가
+[33m38929b7[m fix: frontend > 챗봇 메세지 스타일 수정
+[33m76e8dde[m feat: 감정 데이터셋 훈련 ai 모델 적용 API 개발 및 프론트엔드 적용
+[33mb90a7d5[m chore: 감정 데이터 훈련 스크립트 및 평가 추가
+[33m467d728[m chore: 불필요한 DEBUG 로그 제외 처리
+[33m19b1f46[m chore: frontend > package-lock.json peer 적용
+[33m2865f5c[m chore: 프로젝트 정보 수정
+[33m84c8a54[m Merge pull request #25 from SKNETWORKS-FAMILY-AICAMP/feature/admin
+[33m529b176[m feat: admin api 추가 및 frontend 관리자 대시보드 추가
+[33m7d2b40a[m fix: frontend > date format util 함수 생성 및 적용
+[33m8a290ed[m fix: frontend > 관리자페이지에 권한변경 기능 추가
+[33m2bb2b13[m fix: 관리자용 user role 변경 API 추가
+[33m5651576[m fix: frontend > 챗봇 히스토리 API 데이터 수정 및 적용
+[33mb2e39e0[m feat: frontend > 관리자 계정 로그인 시 대시보드 화면 추가
+[33m59e8a07[m fix: user_router 중복 코드 정리
+[33m4f4c08e[m feat: 관리자용 ai 피드백 list api 추가.
+[33m7edfda5[m feat: user에 role 추가 및 admin용 user list, chat history  API 추가
+[33m04695a5[m Merge pull request #24 from SKNETWORKS-FAMILY-AICAMP/feature/front_chatbot
+[33m336d739[m fix: frontend > build 에러 발생 코드 수정 및 lib 폴더 .gitignore 제외
+[33mce8f264[m fix: 서버 중복코드 수정
+[33md5a4e54[m style: frontend > padding 등 레이아웃 수정
+[33mc0bedfb[m fix: 진단기록 API 로직 수정
+[33m0c2d87a[m fix: frontend > 챗봇 유저 평가 API 연동
+[33m7a58ba5[m feat: frontend > 챗봇 API 연동
+[33mb09b0cc[m Merge branch 'feature/front_chatbot' of https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN16-4th-3Team into feature/front_chatbot
+[33ma8becb7[m fix: frontend > 챗봇 페이지 벗어날 때 상담 내역이 있으면 유저 피드백 모달 띄움
+[33m323ed72[m fix: frontend > 테스트 후 챗봇에 최근 진단 내용으로 업데이트 안 되는 버그 수정
+[33m90e0438[m feat: frontend > chatbot 페이지 개발 (API 연동 X)
+[33m3c7fc60[m fix: frontend > 최근 진단 기록 상세 탭 초기화
+[33mebd9991[m style: frontend > 진단 결과 하단 버튼, 마이페이지 레이아웃 수정
+[33m4a6e470[m fix: frontend > survey/list api 호출 문제 수정
+[33m4b74ba3[m Merge pull request #20 from SKNETWORKS-FAMILY-AICAMP/feature/feedback
+[33ma6d46ba[m Merge branch 'feature/feedback' of https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN16-4th-3Team into feature/feedback
+[33m0e63a20[m feedback api 생성 및 테스트
+[33m5bab96f[m feedback api 생성
+[33me0796fb[m feedback api 생성 및 테스트
+[33mb8c2905[m fix: frontend > 챗봇 페이지 벗어날 때 상담 내역이 있으면 유저 피드백 모달 띄움
+[33m6046386[m fix: frontend > 테스트 후 챗봇에 최근 진단 내용으로 업데이트 안 되는 버그 수정
+[33m2a3565b[m feat: frontend > chatbot 페이지 개발 (API 연동 X)
+[33m5b73958[m fix: frontend > 최근 진단 기록 상세 탭 초기화
+[33m476a780[m style: frontend > 진단 결과 하단 버튼, 마이페이지 레이아웃 수정
+[33m25104a1[m fix: frontend > survey/list api 호출 문제 수정
+[33m06a8f1b[m Merge pull request #23 from SKNETWORKS-FAMILY-AICAMP/feature/front_mypage
+[33m9da37f2[m fix: frontend > 진단 후 마이페이지 이동 시 진단기록 업데이트 버그 수정
+[33m8c181f4[m fix: frontend > 진단 내역 삭제 기능 추가
+[33md59513b[m fix: frontend > 마이페이지 내 진단기록 내역 추가
+[33m81e0818[m Merge pull request #22 from SKNETWORKS-FAMILY-AICAMP/feature/settings
+[33m746695b[m fix: 개발 환경 구축 및 설명 추가
+[33m5a507f6[m fix: server, frontend 기본 세팅 helper 추가
+[33me030692[m Merge pull request #21 from SKNETWORKS-FAMILY-AICAMP/feature/personal_color
+[33mcb24a60[m fix: survey 진단 결과도 저장하도록 수정
+[33m76f4736[m feat: survey API 개발 및 front 적용
+[33m3fcde2c[m feedback api 생성
+[33m88f08e6[m chore: survey api 작업 중
+[33m650c78a[m Merge pull request #19 from SKNETWORKS-FAMILY-AICAMP/feature/survey_result
+[33mb7ef930[m style: frontend > 타입을 점수순으로 추천 및 컬러 팔레트 복사 기능 추가
+[33m0b5503f[m Merge pull request #10 from SKNETWORKS-FAMILY-AICAMP/feature/personal_color
+[33m66c5133[m Merge branch 'main' into feature/personal_color
+[33m570ab20[m fix: survey 모델 정의
+[33md6ee5f0[m survey조회 api추가 및 survey result list로 저장
+[33m75794c6[m fix: survey api 모델 수정 및 score_map, confidence, total_score는 openAI로 처리
+[33m24182ea[m 퍼스널 컬러 진단 설문 저장 모델  추가 및 반드시 로그인 했을 시 사용
+[33m15e5223[m feature/personal_color api 초기세팅
+[33me8e487a[m 챗봇 api 생성
+[33m7bb3169[m chatbot api 생성
+[33mfbbad87[m Merge pull request #14 from SKNETWORKS-FAMILY-AICAMP/feature/ai_chat
+[33m05b3fe7[m chore: survey 모델 정의. API 개발 진행 중
+[33mddccef7[m fix: survey 모델 정의
+[33m0046f2b[m 챗봇 api 생성
+[33m3c9b7e2[m fix: survey api 모델 수정 및 score_map, confidence, total_score는 openAI로 처리
+[33m32bd94c[m survey조회 api추가 및 survey result list로 저장
+[33m2381d69[m style: frontend > Header height 수정
+[33m36193c0[m fix: frontend >  survey api 사용부분 제거 (api 개발 후 적용 예정)
+[33m4424b14[m fix: user_router > datetime import 버그 수정
+[33m4485681[m fix: schemas > User > create_date 타입 오류 수정
+[33m059eadf[m fix: User schemas > create_date 데이터 형태 버그 수정
+[33m60e6961[m fix: User schemas에 create_date, is_active 추가
+[33m42efe5a[m Merge pull request #18 from SKNETWORKS-FAMILY-AICAMP/feature/front_personal_color
+[33m45702ba[m style: frontend > Header height 수정
+[33me36bdbc[m fix: frontend >  survey api 사용부분 제거 (api 개발 후 적용 예정)
+[33me9deb58[m Merge pull request #17 from SKNETWORKS-FAMILY-AICAMP/hotfix/user_info
+[33m8b7f3d0[m fix: user_router > datetime import 버그 수정
+[33m1333f45[m Merge pull request #16 from SKNETWORKS-FAMILY-AICAMP/hotfix/user_info
+[33mcbff8e2[m fix: schemas > User > create_date 타입 오류 수정
+[33mef69309[m Merge pull request #15 from SKNETWORKS-FAMILY-AICAMP/hotfix/user_info
+[33m976f7e7[m fix: User schemas > create_date 데이터 형태 버그 수정
+[33m668f463[m fix: survey api 모델 수정 및 score_map, confidence, total_score는 openAI로 처리
+[33m4beaad6[m feature/personal_color api 초기세팅
+[33maf64368[m fix: frontend > mypage 데이터를 api 데이터로 변경
+[33mdb3dc0d[m fix: User schemas에 create_date, is_active 추가
+[33mad3f824[m fix: frontend > token 관련 중복 코드 제거
+[33mf21e2f4[m fix: frontend > 유저 데이터 API 연동 및 탈퇴 처리 추가
+[33m7ea20f9[m fix: frontend > 로그인한 유저만 퍼스널컬러 테스트 진행하도록 수정
+[33ma46d871[m fix: frontend > 마이페이지에서 퍼스널 컬러 진단하기 버튼 라우팅 연결
+[33mc4ddeff[m feat: frontend > 퍼스널 컬러 테스트 화면 추가
+[33m2b0e675[m 퍼스널컬러 챗봇 (LLM + RAG 연동) 과 지식문서 추가
+[33ma3d4356[m Merge pull request #13 from SKNETWORKS-FAMILY-AICAMP/feature/front_user_info
+[33m8e887fe[m chatbot api 생성
+[33m505b09c[m fix: frontend > mypage 데이터를 api 데이터로 변경
+[33m64aaeef[m Merge pull request #12 from SKNETWORKS-FAMILY-AICAMP/feature/user_info
+[33m416ed60[m fix: User schemas에 create_date, is_active 추가
+[33me049eec[m survey조회 api추가 및 survey result list로 저장
+[33m9a42a5a[m Merge pull request #11 from SKNETWORKS-FAMILY-AICAMP/feature/front_mypage
+[33m1673f98[m fix: frontend > token 관련 중복 코드 제거
+[33mc9511ab[m Merge branch 'main' into feature/front_mypage
+[33m4815290[m fix: frontend > 유저 데이터 API 연동 및 탈퇴 처리 추가
+[33md3e66d0[m fix: frontend > 로그인한 유저만 퍼스널컬러 테스트 진행하도록 수정
+[33m1cf8234[m fix: frontend > 마이페이지에서 퍼스널 컬러 진단하기 버튼 라우팅 연결
+[33m0b68c9d[m feat: frontend > 퍼스널 컬러 테스트 화면 추가
+[33m2a759a8[m Merge pull request #9 from SKNETWORKS-FAMILY-AICAMP/feature/front_diagnosis
+[33m0136a5f[m 퍼스널컬러 챗봇 (LLM + RAG 연동) 과 지식문서 추가
+[33m9ba65ab[m 퍼스널 컬러 진단 설문 저장 모델  추가 및 반드시 로그인 했을 시 사용
+[33mf140a0d[m fix: frontend > 로그인한 유저만 퍼스널컬러 테스트 진행하도록 수정
+[33mcd7680b[m fix: frontend > 마이페이지에서 퍼스널 컬러 진단하기 버튼 라우팅 연결
+[33mf78ea12[m feat: frontend > 퍼스널 컬러 테스트 화면 추가
+[33m8896db5[m feature/personal_color api 초기세팅
+[33m6832909[m Merge pull request #7 from SKNETWORKS-FAMILY-AICAMP/feayure/delete
+[33m240528a[m 유저 활성 비활성 구분
+[33m583d724[m Merge pull request #8 from SKNETWORKS-FAMILY-AICAMP/feature/front_header
+[33mcfb1ebf[m style: frontend > favicon 적용
+[33m2631cbb[m fix: frontend > 로그인 상태에 따라 header 메뉴 수정
+[33m603ef11[m 회원탈퇴 api 생성
+[33m5b247f4[m Merge pull request #6 from SKNETWORKS-FAMILY-AICAMP/feature/front_login
+[33m3584624[m Merge branch 'main' into feature/front_login
+[33m13ff76a[m fix: Login API 연동 및 errorHandler 함수 추가
+[33mdd3b152[m LoginForm 삭제 및 Login 페이지 안에서 통합개발
+[33m41f180d[m Login 화면 구성 - 라우터 설정파일 찾기(APP.tsx, routes 폴더) , Login 컴포넌트 import 추가, Login 경로 Route 추가
+[33mb84d30f[m chore: frontend > 페이지 이동 시 Scroll Top 처리
+[33m7ebab6f[m fix: 회원가입 API 연동
+[33m2ed6585[m style: frontend > LoginForm 분리
+[33mb3780ef[m Merge pull request #5 from SKNETWORKS-FAMILY-AICAMP/feature/front_signin
+[33mc1bc8af[m LoginForm 삭제 및 Login 페이지 안에서 통합개발
+[33m06f8698[m Login 화면 구성 - 라우터 설정파일 찾기(APP.tsx, routes 폴더) , Login 컴포넌트 import 추가, Login 경로 Route 추가
+[33m1d6da3d[m chore: frontend > 페이지 이동 시 Scroll Top 처리
+[33m87547b5[m fix: 회원가입 API 연동
+[33m4619c2b[m Merge pull request #4 from SKNETWORKS-FAMILY-AICAMP/feature/login
+[33mb88926b[m pip라이브러리 텍스트 파일 추가 및 uvicorn 실행파일 추가
+[33mbbc9785[m username을 nickname으로 수정
+[33m2140837[m Merge pull request #3 from SKNETWORKS-FAMILY-AICAMP/feature/front_signin
+[33m44dae20[m login api생성
+[33m18b7a26[m chore: Github workflow 폴더 위치 수정
+[33m97fc2fd[m chore: Github workflow 폴더 위치 수정
+[33m0022dd9[m chore: frontend > BackTop 버튼 추가
+[33m7a37288[m feat: 회원가입 페이지 추가
+[33mb1920f6[m fix: frontend > Router 에러 수정
+[33m941db62[m fix: frontend > antd 호환성 문제로 react19 -> 18 버전으로 다운그레이드
+[33mc01a424[m style: frontend > Header 컴포넌트 분리, 로그인/로그아웃 임시 적용
+[33m70023fd[m feat: frontend > 메인 페이지 추가
+[33m45b8f97[m Merge pull request #2 from SKNETWORKS-FAMILY-AICAMP/feature/frontend_init
+[33mf9da658[m feat: frontend > api 호출 라이브러리 및 로직 추가
+[33mee86e96[m feat: frontend > antd, tailwindcss 설정
+[33mefeb353[m Merge pull request #1 from SKNETWORKS-FAMILY-AICAMP/fix/signin
+[33m255dcf2[m 회원가입 api 닉네임 길이 로직, 4자리 이상 동일한 문자, 숫자 체크 추가
+[33m9bbbf3e[m 회원가입 api 유저네임 중복 제거
+[33medaae7b[m Merge branch 'main' of https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN16-4th-3Team
+[33m2bb6450[m initial commit
+[33m884ad2a[m Initial commit

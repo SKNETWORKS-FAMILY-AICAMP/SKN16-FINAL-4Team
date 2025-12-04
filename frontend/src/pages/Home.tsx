@@ -11,7 +11,7 @@ const HomePage: React.FC = () => {
 
   const handleStartTest = () => {
     // navigate(RouterPaths.PersonalColorTest); // 기존 설문 방식 (비활성화)
-    navigate(RouterPaths.Chatbot); // 대화형 진단으로 변경
+    navigate(RouterPaths.MyPage); // 대화형 진단으로 변경
   };
 
   return (

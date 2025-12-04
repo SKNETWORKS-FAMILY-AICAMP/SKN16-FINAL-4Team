@@ -13,6 +13,7 @@ from routers import chatbot_router
 from routers import survey_router
 from routers import feedback_router
 from routers import admin_router
+from routers import image_router
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -134,14 +135,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "detail": exc.errors(),
         },
     )
-
-# user_router.py에 있는 API들을 앱에 포함
-app.include_router(user_router.router)
-app.include_router(chatbot_router.router)
-app.include_router(survey_router.router)
-app.include_router(feedback_router.router)
-app.include_router(admin_router.router)
-
+  
 # ==================== RAG 서비스 통합 엔드포인트 ====================
 
 @app.get("/api/rag/health")
@@ -166,3 +160,12 @@ async def query_rag_service(query: str, temperature: float = 0.7, max_tokens: in
     """
     result = await rag_client.query_rag(query, temperature, max_tokens, force_route)
     return result
+
+# user_router.py에 있는 API들을 앱에 포함
+app.include_router(user_router.router)
+app.include_router(chatbot_router.router)
+app.include_router(survey_router.router)
+app.include_router(feedback_router.router)
+app.include_router(admin_router.router)
+app.include_router(image_router.router)
+
