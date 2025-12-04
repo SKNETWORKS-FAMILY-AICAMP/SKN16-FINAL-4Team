@@ -23,6 +23,7 @@ from .core import (
 )
 
 from .api import app
+from .api.app import UnifiedKnowledgeRAG
 
 __version__ = "2.0.0"
 
@@ -40,4 +41,5 @@ __all__ = [
     "KnowledgeRouter",
     # API
     "app",
+    "UnifiedKnowledgeRAG",
 ]
