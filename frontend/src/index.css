@@ -123,3 +123,21 @@
   object-position: center center !important;
   border-radius: inherit !important;
 }
+
+.ant-avatar {
+  /* Ensure avatars are circular and clip their contents */
+  border-radius: 50% !important;
+  overflow: hidden !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.ant-avatar img,
+.ant-avatar-image img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important; /* preserve aspect and avoid vertical squash */
+  object-position: center center !important;
+  border-radius: 50% !important;
+}
