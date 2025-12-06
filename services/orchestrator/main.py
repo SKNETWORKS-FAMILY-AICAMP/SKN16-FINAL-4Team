@@ -5,6 +5,7 @@ import re
 import asyncio
 import os
 import logging
+import time
 
 from services.api_emotion import main as api_emotion
 from services.api_color import main as api_color
@@ -83,6 +84,7 @@ def _invoke_sync_service(service_func, payload):
 
 @app.post("/api/orchestrator/analyze", response_model=OrchestratorResponse)
 async def analyze(payload: OrchestratorRequest):
+    start_time = time.time()
     """통합 분석 엔드포인트: 감정 + 색상 + 인플루언서 스타일링"""
     if not payload or not payload.user_text:
         raise HTTPException(status_code=400, detail="user_text가 필요합니다")
@@ -178,41 +180,55 @@ async def analyze(payload: OrchestratorRequest):
     else:
         # 1. 감정 및 색상 분석 병렬 처리 (Original Logic)
         async def _call_emotion():
+            t0 = time.time()
             try:
                 emo_payload = api_emotion.EmotionRequest(
                     user_text=payload.user_text,
                     conversation_history=payload.conversation_history,
                 )
+                res = None
                 if asyncio.iscoroutinefunction(api_emotion.generate_emotion):
-                    return await api_emotion.generate_emotion(emo_payload)
+                    res = await api_emotion.generate_emotion(emo_payload)
                 else:
                     # 동기 함수 처리
                     result = api_emotion.generate_emotion(emo_payload)
                     # 코루틴이 반환되면 await
                     if asyncio.iscoroutine(result):
-                        return await result
-                    return result
+                        res = await result
+                    else:
+                        res = result
+                print(f"✅ [Orchestrator] Emotion API Response: {res}")
+                logger.info(f"[orchestrator] Emotion API took {time.time() - t0:.2f}s")
+                return res
             except Exception as e:
                 logger.error(f"[emotion] 실패: {e}")
+                print(f"❌ [Orchestrator] Emotion API Error: {e}")
                 return {"error": str(e)}
 
         async def _call_color():
+            t0 = time.time()
             try:
                 color_payload = api_color.ColorRequest(
                     user_text=payload.user_text,
                     conversation_history=payload.conversation_history,
                 )
+                res = None
                 if asyncio.iscoroutinefunction(api_color.analyze_color):
-                    return await api_color.analyze_color(color_payload)
+                    res = await api_color.analyze_color(color_payload)
                 else:
                     # 동기 함수 처리
                     result = api_color.analyze_color(color_payload)
                     # 코루틴이 반환되면 await
                     if asyncio.iscoroutine(result):
-                        return await result
-                    return result
+                        res = await result
+                    else:
+                        res = result
+                print(f"✅ [Orchestrator] Color API Response: {res}")
+                logger.info(f"[orchestrator] Color API took {time.time() - t0:.2f}s")
+                return res
             except Exception as e:
                 logger.error(f"[color] 실패: {e}")
+                print(f"❌ [Orchestrator] Color API Error: {e}")
                 return {"error": str(e)}
 
         # 병렬 실행
@@ -269,10 +285,14 @@ async def analyze(payload: OrchestratorRequest):
             if isinstance(chain_payload.emotion_result, dict):
                 chain_payload.emotion_result.setdefault("_meta", {})["is_welcome"] = True
 
+        t0 = time.time()
         chain_resp = api_influencer.style_emotion_chain(chain_payload)
+        logger.info(f"[orchestrator] Influencer API took {time.time() - t0:.2f}s")
         influencer_styled = _to_dict(chain_resp)
+        print(f"✅ [Orchestrator] Influencer API Response: {influencer_styled}")
     except Exception as e:
         logger.error(f"[influencer] 실패: {e}")
+        print(f"❌ [Orchestrator] Influencer API Error: {e}")
         influencer_styled = {"error": str(e)}
 
     # 4. 최종 응답 구성
@@ -290,5 +310,8 @@ async def analyze(payload: OrchestratorRequest):
         logger.info(f"[orchestrator] emotion: {emo_result}")
         logger.info(f"[orchestrator] color: {color_result}")
         logger.info(f"[orchestrator] influencer: {influencer_styled}")
+
+    end_time = time.time()
+    logger.info(f"[orchestrator] Total execution time: {end_time - start_time:.2f}s")
 
     return OrchestratorResponse(**response)

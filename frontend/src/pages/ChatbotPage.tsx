@@ -1563,6 +1563,25 @@ const ChatbotPage: React.FC = () => {
                   </Text>
                 )}
 
+                {/* References Section */}
+                {!msg.isUser && msg.chatRes?.references && msg.chatRes.references.length > 0 && (
+                  <div className="mt-3 pt-2 border-t border-gray-100">
+                    <div className="text-xs text-gray-500 flex flex-wrap gap-1 items-center">
+                      <span className="font-bold mr-1">📚 참고 자료:</span>
+                      {msg.chatRes.references.map((ref, idx) => (
+                        <React.Fragment key={idx}>
+                          {idx > 0 && <span className="mr-1">,</span>}
+                          <antd.Tooltip title={<div className="whitespace-pre-wrap max-h-60 overflow-y-auto text-xs">{ref}</div>} overlayStyle={{ maxWidth: '400px' }}>
+                            <span className="text-purple-500 font-medium cursor-pointer hover:underline">
+                              [{idx + 1}]
+                            </span>
+                          </antd.Tooltip>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
                   {shouldShowReportButton() && (
                     <antd.Button

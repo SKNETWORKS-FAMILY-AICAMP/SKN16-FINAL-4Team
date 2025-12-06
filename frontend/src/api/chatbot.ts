@@ -17,6 +17,7 @@ export interface ChatResModel {
   description: string;
   recommendations: string[];
   emotion: EmotionType;
+  references?: string[];
 }
 
 export interface InfluencerProfile {

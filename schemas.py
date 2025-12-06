@@ -160,6 +160,7 @@ class ChatResModel(BaseModel):
     description: str
     recommendations: List[str]
     emotion: str
+    references: Optional[List[str]] = None
 
 class ChatItemModel(BaseModel):
     question_id: int

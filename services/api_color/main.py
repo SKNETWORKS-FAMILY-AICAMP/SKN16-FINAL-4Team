@@ -266,7 +266,12 @@ async def analyze_color(payload: ColorRequest):
                 "score": 30
             }],
             "source": "fallback",
-            "error": str(e)
+            "error": str(e),
+            "rag_metadata": {
+                "sources": [f"Error: {str(e)}"],
+                "route": 0,
+                "route_description": "Fallback due to error"
+            }
         }
         
         return ColorResponse(

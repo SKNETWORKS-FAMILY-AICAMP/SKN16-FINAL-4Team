@@ -1253,6 +1253,24 @@ async def analyze(
     data["primary_tone"] = primary or ""
     data["sub_tone"] = sub or ""
 
+    # Extract references from color_res (RAG metadata)
+    references = []
+    if isinstance(color_res, dict):
+        hints = color_res.get("detected_color_hints", {})
+        rag_meta = hints.get("rag_metadata", {})
+        sources = rag_meta.get("sources", [])
+        if sources:
+            for src in sources:
+                # Assuming src is a string (filename) or dict
+                if isinstance(src, dict):
+                    ref_text = src.get("source", "")
+                    if ref_text:
+                        references.append(ref_text)
+                elif isinstance(src, str):
+                    references.append(src)
+    
+    data["references"] = references
+
     # description: influencer styled text (string) > influencer fields > emotion.description > color.description
     desc = None
     try:
@@ -1271,7 +1289,21 @@ async def analyze(
 
     if not desc:
         desc = (emotion_res.get("description") if isinstance(emotion_res, dict) else None) or (color_res.get("description") if isinstance(color_res, dict) else None)
+    
+    # Ensure desc is not a JSON string (fix for double-encoded JSON)
+    if isinstance(desc, str):
+        desc_stripped = desc.strip()
+        if desc_stripped.startswith('{') and desc_stripped.endswith('}'):
+            try:
+                parsed = json.loads(desc_stripped)
+                if isinstance(parsed, dict):
+                    desc = parsed.get('styled_text') or parsed.get('description') or desc
+            except Exception:
+                pass
+
     data["description"] = desc or "안녕하세요! 퍼스널컬러 전문가입니다. 어떤 부분이 고민이신가요?"
+
+
 
     # recommendations: merge lists from emotion, color, and influencer (if any)
     recs = []
@@ -1373,6 +1405,7 @@ async def analyze(
             "influencer": data.get("influencer"),
             "emotion": data.get("emotion"),
             "emotion_lottie": data.get("emotion_lottie"),
+            "references": data.get("references"),
         }, ensure_ascii=False),
     )
     db.add(ai_msg)
@@ -1422,6 +1455,10 @@ async def analyze(
                             try:
                                 parsed_desc = json.loads(desc_text)
                                 if isinstance(parsed_desc, dict):
+                                    # Extract styled_text if present and use as description
+                                    if parsed_desc.get('styled_text'):
+                                        d['description'] = parsed_desc.get('styled_text')
+
                                     for k, v in parsed_desc.items():
                                         if k not in d or k == 'description':
                                             d[k] = v
@@ -1446,6 +1483,7 @@ async def analyze(
                     d.setdefault('sub_tone', '')
                     d.setdefault('emotion', d.get('emotion', 'neutral') or 'neutral')
                     d.setdefault('description', d.get('description') or '')
+                    d.setdefault('references', [])
 
                     items.append(ChatItemModel(
                         question_id=qid,
@@ -1800,6 +1838,23 @@ def get_chat_history(history_id: int, current_user: models.User = Depends(get_cu
                                 d = json.loads(text_blob)
                             except Exception:
                                 d = {"description": ai_msg.text or ""}
+
+                        # normalize nested description/json
+                        if isinstance(d.get("description"), str):
+                            desc_text = d.get("description", "").strip()
+                            if desc_text.startswith("{") or desc_text.startswith("["):
+                                try:
+                                    parsed_desc = json.loads(desc_text)
+                                    if isinstance(parsed_desc, dict):
+                                        # Extract styled_text if present
+                                        if parsed_desc.get('styled_text'):
+                                            d['description'] = parsed_desc.get('styled_text')
+                                        
+                                        for k, v in parsed_desc.items():
+                                            if k not in d or k == 'description':
+                                                d[k] = v
+                                except Exception:
+                                    pass
 
                         # normalize recommendations field
                         recommendations = d.get('recommendations', [])
