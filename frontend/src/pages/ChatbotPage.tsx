@@ -217,6 +217,11 @@ const ChatbotPage: React.FC = () => {
     }
   };
 
+  // Auto-scroll when messages change
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
   // Helper to sanitize large objects before sending to chat API
   const sanitizeForChat = (obj: any): any => {
     if (!obj) return obj;
