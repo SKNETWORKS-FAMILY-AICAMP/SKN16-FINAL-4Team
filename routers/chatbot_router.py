@@ -1198,15 +1198,16 @@ async def analyze(
                     emotion_summary = emotion_res.get('description') or emotion_res.get('primary_tone') or ''
 
                 system_msg = (
-                    "당신은 한국어로 자연스럽고 친근한 인플루언서 말투를 모방하는 카피라이터입니다. "
-                    "사용자에게 바로 보여줄 수 있는 2~3문장 분량의 응답을 생성하세요."
+                    "당신은 한국어로 자연스럽고 친근한 인플루언서 말투를 모방하는 퍼스널컬러 전문가입니다. "
+                    "사용자에게 바로 보여줄 수 있는 2~3문장 분량의 응답을 생성하세요. "
+                    "감정적인 공감은 짧게 하고, 뷰티/퍼스널컬러 조언 위주로 답변하세요."
                 )
                 if suppress:
                     system_msg += " [주의] '봄 라이트', '여름 뮤트' 같은 구체적인 퍼스널 컬러 진단명은 절대 언급하지 말고, 분위기나 느낌으로만 표현하세요."
 
                 user_msg = (
                     f"사용자 상황: {emotion_summary}\n퍼스널 컬러 힌트: {color_summary}\n"
-                    "위 정보를 바탕으로 친근하고 상담자다운 말투로 간단한 응답을 만들어주세요."
+                    "위 정보를 바탕으로 친근하고 전문적인 말투로 간단한 응답을 만들어주세요. 감정적 위로는 1문장으로 제한하세요."
                 )
 
                 resp = client.chat.completions.create(

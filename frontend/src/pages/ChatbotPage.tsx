@@ -393,8 +393,8 @@ const ChatbotPage: React.FC = () => {
   }, []);
 
   // 메시지에 리포트(진단) 상세보기 버튼을 보여야 하는지 판단
-  const shouldShowReportButton = (): boolean => {
-    if (surveyResults && surveyResults.length > 0) return true;
+  const shouldShowReportButton = (isUser: boolean): boolean => {
+    if (!isUser && surveyResults && surveyResults.length > 0) return true;
     return false;
   };
 
@@ -1583,7 +1583,7 @@ const ChatbotPage: React.FC = () => {
                 )}
 
                 <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
-                  {shouldShowReportButton() && (
+                  {shouldShowReportButton(msg.isUser) && (
                     <antd.Button
                       type="default"
                       size="small"
