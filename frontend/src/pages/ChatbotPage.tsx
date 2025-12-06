@@ -320,11 +320,6 @@ const ChatbotPage: React.FC = () => {
           console.warn('Failed to fetch recommended questions:', e);
         }
 
-        if (res.reused && typeof res.user_turns === 'number') {
-          setUserTurnCount(res.user_turns);
-          console.log('재사용 세션의 기존 사용자 턴 수 복원:', res.user_turns);
-        }
-
         let skipWelcome = false;
 
         // 복원 가능한 기존 열린 세션이면 히스토리 로드
