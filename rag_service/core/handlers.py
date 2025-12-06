@@ -228,7 +228,7 @@ class KnowledgeHandler(ABC):
                                             if text_part:
                                                 citations.append(f"[{title or 'Source'}] {text_part[:200]}...")
                                             elif title: 
-                                                citations.append(title)
+                                                citations.append(f"[{title}] (내용 참조)")
                                             elif uri: 
                                                 citations.append(uri)
                         
@@ -526,7 +526,7 @@ Answer the question based on the context provided. If the context doesn't contai
                                             if text_part:
                                                 citations.append(f"[{title or 'Source'}] {text_part[:200]}...")
                                             elif title: 
-                                                citations.append(title)
+                                                citations.append(f"[{title}] (내용 참조)")
                                             elif uri: 
                                                 citations.append(uri)
                         
@@ -738,6 +738,7 @@ class MutableKnowledgeHandler:
             
             # 최신 문서 우선 (리스트 끝이 최신이라고 가정)
             docs = []
+            full_contents = []
             total_chars = 0
             
             used_filenames = []
@@ -755,23 +756,50 @@ class MutableKnowledgeHandler:
                         if remaining > 500:
                             docs.append(doc_content[:remaining])
                             used_filenames.append(doc_name)
+                            full_contents.append(doc_content)
                         break
                     docs.append(doc_content)
                     used_filenames.append(doc_name)
+                    full_contents.append(doc_content)
                     total_chars += len(doc_content)
             
             # 문서 역순 정렬 (최신순 유지)
             docs.reverse()
             used_filenames.reverse()
+            full_contents.reverse()
             
             # Format filenames for metadata
             formatted_filenames = [self._format_source_name(f) for f in used_filenames]
             
             # Create reference snippets
             reference_snippets = []
-            for doc, fname in zip(docs, formatted_filenames):
-                # Clean up newlines for better display, increased length to 500
-                snippet = doc[:500].replace('\n', ' ').strip() + "..."
+            import json
+            for doc, full_doc, fname in zip(docs, full_contents, formatted_filenames):
+                snippet = ""
+                # Try to parse JSON content for better snippets using FULL content
+                if full_doc.strip().startswith('[') or full_doc.strip().startswith('{'):
+                    try:
+                        data = json.loads(full_doc)
+                        if isinstance(data, list):
+                            # Extract titles from list of articles
+                            titles = []
+                            for item in data:
+                                if isinstance(item, dict) and item.get('title'):
+                                    titles.append(item.get('title'))
+                                if len(titles) >= 3: break
+                            if titles:
+                                snippet = "Articles: " + ", ".join(titles) + "..."
+                        elif isinstance(data, dict):
+                            # Try to find title or summary
+                            if data.get('title'):
+                                snippet = f"Title: {data.get('title')}..."
+                    except Exception:
+                        pass
+                
+                if not snippet:
+                    # Clean up newlines for better display, increased length to 500
+                    snippet = doc[:500].replace('\n', ' ').strip() + "..."
+                
                 reference_snippets.append(f"[{fname}] {snippet}")
             
             # 시스템 프롬프트 준비
