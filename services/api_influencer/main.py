@@ -421,10 +421,16 @@ def style_emotion_chain(payload: EmotionChainRequest):
         else:
             user_content += f"\n(호칭: {salutation})\n사용자에게 친절하게 사진(얼굴 정면) 업로드를 요청하는 한 문장 환영 메시지를 작성하세요. {example_line} 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
     else:
+        # 대화 지속을 위한 질문 추가 지시
+        question_instruction = " 답변 끝에 사용자의 취향이나 상황을 묻는 질문을 반드시 포함하여 대화가 이어지도록 하세요."
+        
+        if meta and isinstance(meta, dict) and meta.get('suppress_type_mention'):
+            question_instruction += "\n\n[절대 금지]: '봄 라이트', '여름 뮤트' 등 구체적인 퍼스널 컬러 진단명(타입 이름)을 답변에 절대 포함하지 마세요. 대신 '따뜻하고 화사한 느낌', '차분하고 부드러운 분위기'와 같이 느낌과 분위기로만 묘사하세요."
+        
         if influencer:
-            user_content += f"\n(호칭: {salutation})\n위 내용을 {influencer}의 말투로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+            user_content += f"\n(호칭: {salutation})\n위 내용을 {influencer}의 말투로 자연스럽게 요약·재작성해주세요.{question_instruction} 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
         else:
-            user_content += f"\n(호칭: {salutation})\n위 내용을 친근하고 전문적인 어조로 자연스럽게 요약·재작성해주세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+            user_content += f"\n(호칭: {salutation})\n위 내용을 친근하고 전문적인 어조로 자연스럽게 요약·재작성해주세요.{question_instruction} 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
 
     try:
         resp = shared.client.chat.completions.create(

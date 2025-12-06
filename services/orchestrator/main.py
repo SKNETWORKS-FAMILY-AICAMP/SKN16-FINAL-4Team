@@ -156,7 +156,9 @@ async def analyze(payload: OrchestratorRequest):
 
             # If expert is required but we have a guess, guide the conversation
             if status == 'require_expert' and best_name:
-                msg = f"이미지 분석 결과 {best_name}의 특징이 감지되었습니다. 더 정확한 분석을 위해 평소 즐겨 입으시는 옷 색상이나 선호하는 스타일을 알려주시겠어요?"
+                msg = "이미지에서 퍼스널 컬러 특징을 일부 확인했습니다. 더 정확한 분석을 위해 평소 즐겨 입으시는 옷 색상이나 선호하는 스타일을 알려주시겠어요?"
+            elif best_name:
+                msg = "이미지 분석이 완료되었습니다! 더 구체적인 스타일링 추천을 위해 평소 선호하시는 색상이나 분위기를 말씀해 주시겠어요?"
             elif not msg:
                 msg = "이미지 분석이 완료되었습니다. 더 정확한 결과를 위해 평소 스타일을 알려주세요."
 
@@ -167,7 +169,10 @@ async def analyze(payload: OrchestratorRequest):
                     "자주 입는 옷 색상 알려주기",
                     "어울리는 악세사리(골드/실버) 말하기",
                     "피부톤 특징 이야기하기"
-                ]
+                ],
+                "_meta": {
+                    "suppress_type_mention": True
+                }
             }
 
     else:
@@ -238,9 +243,23 @@ async def analyze(payload: OrchestratorRequest):
     # 3. 인플루언서 스타일링 (감정+색상 결과 활용)
     influencer_styled = None
     try:
+        # Prepare color result for influencer (masking if needed)
+        chain_color_res = color_result
+        if emo_result and emo_result.get('_meta', {}).get('suppress_type_mention'):
+            import copy
+            chain_color_res = copy.deepcopy(color_result)
+            if chain_color_res and 'detected_color_hints' in chain_color_res:
+                hints = chain_color_res['detected_color_hints']
+                # Mask explicit names but keep tones for styling context
+                if 'result_name' in hints:
+                    hints['result_name'] = "Analyzed Style"
+                # Mask reason to prevent leaking the name
+                if 'reason' in hints:
+                     hints['reason'] = "이미지에서 감지된 퍼스널 컬러 특징"
+
         chain_payload = api_influencer.EmotionChainRequest(
             emotion_result=emo_result or {},
-            color_result=color_result or {},
+            color_result=chain_color_res or {},
             user_nickname=payload.user_nickname,
             influencer_name=payload.influencer_name,
         )

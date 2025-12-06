@@ -356,6 +356,7 @@ const ChatbotPage: React.FC = () => {
         // 단, 이미 마지막 메시지가 환영 메시지라면 생략
         if (!skipWelcome) {
           try {
+            setIsTyping(true);
             // 빈 문자열을 보내면 백엔드에서 인플루언서 말투로 환영 메시지를 생성함
             const response = await analyze({ question: "", history_id: res.history_id });
 
@@ -376,6 +377,8 @@ const ChatbotPage: React.FC = () => {
             }
           } catch (welcomeError) {
             console.warn('환영 메시지 생성 실패:', welcomeError);
+          } finally {
+            if (mounted) setIsTyping(false);
           }
         }
 
@@ -1802,6 +1805,15 @@ const ChatbotPage: React.FC = () => {
                 {/* onUpload 내부에서 ChatbotPage가 분석 요청 및 메시지 삽입을 수행합니다. */}
                 <ImageUploader onUpload={async (up: any, file: any) => {
                   try {
+                    // 1. 사용자 메시지 먼저 표시
+                    const userMsg: ChatMessage = { id: `img-u-${Date.now()}`, content: `이미지 업로드: ${file.name}`, isUser: true, timestamp: new Date() };
+                    setMessages(prev => [...prev, userMsg]);
+                    // 이미지 업로드는 사용자 주도 액션으로 간주하여 새 대화 플래그 설정
+                    setHasNewConversation(true);
+
+                    // 2. 타이핑 시작
+                    setIsTyping(true);
+
                     // 업로드 후 ChatbotPage 기존 분석 흐름 실행
                     const s3Key = up.key;
                     antd.message.success('이미지 업로드 완료, 분석을 시작합니다.');
@@ -1810,11 +1822,6 @@ const ChatbotPage: React.FC = () => {
 
                     const primary = imgRes?.image_result?.primary_tone || imgRes?.image_result?.primary || '';
                     const sub = imgRes?.image_result?.sub_tone || imgRes?.image_result?.sub || '';
-
-                    const userMsg: ChatMessage = { id: `img-u-${Date.now()}`, content: `이미지 업로드: ${file.name}`, isUser: true, timestamp: new Date() };
-                    setMessages(prev => [...prev, userMsg]);
-                    // 이미지 업로드는 사용자 주도 액션으로 간주하여 새 대화 플래그 설정
-                    setHasNewConversation(true);
 
                     try {
                       const hint = JSON.stringify(sanitizeForChat(imgRes));
@@ -1847,6 +1854,8 @@ const ChatbotPage: React.FC = () => {
                   } catch (err: any) {
                     console.error('이미지 업로드/분석 오류', err);
                     antd.message.error('이미지 업로드 또는 분석 중 오류가 발생했습니다.');
+                  } finally {
+                    setIsTyping(false);
                   }
                 }} />
               </React.Suspense>

@@ -1125,11 +1125,15 @@ async def analyze(
     # Prefer influencer-styled text when available; it may be wrapped as well
     influencer_info = None
     if isinstance(raw_emotion, dict):
-        inf = raw_emotion.get("influencer_styled") or raw_emotion.get("influencer")
-        if isinstance(inf, dict) and inf.get("parsed") is not None:
-            influencer_info = inf.get("parsed")
+        # Check for direct styled_text first (as per orchestrator/main.py update)
+        if raw_emotion.get("styled_text"):
+             influencer_info = {"styled_text": raw_emotion.get("styled_text")}
         else:
-            influencer_info = inf
+            inf = raw_emotion.get("influencer_styled") or raw_emotion.get("influencer")
+            if isinstance(inf, dict) and inf.get("parsed") is not None:
+                influencer_info = inf.get("parsed")
+            else:
+                influencer_info = inf
 
     # Defensive fixes: if influencer_info contains an error object, ignore it
     try:
@@ -1176,6 +1180,18 @@ async def analyze(
                     hints = color_res.get('detected_color_hints') or color_res.get('detected_color_hints') or {}
                     if isinstance(hints, dict):
                         color_summary = hints.get('result_name') or hints.get('reason') or ''
+                        
+                        # Check for suppression flag
+                        suppress = False
+                        if isinstance(emotion_res, dict):
+                             meta = emotion_res.get('_meta') or emotion_res.get('meta')
+                             if isinstance(meta, dict) and meta.get('suppress_type_mention'):
+                                 suppress = True
+                        
+                        if suppress:
+                             # Mask the explicit name in the fallback prompt
+                             color_summary = "이미지에서 감지된 퍼스널 컬러 특징 (구체적 타입 언급 금지)"
+
                 emotion_summary = ''
                 if isinstance(emotion_res, dict):
                     emotion_summary = emotion_res.get('description') or emotion_res.get('primary_tone') or ''
@@ -1184,6 +1200,9 @@ async def analyze(
                     "당신은 한국어로 자연스럽고 친근한 인플루언서 말투를 모방하는 카피라이터입니다. "
                     "사용자에게 바로 보여줄 수 있는 2~3문장 분량의 응답을 생성하세요."
                 )
+                if suppress:
+                    system_msg += " [주의] '봄 라이트', '여름 뮤트' 같은 구체적인 퍼스널 컬러 진단명은 절대 언급하지 말고, 분위기나 느낌으로만 표현하세요."
+
                 user_msg = (
                     f"사용자 상황: {emotion_summary}\n퍼스널 컬러 힌트: {color_summary}\n"
                     "위 정보를 바탕으로 친근하고 상담자다운 말투로 간단한 응답을 만들어주세요."
