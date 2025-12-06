@@ -225,3 +225,9 @@ class InfluencerRating(BaseModel):
     influencer_name: Optional[str] = None
     average_rating: Optional[float] = None
     rating_count: int = 0
+
+class RecommendQuestionsRequest(BaseModel):
+    history_id: Optional[int] = None
+
+class RecommendQuestionsResponse(BaseModel):
+    questions: List[str]

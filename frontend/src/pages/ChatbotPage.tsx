@@ -82,7 +82,6 @@ const ChatbotPage: React.FC = () => {
   const [isTyping, setIsTyping] = useState(false);
   const isBusy = isTyping || isAnalyzing || isDiagnosing;
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
-  const [isLeavingPage, setIsLeavingPage] = useState(false);
   // 새로 생성된(현재 세션에서 시작된) 대화가 있는지 여부
   const [hasNewConversation, setHasNewConversation] = useState(false);
   const [currentHistoryId, setCurrentHistoryId] = useState<number | undefined>(
@@ -103,6 +102,7 @@ const ChatbotPage: React.FC = () => {
   } | null>(null);
   const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
   const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<InfluencerHistoryItem | null>(null);
+  const [recommendedQuestions, setRecommendedQuestions] = useState<string[]>([]);
 
   // Small helpers to reduce duplicated parsing/mapping logic
   const parseRawChatRes = (raw: any): ChatResModel | undefined => {
@@ -164,22 +164,6 @@ const ChatbotPage: React.FC = () => {
         chatRes: it.chat_res,
       });
       baseTs = Math.max(baseTs + 1000, dayjs(botTsIso).valueOf() + 500);
-    }
-    return out;
-  };
-
-  const analyzeItemsToBotMessages = (items: any[], historyId?: number) => {
-    const out: ChatMessage[] = [];
-    let baseTs = Date.now();
-    for (const it of items || []) {
-      out.push({
-        id: `w-${historyId}-${it.question_id || 0}-b`,
-        content: it.answer || (it.chat_res && it.chat_res.description) || '',
-        isUser: false,
-        timestamp: new Date(baseTs).toISOString(),
-        chatRes: it.chat_res,
-      });
-      baseTs += 1000;
     }
     return out;
   };
@@ -325,6 +309,16 @@ const ChatbotPage: React.FC = () => {
         if (!mounted) return;
 
         setCurrentHistoryId(res.history_id);
+
+        // Fetch recommended questions
+        try {
+          const recRes = await chatbotApi.recommendQuestions(res.history_id);
+          if (recRes && recRes.questions && recRes.questions.length > 0) {
+            setRecommendedQuestions(recRes.questions);
+          }
+        } catch (e) {
+          console.warn('Failed to fetch recommended questions:', e);
+        }
 
         if (res.reused && typeof res.user_turns === 'number') {
           setUserTurnCount(res.user_turns);
@@ -542,6 +536,16 @@ const ChatbotPage: React.FC = () => {
         // 사용자 턴 카운트 증가
         const newTurnCount = userTurnCount + 1;
         setUserTurnCount(newTurnCount);
+
+        // 챗봇 응답 후 추천 질문 갱신
+        try {
+          const recRes = await chatbotApi.recommendQuestions(response.history_id);
+          if (recRes && recRes.questions && recRes.questions.length > 0) {
+            setRecommendedQuestions(recRes.questions);
+          }
+        } catch (e) {
+          console.warn('Failed to update recommended questions:', e);
+        }
 
         console.log(
           `📊 현재 대화 턴: ${newTurnCount}, 자동 리포트 생성 여부: ${hasAutoReportGenerated}`
@@ -1103,7 +1107,6 @@ const ChatbotPage: React.FC = () => {
     if (hasNewConversation) {
       setIsFeedbackModalOpen(true);
     } else {
-      setIsLeavingPage(true);
       navigate('/');
     }
   };
@@ -1146,7 +1149,6 @@ const ChatbotPage: React.FC = () => {
 
       // 성공 시 UI 처리
       setIsFeedbackModalOpen(false);
-      setIsLeavingPage(true);
       // 피드백 제출 후 새 대화 플래그 초기화
       setHasNewConversation(false);
       antd.message.success(`피드백 감사합니다!`, 2);
@@ -1159,7 +1161,6 @@ const ChatbotPage: React.FC = () => {
 
       // 오류 시에도 플래그 초기화
       setIsFeedbackModalOpen(false);
-      setIsLeavingPage(true);
       setHasNewConversation(false);
 
       // 네비게이션 차단 로직 없음. 필요시 구현
@@ -1174,7 +1175,6 @@ const ChatbotPage: React.FC = () => {
     // 세션 종료 시 플래그 초기화
 
     setIsFeedbackModalOpen(false);
-    setIsLeavingPage(true);
     setHasNewConversation(false);
 
     // 네비게이션 차단 로직 없음. 필요시 구현
@@ -1651,7 +1651,7 @@ const ChatbotPage: React.FC = () => {
   }
 
   // 샘플 질문 데이터 (진단 내역 유무에 따라 분기)
-  const sampleQuestions =
+  const staticSampleQuestions =
     !surveyResults || surveyResults.length === 0
       ? [
         {
@@ -1690,6 +1690,10 @@ const ChatbotPage: React.FC = () => {
           question: '내 타입의 특징과 다른 타입과의 차이점을 알려주세요.',
         },
       ];
+
+  const displayQuestions = recommendedQuestions.length > 0
+    ? recommendedQuestions.map(q => ({ label: q.length > 10 ? q.substring(0, 10) + '...' : q, question: q }))
+    : staticSampleQuestions;
 
   // 메인 화면 렌더링
   return (
@@ -1763,9 +1767,6 @@ const ChatbotPage: React.FC = () => {
                   <div className={`chatbot-avatar-container !mr-2 ${isTyping ? 'chatbot-active' : ''}`}>
                     {
                       (() => {
-                        // find last bot message to infer influencer if needed
-                        const lastBot = [...messages].slice().reverse().find(m => !m.isUser);
-
                         let found: any = null;
                         if (activeInfluencerProfile) {
                           found = activeInfluencerProfile;
@@ -1890,7 +1891,7 @@ const ChatbotPage: React.FC = () => {
                 : '💡 이런 질문은 어떠세요?'}
             </Text>
             <div className="flex flex-wrap gap-1">
-              {sampleQuestions.map((item, index) => (
+              {displayQuestions.map((item, index) => (
                 <antd.Button
                   key={index}
                   size="small"

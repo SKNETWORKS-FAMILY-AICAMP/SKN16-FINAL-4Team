@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, HTTPException, Depends, Body, Query
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -18,6 +17,8 @@ from schemas import (
     ChatResModel,
     ReportCreate,
     ReportResponse,
+    RecommendQuestionsRequest,
+    RecommendQuestionsResponse,
 )
 from routers.feedback_router import generate_ai_feedbacks
 from utils.shared import build_rag_index, analyze_conversation_for_color_tone, normalize_personal_color
@@ -1846,13 +1847,13 @@ def get_chat_history(history_id: int, current_user: models.User = Depends(get_cu
                                 try:
                                     parsed_desc = json.loads(desc_text)
                                     if isinstance(parsed_desc, dict):
-                                        # Extract styled_text if present
+                                        # Extract styled_text if present and use as description
                                         if parsed_desc.get('styled_text'):
                                             d['description'] = parsed_desc.get('styled_text')
-                                        
-                                        for k, v in parsed_desc.items():
-                                            if k not in d or k == 'description':
-                                                d[k] = v
+
+                                    for k, v in parsed_desc.items():
+                                        if k not in d or k == 'description':
+                                            d[k] = v
                                 except Exception:
                                     pass
 
@@ -2129,20 +2130,23 @@ async def request_personal_color_report(
         
         # 대화 히스토리 조회 (리포트에 포함할 대화 내용, 읽기 전용)
         chat_history = []
-        if hasattr(survey_result, 'chat_history_id') and survey_result.chat_history_id:
-            messages = db.query(models.ChatMessage).filter_by(
-                history_id=survey_result.chat_history_id
-            ).order_by(models.ChatMessage.created_at.asc()).all()
-            
-            chat_history = [
-                {
-                    "role": msg.role,
-                    "text": msg.text,
-                    "created_at": msg.created_at.isoformat()
-                }
-                for msg in messages
-            ]
-        
+        try:
+            if hasattr(survey_result, 'chat_history_id') and survey_result.chat_history_id:
+                messages = db.query(models.ChatMessage).filter_by(
+                    history_id=survey_result.chat_history_id
+                ).order_by(models.ChatMessage.created_at.asc()).all()
+                
+                chat_history = [
+                    {
+                        "role": msg.role,
+                        "text": msg.text,
+                        "created_at": msg.created_at.isoformat()
+                    }
+                    for msg in messages
+                ]
+        except Exception:
+            chat_history = []
+
         # 리포트 데이터 생성 (기존 데이터 시각화만, DB 변경 없음)
         report_data = report_generator.generate_report_data(survey_data, chat_history)
         
@@ -2216,3 +2220,96 @@ async def get_personal_color_report(
     except Exception as e:
         print(f"❌ 리포트 조회 중 오류: {e}")
         raise HTTPException(status_code=500, detail=f"리포트 조회 중 오류가 발생했습니다: {str(e)}")
+
+@router.post("/recommend_questions", response_model=RecommendQuestionsResponse)
+async def recommend_questions(
+    request: RecommendQuestionsRequest,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    사용자의 현재 상황(대화 이력, 진단 결과 등)을 바탕으로
+    챗봇에게 물어볼 만한 추천 질문 4가지를 생성합니다.
+    """
+    # 1. 기본 추천 질문 (Fallback)
+    default_questions = [
+        "내 퍼스널컬러는 뭐야?",
+        "나한테 어울리는 립스틱 추천해줘",
+        "봄 웜톤의 특징이 뭐야?",
+        "면접 때 입을 옷 색깔 추천해줘"
+    ]
+
+    try:
+        # 2. 사용자 컨텍스트 수집
+        context_lines = []
+        
+        # 2-1. 이전 진단 결과 확인
+        prev_diagnosis = (
+            db.query(models.SurveyResult)
+            .filter(models.SurveyResult.user_id == current_user.id, models.SurveyResult.is_active == True)
+            .order_by(models.SurveyResult.created_at.desc())
+            .first()
+        )
+        if prev_diagnosis:
+            context_lines.append(f"사용자는 이전에 '{prev_diagnosis.result_name}'({prev_diagnosis.result_tone}) 진단을 받았습니다.")
+        else:
+            context_lines.append("사용자는 아직 퍼스널컬러 진단을 받지 않았습니다.")
+
+        # 2-2. 현재 대화 이력 확인 (history_id가 있는 경우)
+        if request.history_id:
+            recent_msgs = (
+                db.query(models.ChatMessage)
+                .filter_by(history_id=request.history_id)
+                .order_by(models.ChatMessage.created_at.desc())
+                .limit(3)
+                .all()
+            )
+            if recent_msgs:
+                # 최신순으로 가져왔으므로 다시 시간순 정렬
+                recent_msgs.reverse()
+                history_text = "\n".join([f"{msg.role}: {msg.text}" for msg in recent_msgs])
+                context_lines.append(f"최근 대화 내용:\n{history_text}")
+
+        # 3. 프롬프트 구성
+        system_prompt = (
+            "당신은 퍼스널컬러 챗봇 사용자를 위한 '추천 질문 생성기'입니다. "
+            "최근 대화 내용(특히 마지막 챗봇의 응답)을 바탕으로, **사용자가 챗봇에게** 이어서 물어볼 만한 질문 4가지를 생성해주세요. "
+            "챗봇이 사용자에게 묻는 질문이 아니라, **사용자가 챗봇에게 궁금해할 내용**이어야 합니다. "
+            "(예: '저에게 어울리는 옷 색상은 뭐에요?', '어떤 액세서리가 잘 어울릴까요?') "
+            "질문은 간결하고 명확한 한국어 문장으로 작성하세요. "
+            "각 질문은 줄바꿈으로 구분하여 출력하고, 번호나 기호는 붙이지 마세요."
+            "[봄 웜톤], [여름 쿨톤] 등 진단 결과를 직접 언급하지 마세요."
+        )
+        
+        user_prompt = "\n".join(context_lines)
+        user_prompt += "\n\n위 대화 흐름에서 사용자가 할 법한 질문 4가지를 추천해주세요."
+
+        # 4. LLM 호출
+        resp = client.chat.completions.create(
+            model=get_model_to_use(),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=150,
+            temperature=0.7,
+        )
+        
+        content = resp.choices[0].message.content.strip()
+        
+        # 5. 결과 파싱
+        questions = [line.strip() for line in content.split('\n') if line.strip()]
+        
+        # 번호 제거 (예: "1. 질문" -> "질문")
+        import re
+        questions = [re.sub(r'^\d+[\.\)]\s*', '', q) for q in questions]
+        
+        # 4개가 안되면 기본 질문으로 채움
+        if len(questions) < 4:
+            questions.extend(default_questions[:4-len(questions)])
+            
+        return RecommendQuestionsResponse(questions=questions[:4])
+
+    except Exception as e:
+        print(f"[recommend_questions] 오류 발생: {e}")
+        return RecommendQuestionsResponse(questions=default_questions)

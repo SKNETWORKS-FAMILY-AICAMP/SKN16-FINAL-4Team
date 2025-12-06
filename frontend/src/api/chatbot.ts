@@ -77,7 +77,7 @@ class ChatbotApi {
         '/chatbot/analyze',
         request,
         {
-          timeout: 30000, // 30초 타임아웃
+          timeout: 60000, // 60초 타임아웃
           headers: {
             'Content-Type': 'application/json',
           },
@@ -287,6 +287,17 @@ class ChatbotApi {
     }, {
       timeout: 60000,
     });
+    return response.data;
+  }
+
+  /**
+   * 추천 질문 생성
+   */
+  async recommendQuestions(historyId?: number): Promise<{ questions: string[] }> {
+    const response = await apiClient.post<{ questions: string[] }>(
+      '/chatbot/recommend_questions',
+      { history_id: historyId }
+    );
     return response.data;
   }
 }
