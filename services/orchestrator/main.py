@@ -87,59 +87,143 @@ async def analyze(payload: OrchestratorRequest):
     if not payload or not payload.user_text:
         raise HTTPException(status_code=400, detail="user_text가 필요합니다")
 
-    # 1. 감정 및 색상 분석 병렬 처리
-    async def _call_emotion():
-        try:
-            emo_payload = api_emotion.EmotionRequest(
-                user_text=payload.user_text,
-                conversation_history=payload.conversation_history,
-            )
-            if asyncio.iscoroutinefunction(api_emotion.generate_emotion):
-                return await api_emotion.generate_emotion(emo_payload)
+    # 0. Check for pre-analyzed JSON payload (e.g. from image analysis)
+    pre_analyzed = None
+    try:
+        import json
+        if payload.user_text.strip().startswith('{'):
+            parsed = json.loads(payload.user_text)
+            if isinstance(parsed, dict) and ('image_result' in parsed or 'orchestrator' in parsed):
+                pre_analyzed = parsed
+    except Exception:
+        pass
+
+    emo_res = None
+    color_res = None
+
+    if pre_analyzed:
+        logger.info("[orchestrator] Using pre-analyzed data from payload")
+        orch_data = pre_analyzed.get('orchestrator') or {}
+        emo_res = orch_data.get('emotion')
+        color_res = orch_data.get('color')
+        
+        # Always prioritize image_result for color hints if available
+        # This ensures we use the vision model's output (e.g. Spring Light) instead of generic hints
+        if pre_analyzed.get('image_result'):
+            img_res = pre_analyzed.get('image_result')
+            # Construct a minimal color result structure
+            # Try to extract best type
+            best_type = img_res.get('best_type') or {}
+            season = img_res.get('season') or best_type.get('season')
+            
+            # Map season to primary/sub if possible
+            p_tone = None
+            s_tone = None
+            if season:
+                if '봄' in season: s_tone = 'spring'
+                elif '여름' in season: s_tone = 'summer'
+                elif '가을' in season: s_tone = 'autumn'
+                elif '겨울' in season: s_tone = 'winter'
+                
+                if '웜' in season: p_tone = 'warm'
+                elif '쿨' in season: p_tone = 'cool'
+            
+            # Construct new color hints from image result
+            new_color_hints = {
+                "primary_tone": p_tone,
+                "sub_tone": s_tone,
+                "result_name": best_type.get('name') or season,
+                "reason": f"이미지 분석 결과: {best_type.get('name') or season} ({best_type.get('description') or ''})",
+                "confidence": best_type.get('probability', 0.0) / 100.0 if best_type.get('probability') else 0.8
+            }
+            
+            # If color_res exists, merge/overwrite detected_color_hints
+            if not color_res:
+                color_res = {"detected_color_hints": new_color_hints}
             else:
-                # 동기 함수 처리
-                result = api_emotion.generate_emotion(emo_payload)
-                # 코루틴이 반환되면 await
-                if asyncio.iscoroutine(result):
-                    return await result
-                return result
-        except Exception as e:
-            logger.error(f"[emotion] 실패: {e}")
-            return {"error": str(e)}
+                # Ensure detected_color_hints exists
+                if "detected_color_hints" not in color_res:
+                    color_res["detected_color_hints"] = {}
+                # Overwrite with image analysis data
+                color_res["detected_color_hints"].update(new_color_hints)
+            
+        # If emotion is missing, default to neutral or extract from image message
+        if not emo_res:
+            img_res = pre_analyzed.get('image_result', {})
+            msg = img_res.get('message', '')
+            status = img_res.get('status')
+            best_name = img_res.get('best_type', {}).get('name')
 
-    async def _call_color():
-        try:
-            color_payload = api_color.ColorRequest(
-                user_text=payload.user_text,
-                conversation_history=payload.conversation_history,
-            )
-            if asyncio.iscoroutinefunction(api_color.analyze_color):
-                return await api_color.analyze_color(color_payload)
-            else:
-                # 동기 함수 처리
-                result = api_color.analyze_color(color_payload)
-                # 코루틴이 반환되면 await
-                if asyncio.iscoroutine(result):
-                    return await result
-                return result
-        except Exception as e:
-            logger.error(f"[color] 실패: {e}")
-            return {"error": str(e)}
+            # If expert is required but we have a guess, guide the conversation
+            if status == 'require_expert' and best_name:
+                msg = f"이미지 분석 결과 {best_name}의 특징이 감지되었습니다. 더 정확한 분석을 위해 평소 즐겨 입으시는 옷 색상이나 선호하는 스타일을 알려주시겠어요?"
+            elif not msg:
+                msg = "이미지 분석이 완료되었습니다. 더 정확한 결과를 위해 평소 스타일을 알려주세요."
 
-    # 병렬 실행
-    tasks = []
-    if payload.use_emotion:
-        tasks.append(_call_emotion())
-    if payload.use_color:
-        tasks.append(_call_color())
+            emo_res = {
+                "primary_tone": "neutral",
+                "description": msg,
+                "recommendations": [
+                    "자주 입는 옷 색상 알려주기",
+                    "어울리는 악세사리(골드/실버) 말하기",
+                    "피부톤 특징 이야기하기"
+                ]
+            }
 
-    if not tasks:
-        return OrchestratorResponse(emotion=None, color=None)
+    else:
+        # 1. 감정 및 색상 분석 병렬 처리 (Original Logic)
+        async def _call_emotion():
+            try:
+                emo_payload = api_emotion.EmotionRequest(
+                    user_text=payload.user_text,
+                    conversation_history=payload.conversation_history,
+                )
+                if asyncio.iscoroutinefunction(api_emotion.generate_emotion):
+                    return await api_emotion.generate_emotion(emo_payload)
+                else:
+                    # 동기 함수 처리
+                    result = api_emotion.generate_emotion(emo_payload)
+                    # 코루틴이 반환되면 await
+                    if asyncio.iscoroutine(result):
+                        return await result
+                    return result
+            except Exception as e:
+                logger.error(f"[emotion] 실패: {e}")
+                return {"error": str(e)}
 
-    results_list = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    emo_res = results_list[0] if payload.use_emotion else None
-    color_res = results_list[1] if (payload.use_emotion and payload.use_color) or (not payload.use_emotion and payload.use_color) else None
+        async def _call_color():
+            try:
+                color_payload = api_color.ColorRequest(
+                    user_text=payload.user_text,
+                    conversation_history=payload.conversation_history,
+                )
+                if asyncio.iscoroutinefunction(api_color.analyze_color):
+                    return await api_color.analyze_color(color_payload)
+                else:
+                    # 동기 함수 처리
+                    result = api_color.analyze_color(color_payload)
+                    # 코루틴이 반환되면 await
+                    if asyncio.iscoroutine(result):
+                        return await result
+                    return result
+            except Exception as e:
+                logger.error(f"[color] 실패: {e}")
+                return {"error": str(e)}
+
+        # 병렬 실행
+        tasks = []
+        if payload.use_emotion:
+            tasks.append(_call_emotion())
+        if payload.use_color:
+            tasks.append(_call_color())
+
+        if not tasks:
+            return OrchestratorResponse(emotion=None, color=None)
+
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        emo_res = results_list[0] if payload.use_emotion else None
+        color_res = results_list[1] if (payload.use_emotion and payload.use_color) or (not payload.use_emotion and payload.use_color) else None
 
     # 2. 결과 변환 (Pydantic v2 호환)
     emo_result = _to_dict(emo_res) if emo_res else None

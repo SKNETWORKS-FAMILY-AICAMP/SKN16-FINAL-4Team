@@ -142,12 +142,15 @@ const ChatbotPage: React.FC = () => {
       // prefer server-provided ISO timestamps when available; otherwise synthesize ISO
       const userTsIso = it.question_created_at ? String(it.question_created_at) : new Date(baseTs).toISOString();
 
-      out.push({
-        id: `h-${historyId}-${it.question_id}-u`,
-        content: it.question || '',
-        isUser: true,
-        timestamp: userTsIso,
-      });
+      // Only add user message if question is not empty (skip hidden welcome triggers)
+      if (it.question && it.question.trim() !== '') {
+        out.push({
+          id: `h-${historyId}-${it.question_id}-u`,
+          content: it.question || '',
+          isUser: true,
+          timestamp: userTsIso,
+        });
+      }
       // advance baseTs relative to parsed time
       baseTs = Math.max(baseTs + 1000, dayjs(userTsIso).valueOf() + 500);
 
@@ -212,6 +215,33 @@ const ChatbotPage: React.FC = () => {
     } catch (e) {
       console.log(e)
     }
+  };
+
+  // Helper to sanitize large objects before sending to chat API
+  const sanitizeForChat = (obj: any): any => {
+    if (!obj) return obj;
+    if (typeof obj === 'string') {
+      // Truncate very long strings (e.g. base64 images)
+      return obj.length > 500 ? obj.substring(0, 500) + '...[truncated]' : obj;
+    }
+    if (Array.isArray(obj)) {
+      return obj.map(sanitizeForChat);
+    }
+    if (typeof obj === 'object') {
+      const newObj: any = {};
+      for (const key in obj) {
+        // Skip keys that are known to contain large data
+        if (key.toLowerCase().includes('base64') || 
+            key.toLowerCase().includes('image_data') || 
+            key.toLowerCase().includes('encoded_image')) {
+           newObj[key] = '[Image Data Omitted]';
+        } else {
+           newObj[key] = sanitizeForChat(obj[key]);
+        }
+      }
+      return newObj;
+    }
+    return obj;
   };
 
   // 라우터 state로 전달된 인플루언서 프로필(예: MyPage에서 클릭으로 전달)을 수신
@@ -296,6 +326,8 @@ const ChatbotPage: React.FC = () => {
           console.log('재사용 세션의 기존 사용자 턴 수 복원:', res.user_turns);
         }
 
+        let skipWelcome = false;
+
         // 복원 가능한 기존 열린 세션이면 히스토리 로드
         if (res.reused) {
           try {
@@ -304,9 +336,46 @@ const ChatbotPage: React.FC = () => {
               const loaded: ChatMessage[] = historyItemsToChatMessages(hist.items, res.history_id);
               setMessages(loaded);
               setTimeout(() => scrollToBottom(false), 50);
+
+              // 마지막 메시지가 봇의 메시지이고, 이미지 업로드를 요청하는 내용이면 환영 메시지 생략 (중복 방지)
+              const lastItem = hist.items[hist.items.length - 1];
+              if (lastItem && lastItem.answer) {
+                const content = lastItem.answer;
+                if (content.includes('사진') || content.includes('이미지') || content.includes('업로드')) {
+                  skipWelcome = true;
+                  console.log('이미지 업로드 요청 메시지가 이미 존재하여 환영 메시지 생략');
+                }
+              }
             }
           } catch (e) {
             console.warn('히스토리 불러오기 실패:', e);
+          }
+        }
+
+        // reused 값과 상관없이 항상 환영 메시지 생성 (이미지 업로드 요청)
+        // 단, 이미 마지막 메시지가 환영 메시지라면 생략
+        if (!skipWelcome) {
+          try {
+            // 빈 문자열을 보내면 백엔드에서 인플루언서 말투로 환영 메시지를 생성함
+            const response = await analyze({ question: "", history_id: res.history_id });
+
+            if (mounted && response && response.items && response.items.length > 0) {
+              const latestItem = response.items[response.items.length - 1];
+              const botContent = extractBotContentFromItem(latestItem);
+
+              const botMessage: ChatMessage = {
+                id: (Date.now() + 1).toString(),
+                content: botContent,
+                isUser: false,
+                timestamp: new Date(),
+                chatRes: latestItem.chat_res,
+                questionId: latestItem.question_id,
+              };
+
+              setMessages(prev => [...prev, botMessage]);
+            }
+          } catch (welcomeError) {
+            console.warn('환영 메시지 생성 실패:', welcomeError);
           }
         }
 
@@ -318,6 +387,7 @@ const ChatbotPage: React.FC = () => {
     })();
 
     return () => {
+      mounted = false;
       sessionStartedRef.current = false;
     };
     // Run once on mount. `startSession`/`analyze` come from hooks and may change identity,
@@ -326,12 +396,8 @@ const ChatbotPage: React.FC = () => {
   }, []);
 
   // 메시지에 리포트(진단) 상세보기 버튼을 보여야 하는지 판단
-  const shouldShowReportButton = (msg: ChatMessage): boolean => {
-    if (!msg || msg.isUser) return false;
-    const content = (msg.content || '').toString();
-    if (msg.diagnosisData) return true;
-    if (content.includes('[상세보기]')) return true;
-    if (/진단|리포트|분석/.test(content)) return true;
+  const shouldShowReportButton = (): boolean => {
+    if (surveyResults && surveyResults.length > 0) return true;
     return false;
   };
 
@@ -744,8 +810,8 @@ const ChatbotPage: React.FC = () => {
             console.error('❌ 진단 결과 저장 실패:', diagnosisError);
             setHasAutoReportGenerated(false); // 재시도 가능하게 플래그 초기화
 
-            const errorMsg = diagnosisError.response?.data?.detail 
-              || diagnosisError.message 
+            const errorMsg = diagnosisError.response?.data?.detail
+              || diagnosisError.message
               || '진단 결과 저장 중 오류가 발생했습니다.';
 
             const diagnosisErrorId = `diagnosis-error-${currentHistoryId}`;
@@ -804,7 +870,7 @@ const ChatbotPage: React.FC = () => {
                         try {
                           setIsTyping(true);
                           console.log('🔄 진단 결과 재시도 중...');
-                          
+
                           const diagnosisResult = await analyzeChatForDiagnosis(
                             currentHistoryId
                           );
@@ -1495,7 +1561,7 @@ const ChatbotPage: React.FC = () => {
                 )}
 
                 <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
-                  {shouldShowReportButton(msg) && (
+                  {shouldShowReportButton() && (
                     <antd.Button
                       type="default"
                       size="small"
@@ -1751,11 +1817,25 @@ const ChatbotPage: React.FC = () => {
                     setHasNewConversation(true);
 
                     try {
-                      const hint = `이미지에서 감지된 퍼스널컬러는 ${primary}${sub ? ' / ' + sub : ''} 입니다. 이 정보를 바탕으로 추가 질문을 해주세요.`;
+                      const hint = JSON.stringify(sanitizeForChat(imgRes));
                       const resp = await chatbotApi.analyze({ question: hint, history_id: currentHistoryId });
                       setCurrentHistoryId(resp.history_id);
-                      const botMsgs = analyzeItemsToBotMessages(resp.items || [], resp.history_id);
-                      setMessages((prev: ChatMessage[]) => [...prev, ...botMsgs]);
+                      
+                      if (resp.items && resp.items.length > 0) {
+                        const latestItem = resp.items[resp.items.length - 1];
+                        const botContent = extractBotContentFromItem(latestItem);
+                        
+                        const botMsg: ChatMessage = {
+                          id: `img-b-${Date.now()}`,
+                          content: botContent,
+                          isUser: false,
+                          timestamp: new Date(),
+                          chatRes: latestItem.chat_res,
+                          questionId: latestItem.question_id
+                        };
+                        setMessages(prev => [...prev, botMsg]);
+                      }
+
                       // mark that we expect one follow-up from the user which should trigger
                       // a more detailed analysis combining the image_result and the user's answer
                       setPendingImageFollowup({ primary: primary, sub: sub, image_result: imgRes?.image_result, history_id: resp.history_id });

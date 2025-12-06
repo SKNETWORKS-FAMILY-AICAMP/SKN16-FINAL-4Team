@@ -815,7 +815,8 @@ def _precheck_strong_anger_fear(user_text: str, convo_text: str | None = None) -
         if re.search(r"(열이 받|열받|분노|화가 나|성냄|짜증|분개|격분|참을 수 없)", txt):
             return 'angry'
         # Fear/anxiety cues
-        if re.search(r"(무서|두렵|공포|겁|불안|막막|숨이 막히|오싹)", txt):
+        # Removed single char "겁" to avoid false positives like "즐겁다" (happy)
+        if re.search(r"(무서|두렵|공포|불안|막막|숨이 막히|오싹|겁나|겁 먹|겁쟁)", txt):
             return 'fearful'
     except Exception:
         return ""
@@ -1285,8 +1286,20 @@ async def analyze(
     # Resolve emotion tag (orchestrator -> api_emotion -> local detector)
     # Fast pre-check: if the user's message or recent convo contains strong anger/fear cues,
     # short-circuit and use that label before calling external services.
+
+    # Skip pre-check if the input looks like a JSON payload (system injection)
+    is_json_payload = False
+    if request.question and isinstance(request.question, str):
+        stripped = request.question.strip()
+        if stripped.startswith('{') and stripped.endswith('}'):
+            is_json_payload = True
+
     convo_text = "\n".join([c.get("text", "") for c in convo_list]) if convo_list else ""
-    precheck_label = _precheck_strong_anger_fear(request.question, convo_text)
+    
+    precheck_label = ""
+    if not is_json_payload:
+        precheck_label = _precheck_strong_anger_fear(request.question, convo_text)
+
     if precheck_label:
         user_emotion = precheck_label
     else:
