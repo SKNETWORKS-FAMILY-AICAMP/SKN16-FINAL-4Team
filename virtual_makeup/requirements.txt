@@ -1,0 +1,7 @@
+# Virtual Makeup 모듈 전용 의존성
+mediapipe
+opencv-python
+Pillow
+gradio
+python-dotenv
+openai
