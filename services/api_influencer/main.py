@@ -375,12 +375,19 @@ def style_emotion_chain(payload: EmotionChainRequest):
     allowed = ['원준', '세현', '종민', '혜경']
     influencer = payload.influencer_name if payload.influencer_name in allowed else None
 
+    # Check emotion tone
+    primary_tone = payload.emotion_result.get('primary_tone', 'neutral')
+    is_neutral = (primary_tone == 'neutral')
+
     # Use influencer-specific system prompt only when influencer is provided.
     # Otherwise use a neutral advisor prompt (no persona).
     if influencer:
         system_prompt = SYSTEM_PROMPTS.get(influencer, '')
     else:
-        system_prompt = "당신은 퍼스널컬러 및 뷰티 분야의 전문가입니다. 사용자의 감정에 짧게 공감한 후, 전문적인 뷰티/퍼스널컬러 조언으로 대화를 이끄세요. 과도한 심리 상담은 지양합니다."
+        if is_neutral:
+            system_prompt = "당신은 퍼스널컬러 및 뷰티 분야의 전문가입니다. 사용자의 상황을 자연스럽게 인지하고, 전문적인 뷰티/퍼스널컬러 조언으로 대화를 이끄세요."
+        else:
+            system_prompt = "당신은 퍼스널컬러 및 뷰티 분야의 전문가입니다. 사용자의 감정에 짧게 공감한 후, 전문적인 뷰티/퍼스널컬러 조언으로 대화를 이끄세요. 과도한 심리 상담은 지양합니다."
 
     # Build user content: include the emotion JSON, optional color JSON, and a request to rewrite in influencer tone
     emotion_json = json.dumps(payload.emotion_result, ensure_ascii=False)
@@ -427,10 +434,16 @@ def style_emotion_chain(payload: EmotionChainRequest):
         if meta and isinstance(meta, dict) and meta.get('suppress_type_mention'):
             question_instruction += "\n\n[절대 금지]: '봄 라이트', '여름 뮤트' 등 구체적인 퍼스널 컬러 진단명(타입 이름)을 답변에 절대 포함하지 마세요. 대신 '따뜻하고 화사한 느낌', '차분하고 부드러운 분위기'와 같이 느낌과 분위기로만 묘사하세요."
         
-        if influencer:
-            user_content += f"\n(호칭: {salutation})\n위 내용을 {influencer}의 말투로 자연스럽게 요약·재작성해주세요.{question_instruction}\n[가드레일]: 감정적인 위로는 1문장 이내로 줄이고, 즉시 뷰티/퍼스널컬러 전문가로서의 조언으로 넘어가세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+        # 가드레일 설정
+        if is_neutral:
+            guardrail = "[가드레일]: 불필요한 감정적 위로는 생략하고, 바로 뷰티/퍼스널컬러 전문가로서의 조언이나 질문으로 넘어가세요."
         else:
-            user_content += f"\n(호칭: {salutation})\n위 내용을 친근하고 전문적인 어조로 자연스럽게 요약·재작성해주세요.{question_instruction}\n[가드레일]: 감정적인 위로는 1문장 이내로 줄이고, 즉시 뷰티/퍼스널컬러 전문가로서의 조언으로 넘어가세요. 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+            guardrail = "[가드레일]: 감정적인 위로는 1문장 이내로 줄이고, 즉시 뷰티/퍼스널컬러 전문가로서의 조언으로 넘어가세요."
+
+        if influencer:
+            user_content += f"\n(호칭: {salutation})\n위 내용을 {influencer}의 말투로 자연스럽게 요약·재작성해주세요.{question_instruction}\n{guardrail} 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
+        else:
+            user_content += f"\n(호칭: {salutation})\n위 내용을 친근하고 전문적인 어조로 자연스럽게 요약·재작성해주세요.{question_instruction}\n{guardrail} 출력은 설명 없이 단 하나의 JSON 객체로, 키는 'styled_text'로 하세요."
 
     try:
         resp = shared.client.chat.completions.create(
