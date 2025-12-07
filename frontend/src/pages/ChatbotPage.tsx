@@ -1,7 +1,7 @@
 import * as antd from 'antd';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { SendOutlined, RobotOutlined, ArrowLeftOutlined } from '@ant-design/icons';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useBlocker } from 'react-router-dom';
 
 import { useCurrentUser } from '@/hooks/useUser';
 import { useSurveyResultsLive } from '@/hooks/useSurvey';
@@ -103,6 +103,31 @@ const ChatbotPage: React.FC = () => {
   const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
   const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<InfluencerHistoryItem | null>(null);
   const [recommendedQuestions, setRecommendedQuestions] = useState<string[]>([]);
+
+  // React Router v6+ blocker for navigation
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      hasNewConversation && currentLocation.pathname !== nextLocation.pathname
+  );
+
+  // If navigation is blocked, show the feedback modal
+  useEffect(() => {
+    if (blocker.state === "blocked") {
+      setIsFeedbackModalOpen(true);
+    }
+  }, [blocker.state]);
+
+  // Browser beforeunload (refresh/close tab)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasNewConversation) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasNewConversation]);
 
   // Small helpers to reduce duplicated parsing/mapping logic
   const parseRawChatRes = (raw: any): ChatResModel | undefined => {
@@ -1148,8 +1173,11 @@ const ChatbotPage: React.FC = () => {
       setHasNewConversation(false);
       antd.message.success(`피드백 감사합니다!`, 2);
 
-      // 네비게이션 차단 로직 없음. 필요시 구현
-      setTimeout(() => navigate('/'), 500);
+      if (blocker.state === "blocked") {
+        blocker.proceed();
+      } else {
+        setTimeout(() => navigate('/'), 500);
+      }
     } catch (error) {
       console.error('피드백 제출 중 오류:', error);
       antd.message.error('피드백 제출 중 오류가 발생했습니다.');
@@ -1158,22 +1186,35 @@ const ChatbotPage: React.FC = () => {
       setIsFeedbackModalOpen(false);
       setHasNewConversation(false);
 
-      // 네비게이션 차단 로직 없음. 필요시 구현
-      setTimeout(() => navigate('/'), 500);
+      if (blocker.state === "blocked") {
+        blocker.proceed();
+      } else {
+        setTimeout(() => navigate('/'), 500);
+      }
     }
   };
 
+  const onCloseFeedbackModal = () => {
+    setIsFeedbackModalOpen(false);
+    // 차단된 네비게이션을 초기화하여 다시 페이지에 머무름 상태로 만듦
+    if (blocker.state === "blocked") {
+      blocker.reset();
+    }
+  }
+
   // 피드백 모달 닫기 (피드백 없이 나가기)
-  const handleCloseFeedbackModal = async () => {
+  const onCloseWithoutFeedback = async () => {
     await handleEndChatSession();
 
     // 세션 종료 시 플래그 초기화
-
     setIsFeedbackModalOpen(false);
     setHasNewConversation(false);
 
-    // 네비게이션 차단 로직 없음. 필요시 구현
-    navigate('/');
+    if (blocker.state === "blocked") {
+      blocker.proceed();
+    } else {
+      navigate('/');
+    }
   };
 
 
@@ -1938,7 +1979,8 @@ const ChatbotPage: React.FC = () => {
         {/* 피드백 모달 */}
         <FeedbackModal
           open={isFeedbackModalOpen}
-          onCancel={handleCloseFeedbackModal}
+          onCancel={onCloseFeedbackModal}
+          onCloseWithoutFeedback={onCloseWithoutFeedback}
           onFeedback={handleFeedback}
           isLoading={isSubmittingFeedback}
         />

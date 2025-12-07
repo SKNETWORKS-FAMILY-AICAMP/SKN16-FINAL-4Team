@@ -6,12 +6,13 @@ const { Title, Text } = Typography;
 interface Props {
   open: boolean;
   onCancel: () => void;
+  onCloseWithoutFeedback?: () => void;
   // numeric rating 1..5 will be passed to onFeedback
   onFeedback: (rating: number) => Promise<void> | void;
   isLoading?: boolean;
 }
 
-const FeedbackModal: React.FC<Props> = ({ open, onCancel, onFeedback, isLoading }) => {
+const FeedbackModal: React.FC<Props> = ({ open, onCancel, onCloseWithoutFeedback, onFeedback, isLoading }) => {
   const [rating, setRating] = useState<number>(0);
 
   const handleSubmit = async () => {
@@ -65,7 +66,7 @@ const FeedbackModal: React.FC<Props> = ({ open, onCancel, onFeedback, isLoading 
         </div>
 
         <div className="mt-4">
-          <Button type="text" onClick={onCancel} className="!text-gray-500">
+          <Button type="text" onClick={onCloseWithoutFeedback} className="!text-gray-500">
             피드백 없이 나가기
           </Button>
         </div>
