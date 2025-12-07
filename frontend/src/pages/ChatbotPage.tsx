@@ -1867,7 +1867,20 @@ const ChatbotPage: React.FC = () => {
                 <ImageUploader onUpload={async (up: any, file: any) => {
                   try {
                     // 1. 사용자 메시지 먼저 표시
-                    const userMsg: ChatMessage = { id: `img-u-${Date.now()}`, content: `이미지 업로드: ${file.name}`, isUser: true, timestamp: new Date() };
+                    const imageUrl = URL.createObjectURL(file);
+                    const userMsg: ChatMessage = {
+                      id: `img-u-${Date.now()}`,
+                      content: `이미지 업로드: ${file.name}`,
+                      customContent: (
+                          <antd.Image
+                            src={imageUrl}
+                            alt={file.name}
+                            style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: '8px' }}
+                          />
+                      ),
+                      isUser: true,
+                      timestamp: new Date()
+                    };
                     setMessages(prev => [...prev, userMsg]);
                     // 이미지 업로드는 사용자 주도 액션으로 간주하여 새 대화 플래그 설정
                     setHasNewConversation(true);
