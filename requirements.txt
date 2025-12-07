@@ -25,6 +25,9 @@ opencv-python-headless>=4.7.0
 scikit-learn>=1.2.2
 matplotlib>=3.7.0
 gradio>=3.40.0
+mediapipe
+opencv-python
+pillow>=10.0.0
 
 # Data Validation
 pydantic>=2.0.0
@@ -50,7 +53,6 @@ pytest
 pytest-asyncio
 
 # Other utilities
-pillow>=10.0.0
 boto3>=1.28.0
 
 # Platform-specific packages

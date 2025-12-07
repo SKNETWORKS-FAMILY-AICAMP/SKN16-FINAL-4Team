@@ -8,7 +8,7 @@ import { useSurveyResultsLive } from '@/hooks/useSurvey';
 import useChatbot from '@/hooks/useChatbot';
 import type { ChatResModel, InfluencerHistoryItem } from '@/api/chatbot';
 import { chatbotApi } from '@/api/chatbot';
-import { analyzeImage } from '@/api/image';
+import { analyzeImage, applyMakeup } from '@/api/image';
 import ImageUploader from '@/components/ImageUploader';
 import { normalizePersonalColor } from '@/utils/personalColorUtils';
 import DiagnosisDetailModal from '@/components/DiagnosisDetailModal';
@@ -43,6 +43,7 @@ interface ChatMessage {
     style_keywords: string[];
     makeup_tips: string[];
   };
+  isWelcome?: boolean;
 }
 
 /**
@@ -103,6 +104,7 @@ const ChatbotPage: React.FC = () => {
   const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
   const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<InfluencerHistoryItem | null>(null);
   const [recommendedQuestions, setRecommendedQuestions] = useState<string[]>([]);
+  const [makeupImageUrl, setMakeupImageUrl] = useState<string | null>(null);
 
   // React Router v6+ blocker for navigation
   const blocker = useBlocker(
@@ -167,8 +169,10 @@ const ChatbotPage: React.FC = () => {
       // prefer server-provided ISO timestamps when available; otherwise synthesize ISO
       const userTsIso = it.question_created_at ? String(it.question_created_at) : new Date(baseTs).toISOString();
 
+      const isWelcome = !it.question || it.question.trim() === '';
+
       // Only add user message if question is not empty (skip hidden welcome triggers)
-      if (it.question && it.question.trim() !== '') {
+      if (!isWelcome) {
         out.push({
           id: `h-${historyId}-${it.question_id}-u`,
           content: it.question || '',
@@ -187,6 +191,7 @@ const ChatbotPage: React.FC = () => {
         isUser: false,
         timestamp: botTsIso,
         chatRes: it.chat_res,
+        isWelcome: isWelcome,
       });
       baseTs = Math.max(baseTs + 1000, dayjs(botTsIso).valueOf() + 500);
     }
@@ -390,6 +395,7 @@ const ChatbotPage: React.FC = () => {
                 timestamp: new Date(),
                 chatRes: latestItem.chat_res,
                 questionId: latestItem.question_id,
+                isWelcome: true,
               };
 
               setMessages(prev => [...prev, botMessage]);
@@ -418,8 +424,8 @@ const ChatbotPage: React.FC = () => {
   }, []);
 
   // 메시지에 리포트(진단) 상세보기 버튼을 보여야 하는지 판단
-  const shouldShowReportButton = (isUser: boolean): boolean => {
-    if (!isUser && surveyResults && surveyResults.length > 0) return true;
+  const shouldShowReportButton = (msg: ChatMessage): boolean => {
+    if (msg.isWelcome && surveyResults && surveyResults.length > 0) return true;
     return false;
   };
 
@@ -556,6 +562,33 @@ const ChatbotPage: React.FC = () => {
         // 사용자 턴 카운트 증가
         const newTurnCount = userTurnCount + 1;
         setUserTurnCount(newTurnCount);
+
+        // 가상 메이크업 요청 처리
+        if ((userMessage.content.includes('메이크업') || userMessage.content.includes('화장')) && makeupImageUrl) {
+          setTimeout(() => {
+            const makeupMsg: ChatMessage = {
+              id: `makeup-${Date.now()}`,
+              content: "진단된 퍼스널컬러를 바탕으로 가상 메이크업을 적용해 보았습니다! 💄",
+              customContent: (
+                <div style={{ padding: '10px' }}>
+                  <div style={{ marginBottom: '8px', fontWeight: 'bold' }}>✨ 가상 메이크업 결과</div>
+                  <antd.Image
+                    src={makeupImageUrl}
+                    alt="Virtual Makeup"
+                    style={{ maxWidth: '100%', borderRadius: '8px' }}
+                  />
+                  <div style={{ marginTop: '8px', fontSize: '12px', color: '#666' }}>
+                    * 퍼스널컬러에 맞는 립과 블러셔가 적용되었습니다.
+                  </div>
+                </div>
+              ),
+              isUser: false,
+              timestamp: new Date()
+            };
+            setMessages(prev => [...prev, makeupMsg]);
+            scrollToBottom();
+          }, 800);
+        }
 
         // 챗봇 응답 후 추천 질문 갱신
         try {
@@ -830,13 +863,52 @@ const ChatbotPage: React.FC = () => {
               },
             };
 
-            setTimeout(() => {
+            setTimeout(async () => {
               setMessages(prev => [...prev, summaryMessage]);
 
               // 진단 완료 후 userTurnCount 초기화 (새로운 대화 사이클 시작)
               console.log('🔄 진단 완료! userTurnCount 초기화 (0으로 리셋)');
               setUserTurnCount(0);
               setHasAutoReportGenerated(false); // 새로운 대화를 위해 리포트 생성 플래그도 초기화
+
+              // 가상 메이크업 제안 (이미지가 있고 메이크업이 준비된 경우)
+              // makeupImageUrl은 상태값이므로 클로저 이슈가 있을 수 있어, 
+              // 여기서는 단순히 제안 메시지를 띄우거나, 봇에게 제안하도록 요청
+              try {
+                // 봇에게 "진단이 완료되었으니 메이크업 추천을 제안해줘"라고 요청 (사용자에게는 안 보임)
+                // 단, makeupImageUrl이 있는지 확인은 여기서 어려울 수 있음 (상태 캡처 문제)
+                // 하지만 보통 이미지 업로드가 선행되었으므로 제안해볼 만함.
+                
+                const proposalPrompt = "퍼스널컬러 진단이 완료되었습니다. 사용자에게 '진단된 톤에 맞는 가상 메이크업을 적용한 이미지를 보여드릴까요?'라고 자연스럽게 제안하는 메시지를 질문형식으로 작성해주세요.";
+                
+                // analyze 호출 (history_id 유지)
+                const proposalRes = await analyze({ 
+                  question: proposalPrompt, 
+                  history_id: response.history_id 
+                });
+
+                if (proposalRes && proposalRes.items && proposalRes.items.length > 0) {
+                  const lastItem = proposalRes.items[proposalRes.items.length - 1];
+                  const botContent = extractBotContentFromItem(lastItem);
+                  
+                  const proposalMessage: ChatMessage = {
+                    id: `makeup-proposal-${Date.now()}`,
+                    content: botContent,
+                    isUser: false,
+                    timestamp: new Date(),
+                    chatRes: lastItem.chat_res,
+                    questionId: lastItem.question_id
+                  };
+                  
+                  setTimeout(() => {
+                    setMessages(prev => [...prev, proposalMessage]);
+                    scrollToBottom();
+                  }, 1500); // 진단 완료 메시지 후 1.5초 뒤
+                }
+              } catch (e) {
+                console.warn('메이크업 제안 메시지 생성 실패', e);
+              }
+
             }, 1000); // 1초 딜레이로 자연스러운 흐름
           } catch (diagnosisError: any) {
             console.error('❌ 진단 결과 저장 실패:', diagnosisError);
@@ -1624,7 +1696,7 @@ const ChatbotPage: React.FC = () => {
                 )}
 
                 <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
-                  {shouldShowReportButton(msg.isUser) && (
+                  {shouldShowReportButton(msg) && (
                     <antd.Button
                       type="default"
                       size="small"
@@ -1893,6 +1965,19 @@ const ChatbotPage: React.FC = () => {
                     antd.message.success('이미지 업로드 완료, 분석을 시작합니다.');
 
                     const imgRes = await analyzeImage(s3Key, currentHistoryId, activeInfluencerProfile?.influencer_name, user?.nickname);
+
+                    // 가상 메이크업 백그라운드 생성 요청
+                    if (imgRes?.image_result?.best_type?.name) {
+                      console.log('💄 가상 메이크업 생성 시작:', imgRes.image_result.best_type.name);
+                      applyMakeup(s3Key, imgRes.image_result.best_type.name)
+                        .then(res => {
+                          if (res.status === 'success' && res.makeup_image_url) {
+                            setMakeupImageUrl(res.makeup_image_url);
+                            console.log("✅ 가상 메이크업 생성 완료:", res.makeup_image_url);
+                          }
+                        })
+                        .catch(err => console.error("❌ 가상 메이크업 생성 실패:", err));
+                    }
 
                     const primary = imgRes?.image_result?.primary_tone || imgRes?.image_result?.primary || '';
                     const sub = imgRes?.image_result?.sub_tone || imgRes?.image_result?.sub || '';
