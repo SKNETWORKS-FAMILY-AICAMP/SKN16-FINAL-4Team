@@ -176,7 +176,9 @@ class UnifiedKnowledgeRAG:
                     raise RuntimeError("불변 지식 쿼리 실패: 유효한 응답 없음")
                 
                 answer = result['answer']
-                sources = ["immutable_knowledge"]
+                # Use citations if available, otherwise generic
+                citations = result['metadata'].get('citations', [])
+                sources = citations if citations else ["Personal Color Analysis Guide"]
                 metadata = {
                     "route": route,
                     "route_description": route_desc,
@@ -189,7 +191,9 @@ class UnifiedKnowledgeRAG:
                 try:
                     result = self.mutable_handler.query(question, temperature, max_tokens)
                     answer = result['answer']
-                    sources = ["mutable_knowledge"]
+                    # Use file_names if available
+                    file_names = result['metadata'].get('file_names', [])
+                    sources = file_names if file_names else ["Vogue Korea Fashion Trends"]
                     metadata = {
                         "route": route,
                         "route_description": route_desc,
@@ -200,6 +204,11 @@ class UnifiedKnowledgeRAG:
                     logger.warning(f"⚠️  가변 지식 쿼리 실패: {e}. 불변 지식으로 폴백합니다.")
                     # 불변 지식으로 폴백
                     result = self.immutable_handler.query(question, temperature, max_tokens)
+                    
+                    # ✅ None 응답 체크
+                    if result is None:
+                        raise RuntimeError("가변 지식 실패 후 불변 지식 폴백도 실패했습니다.")
+                    
                     answer = result['answer']
                     sources = ["immutable_knowledge (fallback)"]
                     metadata = {
@@ -222,6 +231,11 @@ class UnifiedKnowledgeRAG:
                     logger.warning(f"⚠️  통합 쿼리 실패: {e}. 불변 지식만 사용합니다.")
                     # 불변 지식만으로 폴백
                     result = self.immutable_handler.query(question, temperature, max_tokens)
+                    
+                    # ✅ None 응답 체크
+                    if result is None:
+                        raise RuntimeError("통합 쿼리 실패 후 불변 지식 폴백도 실패했습니다.")
+                    
                     answer = result['answer']
                     sources = ["immutable_knowledge (fallback)"]
                     metadata = {
@@ -321,7 +335,25 @@ class UnifiedKnowledgeRAG:
 ---
 위 두 가지 관점을 종합하여 답변드렸습니다."""
             
-            sources = ["immutable_knowledge", "mutable_knowledge"]
+            # Combine sources
+            imm_citations = immutable_result.get('metadata', {}).get('citations', [])
+            mut_snippets = mutable_result.get('metadata', {}).get('reference_snippets', [])
+            
+            sources = []
+            if imm_citations:
+                sources.extend(imm_citations)
+            else:
+                sources.append("Personal Color Analysis Guide")
+                
+            if mut_snippets:
+                sources.extend(mut_snippets)
+            else:
+                # fallback to file names
+                mut_files = mutable_result.get('metadata', {}).get('file_names', [])
+                if mut_files:
+                    sources.extend(mut_files)
+                else:
+                    sources.append("Vogue Korea Fashion Trends")
             
             # ✅ 메타데이터 일관성 처리 (files_used 키 존재 확인)
             immutable_files = immutable_result.get('metadata', {}).get('files_used', 1)

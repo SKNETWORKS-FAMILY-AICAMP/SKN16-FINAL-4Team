@@ -1,7 +1,7 @@
 import * as antd from 'antd';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { SendOutlined, RobotOutlined, ArrowLeftOutlined } from '@ant-design/icons';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useBlocker } from 'react-router-dom';
 
 import { useCurrentUser } from '@/hooks/useUser';
 import { useSurveyResultsLive } from '@/hooks/useSurvey';
@@ -19,12 +19,10 @@ import AnimatedEmoji from '@/components/AnimatedEmoji';
 import { Loading } from '@/components';
 import InfluencerImage from '@/components/InfluencerImage';
 
-
 import dayjs from '@/utils/dayjsTimezoneSetup';
 import { formatKoreanDate } from '@/utils/dateUtils';
 import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
 import { getAvatarRenderInfo } from '@/utils/genderUtils';
-
 
 const { Title, Text } = antd.Typography;
 const { TextArea } = antd.Input;
@@ -53,6 +51,8 @@ interface ChatMessage {
  */
 const ChatbotPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+
   const { data: user, isLoading: userLoading } = useCurrentUser();
   const { data: surveyResults, isLoading: surveyLoading } =
     useSurveyResultsLive();
@@ -67,7 +67,13 @@ const ChatbotPage: React.FC = () => {
     startSession,
     fetchMessagesForInfluencer,
   } = useChatbot();
+
   const sessionStartedRef = useRef(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  // remember last influencer id we loaded to avoid repeated refetches
+  const lastLoadedInfluencerRef = useRef<string | number | null>(null);
+  const autoCloseRef = useRef<number | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // description 버블 딜레이 표시용
@@ -75,9 +81,7 @@ const ChatbotPage: React.FC = () => {
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const isBusy = isTyping || isAnalyzing || isDiagnosing;
-
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
-  const [isLeavingPage, setIsLeavingPage] = useState(false);
   // 새로 생성된(현재 세션에서 시작된) 대화가 있는지 여부
   const [hasNewConversation, setHasNewConversation] = useState(false);
   const [currentHistoryId, setCurrentHistoryId] = useState<number | undefined>(
@@ -96,11 +100,34 @@ const ChatbotPage: React.FC = () => {
     image_result?: any;
     history_id?: number;
   } | null>(null);
+  const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
+  const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<InfluencerHistoryItem | null>(null);
+  const [recommendedQuestions, setRecommendedQuestions] = useState<string[]>([]);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
-  // remember last influencer id we loaded to avoid repeated refetches
-  const lastLoadedInfluencerRef = useRef<string | number | null>(null);
+  // React Router v6+ blocker for navigation
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      hasNewConversation && currentLocation.pathname !== nextLocation.pathname
+  );
+
+  // If navigation is blocked, show the feedback modal
+  useEffect(() => {
+    if (blocker.state === "blocked") {
+      setIsFeedbackModalOpen(true);
+    }
+  }, [blocker.state]);
+
+  // Browser beforeunload (refresh/close tab)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasNewConversation) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasNewConversation]);
 
   // Small helpers to reduce duplicated parsing/mapping logic
   const parseRawChatRes = (raw: any): ChatResModel | undefined => {
@@ -140,12 +167,15 @@ const ChatbotPage: React.FC = () => {
       // prefer server-provided ISO timestamps when available; otherwise synthesize ISO
       const userTsIso = it.question_created_at ? String(it.question_created_at) : new Date(baseTs).toISOString();
 
-      out.push({
-        id: `h-${historyId}-${it.question_id}-u`,
-        content: it.question || '',
-        isUser: true,
-        timestamp: userTsIso,
-      });
+      // Only add user message if question is not empty (skip hidden welcome triggers)
+      if (it.question && it.question.trim() !== '') {
+        out.push({
+          id: `h-${historyId}-${it.question_id}-u`,
+          content: it.question || '',
+          isUser: true,
+          timestamp: userTsIso,
+        });
+      }
       // advance baseTs relative to parsed time
       baseTs = Math.max(baseTs + 1000, dayjs(userTsIso).valueOf() + 500);
 
@@ -159,22 +189,6 @@ const ChatbotPage: React.FC = () => {
         chatRes: it.chat_res,
       });
       baseTs = Math.max(baseTs + 1000, dayjs(botTsIso).valueOf() + 500);
-    }
-    return out;
-  };
-
-  const analyzeItemsToBotMessages = (items: any[], historyId?: number) => {
-    const out: ChatMessage[] = [];
-    let baseTs = Date.now();
-    for (const it of items || []) {
-      out.push({
-        id: `w-${historyId}-${it.question_id || 0}-b`,
-        content: it.answer || (it.chat_res && it.chat_res.description) || '',
-        isUser: false,
-        timestamp: new Date(baseTs).toISOString(),
-        chatRes: it.chat_res,
-      });
-      baseTs += 1000;
     }
     return out;
   };
@@ -205,17 +219,44 @@ const ChatbotPage: React.FC = () => {
       if (!container) return;
       // Only programmatically scroll when content is larger than the container
       if (container.scrollHeight > container.clientHeight) {
-        container.scrollTo({ top: container.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+        container.scrollTo({ top: container.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
       }
     } catch (e) {
-      // ignore
+      console.log(e)
     }
   };
 
-  const [influencerModalOpen, setInfluencerModalOpen] = useState(false);
-  const [activeInfluencerProfile, setActiveInfluencerProfile] = useState<InfluencerHistoryItem | null>(null);
-  const autoCloseRef = useRef<number | null>(null);
-  const location = useLocation();
+  // Auto-scroll when messages change
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Helper to sanitize large objects before sending to chat API
+  const sanitizeForChat = (obj: any): any => {
+    if (!obj) return obj;
+    if (typeof obj === 'string') {
+      // Truncate very long strings (e.g. base64 images)
+      return obj.length > 500 ? obj.substring(0, 500) + '...[truncated]' : obj;
+    }
+    if (Array.isArray(obj)) {
+      return obj.map(sanitizeForChat);
+    }
+    if (typeof obj === 'object') {
+      const newObj: any = {};
+      for (const key in obj) {
+        // Skip keys that are known to contain large data
+        if (key.toLowerCase().includes('base64') ||
+          key.toLowerCase().includes('image_data') ||
+          key.toLowerCase().includes('encoded_image')) {
+          newObj[key] = '[Image Data Omitted]';
+        } else {
+          newObj[key] = sanitizeForChat(obj[key]);
+        }
+      }
+      return newObj;
+    }
+    return obj;
+  };
 
   // 라우터 state로 전달된 인플루언서 프로필(예: MyPage에서 클릭으로 전달)을 수신
   useEffect(() => {
@@ -225,7 +266,7 @@ const ChatbotPage: React.FC = () => {
         setActiveInfluencerProfile(maybe);
       }
     } catch (e) {
-      // ignore
+      console.log(e)
     }
   }, [location]);
 
@@ -275,9 +316,7 @@ const ChatbotPage: React.FC = () => {
 
   // 페이지 벗어나기 차단 (브라우저 새로고침, 닫기 등)
   // useBeforeUnload가 없으므로, 새로고침/이동 차단은 필요시 window.onbeforeunload 등으로 구현
-
   // React Router 네비게이션 차단: useBlocker가 없으므로, 필요시 구현 또는 라이브러리 사용
-
   // 페이지 진입 시 명시적으로 새 채팅 세션을 시작합니다. (원래 있던 startSession 로직 복원)
   useEffect(() => {
     if (sessionStartedRef.current) return;
@@ -296,10 +335,17 @@ const ChatbotPage: React.FC = () => {
 
         setCurrentHistoryId(res.history_id);
 
-        if (res.reused && typeof res.user_turns === 'number') {
-          setUserTurnCount(res.user_turns);
-          console.log('재사용 세션의 기존 사용자 턴 수 복원:', res.user_turns);
+        // Fetch recommended questions
+        try {
+          const recRes = await chatbotApi.recommendQuestions(res.history_id);
+          if (recRes && recRes.questions && recRes.questions.length > 0) {
+            setRecommendedQuestions(recRes.questions);
+          }
+        } catch (e) {
+          console.warn('Failed to fetch recommended questions:', e);
         }
+
+        let skipWelcome = false;
 
         // 복원 가능한 기존 열린 세션이면 히스토리 로드
         if (res.reused) {
@@ -309,9 +355,49 @@ const ChatbotPage: React.FC = () => {
               const loaded: ChatMessage[] = historyItemsToChatMessages(hist.items, res.history_id);
               setMessages(loaded);
               setTimeout(() => scrollToBottom(false), 50);
+
+              // 마지막 메시지가 봇의 메시지이고, 이미지 업로드를 요청하는 내용이면 환영 메시지 생략 (중복 방지)
+              const lastItem = hist.items[hist.items.length - 1];
+              if (lastItem && lastItem.answer) {
+                const content = lastItem.answer;
+                if (content.includes('사진') || content.includes('이미지') || content.includes('업로드')) {
+                  skipWelcome = true;
+                  console.log('이미지 업로드 요청 메시지가 이미 존재하여 환영 메시지 생략');
+                }
+              }
             }
           } catch (e) {
             console.warn('히스토리 불러오기 실패:', e);
+          }
+        }
+
+        // reused 값과 상관없이 항상 환영 메시지 생성 (이미지 업로드 요청)
+        // 단, 이미 마지막 메시지가 환영 메시지라면 생략
+        if (!skipWelcome) {
+          try {
+            setIsTyping(true);
+            // 빈 문자열을 보내면 백엔드에서 인플루언서 말투로 환영 메시지를 생성함
+            const response = await analyze({ question: "", history_id: res.history_id });
+
+            if (mounted && response && response.items && response.items.length > 0) {
+              const latestItem = response.items[response.items.length - 1];
+              const botContent = extractBotContentFromItem(latestItem);
+
+              const botMessage: ChatMessage = {
+                id: (Date.now() + 1).toString(),
+                content: botContent,
+                isUser: false,
+                timestamp: new Date(),
+                chatRes: latestItem.chat_res,
+                questionId: latestItem.question_id,
+              };
+
+              setMessages(prev => [...prev, botMessage]);
+            }
+          } catch (welcomeError) {
+            console.warn('환영 메시지 생성 실패:', welcomeError);
+          } finally {
+            if (mounted) setIsTyping(false);
           }
         }
 
@@ -323,6 +409,7 @@ const ChatbotPage: React.FC = () => {
     })();
 
     return () => {
+      mounted = false;
       sessionStartedRef.current = false;
     };
     // Run once on mount. `startSession`/`analyze` come from hooks and may change identity,
@@ -331,12 +418,8 @@ const ChatbotPage: React.FC = () => {
   }, []);
 
   // 메시지에 리포트(진단) 상세보기 버튼을 보여야 하는지 판단
-  const shouldShowReportButton = (msg: ChatMessage): boolean => {
-    if (!msg || msg.isUser) return false;
-    const content = (msg.content || '').toString();
-    if (msg.diagnosisData) return true;
-    if (content.includes('[상세보기]')) return true;
-    if (/진단|리포트|분석/.test(content)) return true;
+  const shouldShowReportButton = (isUser: boolean): boolean => {
+    if (!isUser && surveyResults && surveyResults.length > 0) return true;
     return false;
   };
 
@@ -473,6 +556,16 @@ const ChatbotPage: React.FC = () => {
         // 사용자 턴 카운트 증가
         const newTurnCount = userTurnCount + 1;
         setUserTurnCount(newTurnCount);
+
+        // 챗봇 응답 후 추천 질문 갱신
+        try {
+          const recRes = await chatbotApi.recommendQuestions(response.history_id);
+          if (recRes && recRes.questions && recRes.questions.length > 0) {
+            setRecommendedQuestions(recRes.questions);
+          }
+        } catch (e) {
+          console.warn('Failed to update recommended questions:', e);
+        }
 
         console.log(
           `📊 현재 대화 턴: ${newTurnCount}, 자동 리포트 생성 여부: ${hasAutoReportGenerated}`
@@ -747,30 +840,228 @@ const ChatbotPage: React.FC = () => {
             }, 1000); // 1초 딜레이로 자연스러운 흐름
           } catch (diagnosisError: any) {
             console.error('❌ 진단 결과 저장 실패:', diagnosisError);
+            setHasAutoReportGenerated(false); // 재시도 가능하게 플래그 초기화
 
-            const summaryErrorMessage: ChatMessage = {
-              id: (Date.now() + 2).toString(),
-              content: `🎉 ${userNickname}과의 대화를 통해 퍼스널컬러 분석이 완료되었습니다!
-                📊 **퍼스널컬러 분석 요약**
-                🎨 **퍼스널 타입**: ${latestItem.chat_res.sub_tone ? `${latestItem.chat_res.sub_tone} 타입` : '퍼스널컬러 타입'}
-                � **타입 특성**: ${latestItem.chat_res.description || '당신만의 개성을 살릴 수 있는 퍼스널컬러를 찾았어요!'}
-                🌈 **추천 컬러 팔레트**: 
-                🎨 #FFB6C1 🎨 #FFA07A 🎨 #FFFF99 🎨 #98FB98 🎨 #87CEEB
-                상세한 분석 결과와 맞춤 추천을 확인해보세요!
-                [상세보기]`,
+            const errorMsg = diagnosisError.response?.data?.detail
+              || diagnosisError.message
+              || '진단 결과 저장 중 오류가 발생했습니다.';
+
+            const diagnosisErrorId = `diagnosis-error-${currentHistoryId}`;
+
+            // 진단 에러 메시지 버블
+            const diagnosisErrorMessage: ChatMessage = {
+              id: diagnosisErrorId,
+              content: '',
+              customContent: (
+                <div style={{ padding: '16px' }}>
+                  <div style={{ marginBottom: '16px' }}>
+                    <div
+                      style={{
+                        fontSize: '16px',
+                        fontWeight: 'bold',
+                        marginBottom: '8px',
+                        color: '#dc2626',
+                      }}
+                    >
+                      ⚠️ 진단 결과 저장 중 오류 발생
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '14px',
+                        color: '#6b7280',
+                        marginBottom: '12px',
+                        padding: '8px',
+                        backgroundColor: '#fee2e2',
+                        borderRadius: '6px',
+                        border: '1px solid #fecaca',
+                      }}
+                    >
+                      {errorMsg}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '12px',
+                        color: '#059669',
+                        marginTop: '8px',
+                        padding: '8px',
+                        backgroundColor: '#f0fff4',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      💡 일시적인 오류일 수 있습니다. 아래 버튼으로 다시 시도해주세요.
+                    </div>
+                  </div>
+
+                  {/* 재시도 버튼 */}
+                  {currentHistoryId && <div style={{ display: 'flex', gap: '8px' }}>
+                    <antd.Button
+                      type="primary"
+                      danger
+                      size="small"
+                      onClick={async () => {
+                        try {
+                          setIsTyping(true);
+                          console.log('🔄 진단 결과 재시도 중...');
+
+                          const diagnosisResult = await analyzeChatForDiagnosis(
+                            currentHistoryId
+                          );
+                          console.log('✅ 진단 결과 재시도 성공:', diagnosisResult);
+
+                          // 성공 메시지로 교체
+                          let previewResult: SurveyResultDetail | null = null;
+                          if (diagnosisResult && diagnosisResult.report_data) {
+                            try {
+                              const wrapped = { report_data: diagnosisResult.report_data } as any;
+                              previewResult = convertReportDataToSurveyDetail(
+                                wrapped,
+                                diagnosisResult.survey_result_id || Date.now()
+                              );
+                            } catch (e) {
+                              console.warn('convertReportDataToSurveyDetail 실패', e);
+                              previewResult = {
+                                id: diagnosisResult.survey_result_id || Date.now(),
+                                user_id: user?.id || 0,
+                                created_at: diagnosisResult.created_at || new Date().toISOString(),
+                                result_tone: (diagnosisResult.result_tone || 'spring') as any,
+                                confidence: 0.85,
+                                total_score: 85,
+                                detailed_analysis: diagnosisResult.detailed_analysis || '',
+                                result_name: diagnosisResult.result_name || '',
+                                result_description: diagnosisResult.detailed_analysis || '',
+                                color_palette: diagnosisResult.color_palette || [],
+                                style_keywords: diagnosisResult.style_keywords || [],
+                                makeup_tips: diagnosisResult.makeup_tips || [],
+                                top_types: Array.isArray(diagnosisResult.report_data?.top_types)
+                                  ? diagnosisResult.report_data.top_types
+                                  : [],
+                                answers: [],
+                              } as SurveyResultDetail;
+                            }
+                          }
+
+                          setSelectedResult(previewResult);
+                          setHasAutoReportGenerated(true);
+
+                          // 에러 메시지를 제거
+                          setMessages(prev => prev.filter(m => m.id !== diagnosisErrorId));
+
+                          // 성공 메시지 추가
+                          const successMessage: ChatMessage = {
+                            id: `diagnosis-success-${currentHistoryId}`,
+                            content: '',
+                            customContent: (
+                              <div style={{ padding: '16px' }}>
+                                <div style={{ marginBottom: '20px' }}>
+                                  <div
+                                    style={{
+                                      fontSize: '16px',
+                                      fontWeight: 'bold',
+                                      marginBottom: '8px',
+                                      color: '#1a1a1a',
+                                    }}
+                                  >
+                                    ✅ {userNickname}의 퍼스널컬러 진단이 완료되었습니다!
+                                  </div>
+                                  <div
+                                    style={{
+                                      fontSize: '12px',
+                                      color: '#059669',
+                                      marginTop: '8px',
+                                      padding: '8px',
+                                      backgroundColor: '#f0fff4',
+                                      borderRadius: '6px',
+                                    }}
+                                  >
+                                    💬 계속 대화하시면 더 자세한 상담을 받을 수 있어요!
+                                  </div>
+                                </div>
+
+                                {(() => {
+                                  const typeNames: Record<string, { name: string; emoji: string; color: string }> = {
+                                    spring: { name: '봄 웜톤', emoji: '🌸', color: '#fab1a0' },
+                                    summer: { name: '여름 쿨톤', emoji: '💎', color: '#a8e6cf' },
+                                    autumn: { name: '가을 웜톤', emoji: '🍂', color: '#d4a574' },
+                                    winter: { name: '겨울 쿨톤', emoji: '❄️', color: '#74b9ff' },
+                                  };
+
+                                  const resultTone = diagnosisResult.result_tone || latestItem.chat_res.primary_tone || 'spring';
+                                  const typeInfo = typeNames[resultTone] || typeNames.spring;
+
+                                  return (
+                                    <div
+                                      style={{
+                                        background: `linear-gradient(135deg, ${typeInfo.color}, ${typeInfo.color}aa)`,
+                                        color: '#000000',
+                                        padding: '16px',
+                                        borderRadius: '12px',
+                                        textAlign: 'center',
+                                        marginBottom: '16px',
+                                      }}
+                                    >
+                                      <div style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 4px 0' }}>
+                                        {typeInfo.emoji} {diagnosisResult.result_name}
+                                      </div>
+                                      <div style={{ fontSize: '13px', margin: '0' }}>
+                                        {diagnosisResult.detailed_analysis?.split('.')[0] + '.' || '당신만의 개성을 살릴 수 있는 퍼스널컬러를 찾았어요!'}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+
+                                <div style={{ fontSize: '14px', color: '#6b7280', textAlign: 'center' }}>
+                                  상세한 분석 결과를 확인해보세요!
+                                </div>
+                              </div>
+                            ),
+                            isUser: false,
+                            timestamp: new Date(),
+                            chatRes: latestItem.chat_res,
+                            diagnosisData: {
+                              result_name: diagnosisResult.result_name || '',
+                              detailed_analysis: diagnosisResult.detailed_analysis || '',
+                              color_palette: diagnosisResult.color_palette || [],
+                              style_keywords: diagnosisResult.style_keywords || [],
+                              makeup_tips: diagnosisResult.makeup_tips || [],
+                            },
+                          };
+
+                          setMessages(prev => [...prev, successMessage]);
+                          setUserTurnCount(0); // 성공 후 초기화
+                          antd.message.success('진단 결과 재시도 성공!');
+                        } catch (retryError) {
+                          console.error('진단 결과 재시도 실패:', retryError);
+                          antd.message.error('다시 시도해도 실패했습니다. 잠시 후 다시 시도해주세요.');
+                        } finally {
+                          setIsTyping(false);
+                        }
+                      }}
+                    >
+                      🔄 다시 시도
+                    </antd.Button>
+                    <antd.Button
+                      type="default"
+                      size="small"
+                      onClick={() => {
+                        // 에러 메시지 제거하고 재진단 가능하게
+                        setMessages(prev => prev.filter(m => m.id !== diagnosisErrorId));
+                        antd.message.info('다음 대화에서 다시 진단을 시도할 수 있습니다.');
+                      }}
+                    >
+                      닫기
+                    </antd.Button>
+                  </div>}
+                </div>
+              ),
               isUser: false,
               timestamp: new Date(),
-              chatRes: latestItem.chat_res, // 진단 결과 데이터 포함
             };
 
             setTimeout(() => {
-              setMessages(prev => [...prev, summaryErrorMessage]);
-
-              // 에러 발생 시에도 userTurnCount 초기화 (새로운 대화 사이클 시작)
-              console.log('🔄 진단 시도 완료! userTurnCount 초기화 (0으로 리셋)');
-              setUserTurnCount(0);
-              setHasAutoReportGenerated(false); // 새로운 대화를 위해 리포트 생성 플래그도 초기화
-            }, 1000);
+              setMessages(prev => [...prev, diagnosisErrorMessage]);
+              // 에러 발생 시 userTurnCount 유지 (재시도 가능)
+              console.log('⚠️ 진단 에러! userTurnCount 유지:', userTurnCount);
+            }, 500);
           }
         }
       }
@@ -836,7 +1127,6 @@ const ChatbotPage: React.FC = () => {
     if (hasNewConversation) {
       setIsFeedbackModalOpen(true);
     } else {
-      setIsLeavingPage(true);
       navigate('/');
     }
   };
@@ -879,39 +1169,52 @@ const ChatbotPage: React.FC = () => {
 
       // 성공 시 UI 처리
       setIsFeedbackModalOpen(false);
-      setIsLeavingPage(true);
       // 피드백 제출 후 새 대화 플래그 초기화
       setHasNewConversation(false);
       antd.message.success(`피드백 감사합니다!`, 2);
 
-      // 네비게이션 차단 로직 없음. 필요시 구현
-      setTimeout(() => navigate('/'), 500);
+      if (blocker.state === "blocked") {
+        blocker.proceed();
+      } else {
+        setTimeout(() => navigate('/'), 500);
+      }
     } catch (error) {
       console.error('피드백 제출 중 오류:', error);
       antd.message.error('피드백 제출 중 오류가 발생했습니다.');
 
       // 오류 시에도 플래그 초기화
       setIsFeedbackModalOpen(false);
-      setIsLeavingPage(true);
       setHasNewConversation(false);
 
-      // 네비게이션 차단 로직 없음. 필요시 구현
-      setTimeout(() => navigate('/'), 500);
+      if (blocker.state === "blocked") {
+        blocker.proceed();
+      } else {
+        setTimeout(() => navigate('/'), 500);
+      }
     }
   };
 
+  const onCloseFeedbackModal = () => {
+    setIsFeedbackModalOpen(false);
+    // 차단된 네비게이션을 초기화하여 다시 페이지에 머무름 상태로 만듦
+    if (blocker.state === "blocked") {
+      blocker.reset();
+    }
+  }
+
   // 피드백 모달 닫기 (피드백 없이 나가기)
-  const handleCloseFeedbackModal = async () => {
+  const onCloseWithoutFeedback = async () => {
     await handleEndChatSession();
 
     // 세션 종료 시 플래그 초기화
-
     setIsFeedbackModalOpen(false);
-    setIsLeavingPage(true);
     setHasNewConversation(false);
 
-    // 네비게이션 차단 로직 없음. 필요시 구현
-    navigate('/');
+    if (blocker.state === "blocked") {
+      blocker.proceed();
+    } else {
+      navigate('/');
+    }
   };
 
 
@@ -1301,8 +1604,27 @@ const ChatbotPage: React.FC = () => {
                   </Text>
                 )}
 
+                {/* References Section */}
+                {!msg.isUser && msg.chatRes?.references && msg.chatRes.references.length > 0 && (
+                  <div className="mt-3 pt-2 border-t border-gray-100">
+                    <div className="text-xs text-gray-500 flex flex-wrap gap-1 items-center">
+                      <span className="font-bold mr-1">📚 참고 자료:</span>
+                      {msg.chatRes.references.map((ref, idx) => (
+                        <React.Fragment key={idx}>
+                          {idx > 0 && <span className="mr-1">,</span>}
+                          <antd.Tooltip title={<div className="whitespace-pre-wrap max-h-60 overflow-y-auto text-xs">{ref}</div>} styles={{ root: { maxWidth: '400px' } }}>
+                            <span className="text-purple-500 font-medium cursor-pointer hover:underline">
+                              [{idx + 1}]
+                            </span>
+                          </antd.Tooltip>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="text-xs mt-1 opacity-70 flex justify-between items-center">
-                  {shouldShowReportButton(msg) && (
+                  {shouldShowReportButton(msg.isUser) && (
                     <antd.Button
                       type="default"
                       size="small"
@@ -1365,7 +1687,7 @@ const ChatbotPage: React.FC = () => {
   }
 
   // 샘플 질문 데이터 (진단 내역 유무에 따라 분기)
-  const sampleQuestions =
+  const staticSampleQuestions =
     !surveyResults || surveyResults.length === 0
       ? [
         {
@@ -1404,6 +1726,10 @@ const ChatbotPage: React.FC = () => {
           question: '내 타입의 특징과 다른 타입과의 차이점을 알려주세요.',
         },
       ];
+
+  const displayQuestions = recommendedQuestions.length > 0
+    ? recommendedQuestions.map(q => ({ label: q.length > 10 ? q.substring(0, 10) + '...' : q, question: q }))
+    : staticSampleQuestions;
 
   // 메인 화면 렌더링
   return (
@@ -1477,9 +1803,6 @@ const ChatbotPage: React.FC = () => {
                   <div className={`chatbot-avatar-container !mr-2 ${isTyping ? 'chatbot-active' : ''}`}>
                     {
                       (() => {
-                        // find last bot message to infer influencer if needed
-                        const lastBot = [...messages].slice().reverse().find(m => !m.isUser);
-
                         let found: any = null;
                         if (activeInfluencerProfile) {
                           found = activeInfluencerProfile;
@@ -1543,6 +1866,28 @@ const ChatbotPage: React.FC = () => {
                 {/* onUpload 내부에서 ChatbotPage가 분석 요청 및 메시지 삽입을 수행합니다. */}
                 <ImageUploader onUpload={async (up: any, file: any) => {
                   try {
+                    // 1. 사용자 메시지 먼저 표시
+                    const imageUrl = URL.createObjectURL(file);
+                    const userMsg: ChatMessage = {
+                      id: `img-u-${Date.now()}`,
+                      content: `이미지 업로드: ${file.name}`,
+                      customContent: (
+                        <antd.Image
+                          src={imageUrl}
+                          alt={file.name}
+                          style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: '8px' }}
+                        />
+                      ),
+                      isUser: true,
+                      timestamp: new Date()
+                    };
+                    setMessages(prev => [...prev, userMsg]);
+                    // 이미지 업로드는 사용자 주도 액션으로 간주하여 새 대화 플래그 설정
+                    setHasNewConversation(true);
+
+                    // 2. 타이핑 시작
+                    setIsTyping(true);
+
                     // 업로드 후 ChatbotPage 기존 분석 흐름 실행
                     const s3Key = up.key;
                     antd.message.success('이미지 업로드 완료, 분석을 시작합니다.');
@@ -1552,17 +1897,26 @@ const ChatbotPage: React.FC = () => {
                     const primary = imgRes?.image_result?.primary_tone || imgRes?.image_result?.primary || '';
                     const sub = imgRes?.image_result?.sub_tone || imgRes?.image_result?.sub || '';
 
-                    const userMsg: ChatMessage = { id: `img-u-${Date.now()}`, content: `이미지 업로드: ${file.name}`, isUser: true, timestamp: new Date() };
-                    setMessages(prev => [...prev, userMsg]);
-                    // 이미지 업로드는 사용자 주도 액션으로 간주하여 새 대화 플래그 설정
-                    setHasNewConversation(true);
-
                     try {
-                      const hint = `이미지에서 감지된 퍼스널컬러는 ${primary}${sub ? ' / ' + sub : ''} 입니다. 이 정보를 바탕으로 추가 질문을 해주세요.`;
+                      const hint = JSON.stringify(sanitizeForChat(imgRes));
                       const resp = await chatbotApi.analyze({ question: hint, history_id: currentHistoryId });
                       setCurrentHistoryId(resp.history_id);
-                      const botMsgs = analyzeItemsToBotMessages(resp.items || [], resp.history_id);
-                      setMessages((prev: ChatMessage[]) => [...prev, ...botMsgs]);
+
+                      if (resp.items && resp.items.length > 0) {
+                        const latestItem = resp.items[resp.items.length - 1];
+                        const botContent = extractBotContentFromItem(latestItem);
+
+                        const botMsg: ChatMessage = {
+                          id: `img-b-${Date.now()}`,
+                          content: botContent,
+                          isUser: false,
+                          timestamp: new Date(),
+                          chatRes: latestItem.chat_res,
+                          questionId: latestItem.question_id
+                        };
+                        setMessages(prev => [...prev, botMsg]);
+                      }
+
                       // mark that we expect one follow-up from the user which should trigger
                       // a more detailed analysis combining the image_result and the user's answer
                       setPendingImageFollowup({ primary: primary, sub: sub, image_result: imgRes?.image_result, history_id: resp.history_id });
@@ -1574,6 +1928,8 @@ const ChatbotPage: React.FC = () => {
                   } catch (err: any) {
                     console.error('이미지 업로드/분석 오류', err);
                     antd.message.error('이미지 업로드 또는 분석 중 오류가 발생했습니다.');
+                  } finally {
+                    setIsTyping(false);
                   }
                 }} />
               </React.Suspense>
@@ -1584,7 +1940,7 @@ const ChatbotPage: React.FC = () => {
                 : '💡 이런 질문은 어떠세요?'}
             </Text>
             <div className="flex flex-wrap gap-1">
-              {sampleQuestions.map((item, index) => (
+              {displayQuestions.map((item, index) => (
                 <antd.Button
                   key={index}
                   size="small"
@@ -1636,7 +1992,8 @@ const ChatbotPage: React.FC = () => {
         {/* 피드백 모달 */}
         <FeedbackModal
           open={isFeedbackModalOpen}
-          onCancel={handleCloseFeedbackModal}
+          onCancel={onCloseFeedbackModal}
+          onCloseWithoutFeedback={onCloseWithoutFeedback}
           onFeedback={handleFeedback}
           isLoading={isSubmittingFeedback}
         />

@@ -19,6 +19,22 @@ class RobustLandmarkClassifier(PersonalColorClassifier):
         self.eye_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + 'haarcascade_eye.xml'
         )
+        
+        # ML 모델 로드 (Gradio 앱 로직용)
+        try:
+            import pickle
+            import os
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            model_path = os.path.join(current_dir, 'full_season_ml_model.pkl')
+            if os.path.exists(model_path):
+                with open(model_path, 'rb') as f:
+                    data = pickle.load(f)
+                    self.season_model = data['model']
+            else:
+                self.season_model = None
+        except Exception as e:
+            print(f"Warning: ML model load failed: {e}")
+            self.season_model = None
 
     def apply_white_balance(self, image):
         """
@@ -451,75 +467,154 @@ class RobustLandmarkClassifier(PersonalColorClassifier):
 
             return L, a, b
 
+    def classify(self, image):
+        """
+        Gradio 앱과 동일한 로직으로 퍼스널 컬러 분류
+        """
+        # 1. 얼굴 검출 및 특징 추출
+        dfes = self.detect_face_and_extract_skin(image)
+        if isinstance(dfes, tuple) and len(dfes) == 4:
+            skin, masks, vis_image, eyes_detected = dfes
+        else:
+            skin, masks, vis_image = dfes
+            eyes_detected = False
 
-def test_robust_classifier(image_path):
-    """
-    개선된 분류기 테스트
-    """
-    import matplotlib.pyplot as plt
+        if skin is None or masks is None:
+             return {
+                'status': 'failure',
+                'message': '얼굴을 찾을 수 없습니다.',
+                'visualization': image
+            }
 
-    # 이미지 로드 (BGR 그대로 유지)
-    image = cv2.imread(image_path)
-    if image is None:
-        print(f"이미지 로드 실패: {image_path}")
-        return
-
-    # Robust 분류기 (BGR 입력)
-    classifier = RobustLandmarkClassifier()
-
-    print("=" * 80)
-    print("Robust Landmark-based Classifier 테스트")
-    print("=" * 80)
-
-    # 추출 (BGR 이미지 그대로 전달)
-    skin, masks, vis, eyes_detected = classifier.detect_face_and_extract_skin(image)
-
-    if skin is not None and masks is not None:
-        try:
-            # Robust LAB 특징 추출
-            features = classifier.extract_robust_lab_features(skin, masks)
-
-            # 웜/쿨 판정
-            if features['warmth_score'] > 0:
-                tone = "Warm (웜톤)"
+        # LAB 특징 추출
+        features = self.extract_robust_lab_features(skin, masks)
+        
+        a_median = features['a_median']
+        b_median = features['b_median']
+        chroma = features['chroma']
+        L_raw = features['L_cheek_raw']
+        
+        # --- Gradio App Logic Start ---
+        
+        # 1단계: 웜/쿨 판단
+        if b_median > 12:
+            tone = "웜톤"
+            if L_raw >= 77:
+                season = '봄'
             else:
-                tone = "Cool (쿨톤)"
+                season = '가을'
+        elif L_raw >= 83 and a_median >= 10:
+            tone = "웜톤"
+            season = '봄'
+        else:
+            tone = "쿨톤"
+            if L_raw >= 79:
+                season = '여름'
+            else:
+                season = '겨울'
 
-            print(f"\n판정: {tone}")
-            print(f"  → b={features['b_median']:+.2f} (높을수록 웜)")
-            print(f"  → a={features['a_median']:+.2f} (보조 지표)")
+        # ML 모델 확률 (참고용)
+        season_conf = 0.0
+        if self.season_model is not None:
+            try:
+                # features for model: [a, b, chroma, L]
+                model_input = [[a_median, b_median, chroma, L_raw]]
+                season_proba = self.season_model.predict_proba(model_input)[0]
+                season_conf = max(season_proba)
+            except Exception as e:
+                print(f"ML prediction failed: {e}")
 
-        except ValueError as e:
-            print(f"❌ 특징 추출 실패: {e}")
-    else:
-        print("❌ 얼굴 검출 실패")
+        # 3단계: 세부 타입 분류
+        subtype_ranges = {
+            '봄': {
+                '라이트': {'b': (-20, 20), 'L': (72, 90), 'a': (-2, 15)},
+                '트루': {'b': (17, 22), 'L': (69, 75), 'a': (3, 6)},
+                '브라이트': {'b': (22, 28), 'L': (66, 74), 'a': (6, 9)},
+            },
+            '여름': {
+                '라이트': {'b': (-10, 3), 'L': (80, 90), 'a': (9, 12)},
+                '트루': {'b': (-4, 2), 'L': (65, 70), 'a': (7, 10)},
+                '뮤트': {'b': (2, 12), 'L': (58, 85), 'a': (5, 11)},
+            },
+            '가을': {
+                '소프트': {'b': (16, 18), 'L': (58, 72), 'a': (8, 11)},
+                '딥': {'b': (15, 19), 'L': (74, 76), 'a': (10, 11)},
+            },
+            '겨울': {
+                '브라이트': {'b': (-12, -6), 'L': (68, 72), 'a': (6, 8)},
+                '트루': {'b': (-6, 8), 'L': (75, 82), 'a': (3, 7)},
+                '딥': {'b': (-20, 12), 'L': (55, 79), 'a': (-3, 14)},
+            },
+        }
 
-    # 시각화 (BGR → RGB 변환)
-    plt.figure(figsize=(10, 6))
-    vis_rgb = cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
-    plt.imshow(vis_rgb)
-    plt.title("Robust Eye-based ROI\n(Blue=Forehead, Red=Cheek, Green=Chin)", fontsize=12)
-    plt.axis('off')
+        scores = []
+        
+        if season in subtype_ranges:
+            for subtype_name, ranges in subtype_ranges[season].items():
+                score = 0
+                b_min, b_max = ranges['b']
+                L_min, L_max = ranges['L']
+                a_min, a_max = ranges['a']
 
-    if skin is not None and masks is not None:
-        plt.text(10, 30,
-                f"a: {features['a_median']:+.1f}\nb: {features['b_median']:+.1f}\nC*: {features['chroma']:.1f}\n"
-                f"L_norm: {features['L_normalized']:.2f}\nWarmth: {features['warmth_score']:+.1f}",
-                fontsize=10, color='white',
-                bbox=dict(boxstyle='round', facecolor='black', alpha=0.7))
+                if b_min <= b_median <= b_max: score += 1
+                else: score -= min(abs(b_median - b_min), abs(b_median - b_max)) * 0.1
 
-    plt.tight_layout()
-    plt.savefig('robust_classifier_test.png', dpi=150, bbox_inches='tight')
-    print(f"\n✓ 시각화 저장: robust_classifier_test.png")
-    plt.close()
+                if L_min <= L_raw <= L_max: score += 1
+                else: score -= min(abs(L_raw - L_min), abs(L_raw - L_max)) * 0.1
 
+                if a_min <= a_median <= a_max: score += 1
+                else: score -= min(abs(a_median - a_min), abs(a_median - a_max)) * 0.1
+                
+                scores.append((subtype_name, score))
+        
+        # Sort by score
+        scores.sort(key=lambda x: x[1], reverse=True)
+        
+        if scores:
+            best_subtype = scores[0][0]
+        else:
+            best_subtype = 'Unknown'
+        
+        full_subtype_name = f"{season} {best_subtype}"
+        
+        # Find ColorType object
+        try:
+            best_type_obj = next(ct for ct in self.color_types if ct.subtype == full_subtype_name)
+        except StopIteration:
+            # Fallback
+            best_type_obj = self.color_types[0]
+            print(f"Warning: Could not find ColorType for {full_subtype_name}")
 
-if __name__ == "__main__":
-    import sys
+        # Construct Top 3
+        top3 = []
+        for name, score in scores[:3]:
+            full_name = f"{season} {name}"
+            # Convert score to something positive for probability display
+            prob = max(0, score) * 33.3 
+            top3.append({
+                'name': full_name,
+                'probability': round(prob, 1),
+                'distance': round(3 - score, 2)
+            })
+            
+        # Confidence
+        confidence_level = "높음" if season_conf > 0.6 else "중간" if season_conf > 0.4 else "낮음"
+        status = "confident" if confidence_level == "높음" else "uncertain" if confidence_level == "중간" else "require_expert"
+        
+        message = f"당신의 퍼스널컬러는 **{full_subtype_name}**입니다!"
 
-    if len(sys.argv) < 2:
-        test_image = "augmented_data/겨울_트루/48.jpg"
-        print(f"기본 이미지로 테스트: {test_image}")
-        test_robust_classifier(test_image)
-    else:
-        test_robust_classifier(sys.argv[1])
+        return {
+            'status': status,
+            'message': message,
+            'lab_values': {'L': L_raw, 'a': a_median, 'b': b_median},
+            'season': season,
+            'best_type': {
+                'name': best_type_obj.subtype,
+                'name_eng': best_type_obj.subtype_eng,
+                'season': best_type_obj.season,
+                'description': best_type_obj.description,
+                'probability': round(season_conf * 100, 1)
+            },
+            'top3': top3,
+            'visualization': vis_image
+        }

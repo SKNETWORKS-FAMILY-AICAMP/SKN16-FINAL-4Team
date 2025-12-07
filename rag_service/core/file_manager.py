@@ -191,7 +191,7 @@ class FileManager:
                     if local_path.exists():
                         with open(local_path, 'r', encoding='utf-8') as f:
                             text = f.read()
-                        active_files.append(text)
+                        active_files.append({'name': filename, 'content': text})
                         logger.info(f"✅ 로컬 텍스트 로드: {filename} ({len(text)} chars)")
                     else:
                         logger.debug(f"ℹ️ 로컬 파일 없음: {local_path}")
@@ -215,7 +215,7 @@ class FileManager:
                 if local_path.suffix.lower() in ['.txt', '.md', '.json']:
                     with open(local_path, 'r', encoding='utf-8') as f:
                         text = f.read()
-                    active_files.append(text)
+                    active_files.append({'name': display_name, 'content': text})
                     logger.info(f"✅ 로컬 텍스트 로드 (불변): {display_name} ({len(text)} chars)")
                     continue
 
@@ -225,7 +225,7 @@ class FileManager:
                     content = f"[파일: {display_name} ({file_size_mb:.2f}MB)]"
                 except Exception:
                     content = f"[파일: {display_name}]"
-                active_files.append(content)
+                active_files.append({'name': display_name, 'content': content})
                 logger.info(f"ℹ️ 파일 정보 추가: {display_name}")
 
             except Exception as e:

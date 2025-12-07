@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, HTTPException, Depends, Body, Query
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -18,6 +17,8 @@ from schemas import (
     ChatResModel,
     ReportCreate,
     ReportResponse,
+    RecommendQuestionsRequest,
+    RecommendQuestionsResponse,
 )
 from routers.feedback_router import generate_ai_feedbacks
 from utils.shared import build_rag_index, analyze_conversation_for_color_tone, normalize_personal_color
@@ -71,21 +72,32 @@ else:
 
 def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dict:
     """
-    OpenAI API를 통해 완전한 진단 데이터 생성
+    OpenAI API를 통해 완전한 진단 데이터 생성 (12가지 세부 타입 적용)
     """
     try:
         # 대화 텍스트가 너무 길면 요약
         if len(conversation_text) > 1000:
             conversation_text = conversation_text[:1000] + "...(생략)"
+            
+        # 11가지 세부 타입 정의 (image/analyze와 동일)
+        valid_types = [
+            "봄 라이트", "봄 트루", "봄 브라이트",
+            "여름 라이트", "여름 트루", "여름 뮤트",
+            "가을 소프트", "가을 딥",
+            "겨울 브라이트", "겨울 트루", "겨울 딥"
+        ]
+        
         prompt = f"""
     사용자와 퍼스널 컬러 전문가의 대화:
     {conversation_text}
 
-    위 대화를 바탕으로 {season} 타입 퍼스널 컬러 진단 결과를 생성해주세요.
+    위 대화를 바탕으로 사용자의 퍼스널 컬러를 진단해주세요.
+    기본적으로 '{season}' 타입일 가능성이 높지만, 대화 내용을 분석하여 다음 11가지 세부 타입 중 가장 적절한 하나를 선택해주세요:
+    {', '.join(valid_types)}
 
     다음 유효한 JSON 객체 하나만, 다른 설명 없이 반환해주세요. JSON은 반드시 아래 키들을 포함해야 합니다:
     {{
-        "result_name": "{season} {{primary_or_sub}} 형식의 한글 문자열 예: '가을 웜톤'",
+        "result_name": "선택된 세부 타입 (예: '가을 딥')",
         "primary_tone": "'웜' 또는 '쿨' (짧은 문자열)",
         "sub_tone": "'봄','여름','가을' 또는 '겨울' (짧은 문자열)",
         "emotional_description": "감성적이고 긍정적인 한 문장",
@@ -94,12 +106,12 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
         "makeup_tips": ["실용적인 메이크업 팁 4개"],
         "detailed_analysis": "대화 내용을 반영한 개인화된 분석 (2-3문단, 구체적이고 실용적인 조언 포함)",
         "top_types": [
-            {{"name": "{{계절}} {{웜/쿨}}톤", "type": "spring|summer|autumn|winter", "description": "간단 설명", "score": 0}}
+            {{"name": "선택된 세부 타입 (예: '가을 딥')", "type": "spring|summer|autumn|winter", "description": "간단 설명", "score": 0}}
         ]
     }}
 
     중요 요구사항:
-    - `result_name`과 `top_types` 배열의 각 항목 `name`은 반드시 한국어로 "{{계절}} {{웜/쿨}}톤" 형식(예: "가을 웜톤", "겨울 쿨톤")이어야 합니다.
+    - `result_name`과 `top_types` 배열의 각 항목 `name`은 반드시 위 11가지 세부 타입 중 하나여야 합니다.
     - `top_types[0].name`은 `result_name`과 동일한 값이어야 합니다.
     - `primary_tone`은 반드시 '웜' 또는 '쿨'로 표기하고, `sub_tone`은 '봄/여름/가을/겨울' 중 하나로 표기하세요.
     - 숫자 값(score)은 0~100 사이의 정수로 표기하세요.
@@ -544,9 +556,15 @@ async def save_chatbot_analysis_result(
         # 텍스트 정리
         cleaned_analysis = clean_analysis_text(ai_diagnosis_data["detailed_analysis"])
         
+        # AI가 보정한 톤 정보 업데이트
+        if ai_diagnosis_data.get("primary_tone"):
+            primary_tone = ai_diagnosis_data["primary_tone"]
+        if ai_diagnosis_data.get("sub_tone"):
+            sub_tone = ai_diagnosis_data["sub_tone"]
+            
         # 기본 타입 정보에 AI 생성 데이터 적용
         type_info = {
-            "name": f"{sub_tone} {primary_tone}톤",
+            "name": ai_diagnosis_data.get("result_name", f"{sub_tone} {primary_tone}톤"),
             "description": ai_diagnosis_data["emotional_description"],
             "detailed_analysis": cleaned_analysis,
             "color_palette": ai_diagnosis_data["color_palette"],
@@ -571,7 +589,7 @@ async def save_chatbot_analysis_result(
         top_types = [
             {
                 "type": primary_type,
-                "name": f"{sub_tone} {primary_tone}톤",
+                "name": type_info["name"],
                 "description": type_info["description"],
                 "color_palette": type_info["color_palette"],
                 "style_keywords": type_info["style_keywords"],
@@ -815,7 +833,8 @@ def _precheck_strong_anger_fear(user_text: str, convo_text: str | None = None) -
         if re.search(r"(열이 받|열받|분노|화가 나|성냄|짜증|분개|격분|참을 수 없)", txt):
             return 'angry'
         # Fear/anxiety cues
-        if re.search(r"(무서|두렵|공포|겁|불안|막막|숨이 막히|오싹)", txt):
+        # Removed single char "겁" to avoid false positives like "즐겁다" (happy)
+        if re.search(r"(무서|두렵|공포|불안|막막|숨이 막히|오싹|겁나|겁 먹|겁쟁)", txt):
             return 'fearful'
     except Exception:
         return ""
@@ -1124,11 +1143,15 @@ async def analyze(
     # Prefer influencer-styled text when available; it may be wrapped as well
     influencer_info = None
     if isinstance(raw_emotion, dict):
-        inf = raw_emotion.get("influencer_styled") or raw_emotion.get("influencer")
-        if isinstance(inf, dict) and inf.get("parsed") is not None:
-            influencer_info = inf.get("parsed")
+        # Check for direct styled_text first (as per orchestrator/main.py update)
+        if raw_emotion.get("styled_text"):
+             influencer_info = {"styled_text": raw_emotion.get("styled_text")}
         else:
-            influencer_info = inf
+            inf = raw_emotion.get("influencer_styled") or raw_emotion.get("influencer")
+            if isinstance(inf, dict) and inf.get("parsed") is not None:
+                influencer_info = inf.get("parsed")
+            else:
+                influencer_info = inf
 
     # Defensive fixes: if influencer_info contains an error object, ignore it
     try:
@@ -1175,17 +1198,33 @@ async def analyze(
                     hints = color_res.get('detected_color_hints') or color_res.get('detected_color_hints') or {}
                     if isinstance(hints, dict):
                         color_summary = hints.get('result_name') or hints.get('reason') or ''
+                        
+                        # Check for suppression flag
+                        suppress = False
+                        if isinstance(emotion_res, dict):
+                             meta = emotion_res.get('_meta') or emotion_res.get('meta')
+                             if isinstance(meta, dict) and meta.get('suppress_type_mention'):
+                                 suppress = True
+                        
+                        if suppress:
+                             # Mask the explicit name in the fallback prompt
+                             color_summary = "이미지에서 감지된 퍼스널 컬러 특징 (구체적 타입 언급 금지)"
+
                 emotion_summary = ''
                 if isinstance(emotion_res, dict):
                     emotion_summary = emotion_res.get('description') or emotion_res.get('primary_tone') or ''
 
                 system_msg = (
-                    "당신은 한국어로 자연스럽고 친근한 인플루언서 말투를 모방하는 카피라이터입니다. "
-                    "사용자에게 바로 보여줄 수 있는 2~3문장 분량의 응답을 생성하세요."
+                    "당신은 한국어로 자연스럽고 친근한 인플루언서 말투를 모방하는 퍼스널컬러 전문가입니다. "
+                    "사용자에게 바로 보여줄 수 있는 2~3문장 분량의 응답을 생성하세요. "
+                    "감정적인 공감은 짧게 하고, 뷰티/퍼스널컬러 조언 위주로 답변하세요."
                 )
+                if suppress:
+                    system_msg += " [주의] '봄 라이트', '여름 뮤트' 같은 구체적인 퍼스널 컬러 진단명은 절대 언급하지 말고, 분위기나 느낌으로만 표현하세요."
+
                 user_msg = (
                     f"사용자 상황: {emotion_summary}\n퍼스널 컬러 힌트: {color_summary}\n"
-                    "위 정보를 바탕으로 친근하고 상담자다운 말투로 간단한 응답을 만들어주세요."
+                    "위 정보를 바탕으로 친근하고 전문적인 말투로 간단한 응답을 만들어주세요. 감정적 위로는 1문장으로 제한하세요."
                 )
 
                 resp = client.chat.completions.create(
@@ -1233,6 +1272,24 @@ async def analyze(
     data["primary_tone"] = primary or ""
     data["sub_tone"] = sub or ""
 
+    # Extract references from color_res (RAG metadata)
+    references = []
+    if isinstance(color_res, dict):
+        hints = color_res.get("detected_color_hints", {})
+        rag_meta = hints.get("rag_metadata", {})
+        sources = rag_meta.get("sources", [])
+        if sources:
+            for src in sources:
+                # Assuming src is a string (filename) or dict
+                if isinstance(src, dict):
+                    ref_text = src.get("source", "")
+                    if ref_text:
+                        references.append(ref_text)
+                elif isinstance(src, str):
+                    references.append(src)
+    
+    data["references"] = references
+
     # description: influencer styled text (string) > influencer fields > emotion.description > color.description
     desc = None
     try:
@@ -1251,7 +1308,21 @@ async def analyze(
 
     if not desc:
         desc = (emotion_res.get("description") if isinstance(emotion_res, dict) else None) or (color_res.get("description") if isinstance(color_res, dict) else None)
+    
+    # Ensure desc is not a JSON string (fix for double-encoded JSON)
+    if isinstance(desc, str):
+        desc_stripped = desc.strip()
+        if desc_stripped.startswith('{') and desc_stripped.endswith('}'):
+            try:
+                parsed = json.loads(desc_stripped)
+                if isinstance(parsed, dict):
+                    desc = parsed.get('styled_text') or parsed.get('description') or desc
+            except Exception:
+                pass
+
     data["description"] = desc or "안녕하세요! 퍼스널컬러 전문가입니다. 어떤 부분이 고민이신가요?"
+
+
 
     # recommendations: merge lists from emotion, color, and influencer (if any)
     recs = []
@@ -1285,8 +1356,20 @@ async def analyze(
     # Resolve emotion tag (orchestrator -> api_emotion -> local detector)
     # Fast pre-check: if the user's message or recent convo contains strong anger/fear cues,
     # short-circuit and use that label before calling external services.
+
+    # Skip pre-check if the input looks like a JSON payload (system injection)
+    is_json_payload = False
+    if request.question and isinstance(request.question, str):
+        stripped = request.question.strip()
+        if stripped.startswith('{') and stripped.endswith('}'):
+            is_json_payload = True
+
     convo_text = "\n".join([c.get("text", "") for c in convo_list]) if convo_list else ""
-    precheck_label = _precheck_strong_anger_fear(request.question, convo_text)
+    
+    precheck_label = ""
+    if not is_json_payload:
+        precheck_label = _precheck_strong_anger_fear(request.question, convo_text)
+
     if precheck_label:
         user_emotion = precheck_label
     else:
@@ -1341,6 +1424,7 @@ async def analyze(
             "influencer": data.get("influencer"),
             "emotion": data.get("emotion"),
             "emotion_lottie": data.get("emotion_lottie"),
+            "references": data.get("references"),
         }, ensure_ascii=False),
     )
     db.add(ai_msg)
@@ -1390,6 +1474,10 @@ async def analyze(
                             try:
                                 parsed_desc = json.loads(desc_text)
                                 if isinstance(parsed_desc, dict):
+                                    # Extract styled_text if present and use as description
+                                    if parsed_desc.get('styled_text'):
+                                        d['description'] = parsed_desc.get('styled_text')
+
                                     for k, v in parsed_desc.items():
                                         if k not in d or k == 'description':
                                             d[k] = v
@@ -1414,6 +1502,7 @@ async def analyze(
                     d.setdefault('sub_tone', '')
                     d.setdefault('emotion', d.get('emotion', 'neutral') or 'neutral')
                     d.setdefault('description', d.get('description') or '')
+                    d.setdefault('references', [])
 
                     items.append(ChatItemModel(
                         question_id=qid,
@@ -1769,6 +1858,23 @@ def get_chat_history(history_id: int, current_user: models.User = Depends(get_cu
                             except Exception:
                                 d = {"description": ai_msg.text or ""}
 
+                        # normalize nested description/json
+                        if isinstance(d.get("description"), str):
+                            desc_text = d.get("description", "").strip()
+                            if desc_text.startswith("{") or desc_text.startswith("["):
+                                try:
+                                    parsed_desc = json.loads(desc_text)
+                                    if isinstance(parsed_desc, dict):
+                                        # Extract styled_text if present and use as description
+                                        if parsed_desc.get('styled_text'):
+                                            d['description'] = parsed_desc.get('styled_text')
+
+                                    for k, v in parsed_desc.items():
+                                        if k not in d or k == 'description':
+                                            d[k] = v
+                                except Exception:
+                                    pass
+
                         # normalize recommendations field
                         recommendations = d.get('recommendations', [])
                         if isinstance(recommendations, dict):
@@ -2042,20 +2148,23 @@ async def request_personal_color_report(
         
         # 대화 히스토리 조회 (리포트에 포함할 대화 내용, 읽기 전용)
         chat_history = []
-        if hasattr(survey_result, 'chat_history_id') and survey_result.chat_history_id:
-            messages = db.query(models.ChatMessage).filter_by(
-                history_id=survey_result.chat_history_id
-            ).order_by(models.ChatMessage.created_at.asc()).all()
-            
-            chat_history = [
-                {
-                    "role": msg.role,
-                    "text": msg.text,
-                    "created_at": msg.created_at.isoformat()
-                }
-                for msg in messages
-            ]
-        
+        try:
+            if hasattr(survey_result, 'chat_history_id') and survey_result.chat_history_id:
+                messages = db.query(models.ChatMessage).filter_by(
+                    history_id=survey_result.chat_history_id
+                ).order_by(models.ChatMessage.created_at.asc()).all()
+                
+                chat_history = [
+                    {
+                        "role": msg.role,
+                        "text": msg.text,
+                        "created_at": msg.created_at.isoformat()
+                    }
+                    for msg in messages
+                ]
+        except Exception:
+            chat_history = []
+
         # 리포트 데이터 생성 (기존 데이터 시각화만, DB 변경 없음)
         report_data = report_generator.generate_report_data(survey_data, chat_history)
         
@@ -2129,3 +2238,96 @@ async def get_personal_color_report(
     except Exception as e:
         print(f"❌ 리포트 조회 중 오류: {e}")
         raise HTTPException(status_code=500, detail=f"리포트 조회 중 오류가 발생했습니다: {str(e)}")
+
+@router.post("/recommend_questions", response_model=RecommendQuestionsResponse)
+async def recommend_questions(
+    request: RecommendQuestionsRequest,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    사용자의 현재 상황(대화 이력, 진단 결과 등)을 바탕으로
+    챗봇에게 물어볼 만한 추천 질문 4가지를 생성합니다.
+    """
+    # 1. 기본 추천 질문 (Fallback)
+    default_questions = [
+        "내 퍼스널컬러는 뭐야?",
+        "나한테 어울리는 립스틱 추천해줘",
+        "봄 웜톤의 특징이 뭐야?",
+        "면접 때 입을 옷 색깔 추천해줘"
+    ]
+
+    try:
+        # 2. 사용자 컨텍스트 수집
+        context_lines = []
+        
+        # 2-1. 이전 진단 결과 확인
+        prev_diagnosis = (
+            db.query(models.SurveyResult)
+            .filter(models.SurveyResult.user_id == current_user.id, models.SurveyResult.is_active == True)
+            .order_by(models.SurveyResult.created_at.desc())
+            .first()
+        )
+        if prev_diagnosis:
+            context_lines.append(f"사용자는 이전에 '{prev_diagnosis.result_name}'({prev_diagnosis.result_tone}) 진단을 받았습니다.")
+        else:
+            context_lines.append("사용자는 아직 퍼스널컬러 진단을 받지 않았습니다.")
+
+        # 2-2. 현재 대화 이력 확인 (history_id가 있는 경우)
+        if request.history_id:
+            recent_msgs = (
+                db.query(models.ChatMessage)
+                .filter_by(history_id=request.history_id)
+                .order_by(models.ChatMessage.created_at.desc())
+                .limit(3)
+                .all()
+            )
+            if recent_msgs:
+                # 최신순으로 가져왔으므로 다시 시간순 정렬
+                recent_msgs.reverse()
+                history_text = "\n".join([f"{msg.role}: {msg.text}" for msg in recent_msgs])
+                context_lines.append(f"최근 대화 내용:\n{history_text}")
+
+        # 3. 프롬프트 구성
+        system_prompt = (
+            "당신은 퍼스널컬러 챗봇 사용자를 위한 '추천 질문 생성기'입니다. "
+            "최근 대화 내용(특히 마지막 챗봇의 응답)을 바탕으로, **사용자가 챗봇에게** 이어서 물어볼 만한 질문 4가지를 생성해주세요. "
+            "챗봇이 사용자에게 묻는 질문이 아니라, **사용자가 챗봇에게 궁금해할 내용**이어야 합니다. "
+            "(예: '저에게 어울리는 옷 색상은 뭐에요?', '어떤 액세서리가 잘 어울릴까요?') "
+            "질문은 간결하고 명확한 한국어 문장으로 작성하세요. "
+            "각 질문은 줄바꿈으로 구분하여 출력하고, 번호나 기호는 붙이지 마세요."
+            "[봄 웜톤], [여름 쿨톤] 등 진단 결과를 직접 언급하지 마세요."
+        )
+        
+        user_prompt = "\n".join(context_lines)
+        user_prompt += "\n\n위 대화 흐름에서 사용자가 할 법한 질문 4가지를 추천해주세요."
+
+        # 4. LLM 호출
+        resp = client.chat.completions.create(
+            model=get_model_to_use(),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=150,
+            temperature=0.7,
+        )
+        
+        content = resp.choices[0].message.content.strip()
+        
+        # 5. 결과 파싱
+        questions = [line.strip() for line in content.split('\n') if line.strip()]
+        
+        # 번호 제거 (예: "1. 질문" -> "질문")
+        import re
+        questions = [re.sub(r'^\d+[\.\)]\s*', '', q) for q in questions]
+        
+        # 4개가 안되면 기본 질문으로 채움
+        if len(questions) < 4:
+            questions.extend(default_questions[:4-len(questions)])
+            
+        return RecommendQuestionsResponse(questions=questions[:4])
+
+    except Exception as e:
+        print(f"[recommend_questions] 오류 발생: {e}")
+        return RecommendQuestionsResponse(questions=default_questions)

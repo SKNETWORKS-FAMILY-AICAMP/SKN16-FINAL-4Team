@@ -92,4 +92,4 @@ const AnimatedEmoji: React.FC<AnimatedEmojiProps> = ({ emotion, size = 48 }) => 
   );
 };
 
-export default AnimatedEmoji;
+export default React.memo(AnimatedEmoji);
