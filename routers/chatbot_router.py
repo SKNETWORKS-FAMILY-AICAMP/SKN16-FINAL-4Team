@@ -72,21 +72,32 @@ else:
 
 def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dict:
     """
-    OpenAI API를 통해 완전한 진단 데이터 생성
+    OpenAI API를 통해 완전한 진단 데이터 생성 (12가지 세부 타입 적용)
     """
     try:
         # 대화 텍스트가 너무 길면 요약
         if len(conversation_text) > 1000:
             conversation_text = conversation_text[:1000] + "...(생략)"
+            
+        # 11가지 세부 타입 정의 (image/analyze와 동일)
+        valid_types = [
+            "봄 라이트", "봄 트루", "봄 브라이트",
+            "여름 라이트", "여름 트루", "여름 뮤트",
+            "가을 소프트", "가을 딥",
+            "겨울 브라이트", "겨울 트루", "겨울 딥"
+        ]
+        
         prompt = f"""
     사용자와 퍼스널 컬러 전문가의 대화:
     {conversation_text}
 
-    위 대화를 바탕으로 {season} 타입 퍼스널 컬러 진단 결과를 생성해주세요.
+    위 대화를 바탕으로 사용자의 퍼스널 컬러를 진단해주세요.
+    기본적으로 '{season}' 타입일 가능성이 높지만, 대화 내용을 분석하여 다음 11가지 세부 타입 중 가장 적절한 하나를 선택해주세요:
+    {', '.join(valid_types)}
 
     다음 유효한 JSON 객체 하나만, 다른 설명 없이 반환해주세요. JSON은 반드시 아래 키들을 포함해야 합니다:
     {{
-        "result_name": "{season} {{primary_or_sub}} 형식의 한글 문자열 예: '가을 웜톤'",
+        "result_name": "선택된 세부 타입 (예: '가을 딥')",
         "primary_tone": "'웜' 또는 '쿨' (짧은 문자열)",
         "sub_tone": "'봄','여름','가을' 또는 '겨울' (짧은 문자열)",
         "emotional_description": "감성적이고 긍정적인 한 문장",
@@ -95,12 +106,12 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
         "makeup_tips": ["실용적인 메이크업 팁 4개"],
         "detailed_analysis": "대화 내용을 반영한 개인화된 분석 (2-3문단, 구체적이고 실용적인 조언 포함)",
         "top_types": [
-            {{"name": "{{계절}} {{웜/쿨}}톤", "type": "spring|summer|autumn|winter", "description": "간단 설명", "score": 0}}
+            {{"name": "선택된 세부 타입 (예: '가을 딥')", "type": "spring|summer|autumn|winter", "description": "간단 설명", "score": 0}}
         ]
     }}
 
     중요 요구사항:
-    - `result_name`과 `top_types` 배열의 각 항목 `name`은 반드시 한국어로 "{{계절}} {{웜/쿨}}톤" 형식(예: "가을 웜톤", "겨울 쿨톤")이어야 합니다.
+    - `result_name`과 `top_types` 배열의 각 항목 `name`은 반드시 위 11가지 세부 타입 중 하나여야 합니다.
     - `top_types[0].name`은 `result_name`과 동일한 값이어야 합니다.
     - `primary_tone`은 반드시 '웜' 또는 '쿨'로 표기하고, `sub_tone`은 '봄/여름/가을/겨울' 중 하나로 표기하세요.
     - 숫자 값(score)은 0~100 사이의 정수로 표기하세요.
@@ -545,9 +556,15 @@ async def save_chatbot_analysis_result(
         # 텍스트 정리
         cleaned_analysis = clean_analysis_text(ai_diagnosis_data["detailed_analysis"])
         
+        # AI가 보정한 톤 정보 업데이트
+        if ai_diagnosis_data.get("primary_tone"):
+            primary_tone = ai_diagnosis_data["primary_tone"]
+        if ai_diagnosis_data.get("sub_tone"):
+            sub_tone = ai_diagnosis_data["sub_tone"]
+            
         # 기본 타입 정보에 AI 생성 데이터 적용
         type_info = {
-            "name": f"{sub_tone} {primary_tone}톤",
+            "name": ai_diagnosis_data.get("result_name", f"{sub_tone} {primary_tone}톤"),
             "description": ai_diagnosis_data["emotional_description"],
             "detailed_analysis": cleaned_analysis,
             "color_palette": ai_diagnosis_data["color_palette"],
@@ -572,7 +589,7 @@ async def save_chatbot_analysis_result(
         top_types = [
             {
                 "type": primary_type,
-                "name": f"{sub_tone} {primary_tone}톤",
+                "name": type_info["name"],
                 "description": type_info["description"],
                 "color_palette": type_info["color_palette"],
                 "style_keywords": type_info["style_keywords"],

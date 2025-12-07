@@ -245,12 +245,12 @@ const ChatbotPage: React.FC = () => {
       const newObj: any = {};
       for (const key in obj) {
         // Skip keys that are known to contain large data
-        if (key.toLowerCase().includes('base64') || 
-            key.toLowerCase().includes('image_data') || 
-            key.toLowerCase().includes('encoded_image')) {
-           newObj[key] = '[Image Data Omitted]';
+        if (key.toLowerCase().includes('base64') ||
+          key.toLowerCase().includes('image_data') ||
+          key.toLowerCase().includes('encoded_image')) {
+          newObj[key] = '[Image Data Omitted]';
         } else {
-           newObj[key] = sanitizeForChat(obj[key]);
+          newObj[key] = sanitizeForChat(obj[key]);
         }
       }
       return newObj;
@@ -1612,7 +1612,7 @@ const ChatbotPage: React.FC = () => {
                       {msg.chatRes.references.map((ref, idx) => (
                         <React.Fragment key={idx}>
                           {idx > 0 && <span className="mr-1">,</span>}
-                          <antd.Tooltip title={<div className="whitespace-pre-wrap max-h-60 overflow-y-auto text-xs">{ref}</div>} overlayStyle={{ maxWidth: '400px' }}>
+                          <antd.Tooltip title={<div className="whitespace-pre-wrap max-h-60 overflow-y-auto text-xs">{ref}</div>} styles={{ root: { maxWidth: '400px' } }}>
                             <span className="text-purple-500 font-medium cursor-pointer hover:underline">
                               [{idx + 1}]
                             </span>
@@ -1872,11 +1872,11 @@ const ChatbotPage: React.FC = () => {
                       id: `img-u-${Date.now()}`,
                       content: `이미지 업로드: ${file.name}`,
                       customContent: (
-                          <antd.Image
-                            src={imageUrl}
-                            alt={file.name}
-                            style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: '8px' }}
-                          />
+                        <antd.Image
+                          src={imageUrl}
+                          alt={file.name}
+                          style={{ maxWidth: '100%', maxHeight: '300px', borderRadius: '8px' }}
+                        />
                       ),
                       isUser: true,
                       timestamp: new Date()
@@ -1901,11 +1901,11 @@ const ChatbotPage: React.FC = () => {
                       const hint = JSON.stringify(sanitizeForChat(imgRes));
                       const resp = await chatbotApi.analyze({ question: hint, history_id: currentHistoryId });
                       setCurrentHistoryId(resp.history_id);
-                      
+
                       if (resp.items && resp.items.length > 0) {
                         const latestItem = resp.items[resp.items.length - 1];
                         const botContent = extractBotContentFromItem(latestItem);
-                        
+
                         const botMsg: ChatMessage = {
                           id: `img-b-${Date.now()}`,
                           content: botContent,
