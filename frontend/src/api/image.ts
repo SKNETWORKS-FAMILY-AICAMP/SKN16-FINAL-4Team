@@ -1,13 +1,43 @@
 import apiClient from './client';
 
+export interface LabValues {
+  L: number;
+  a: number;
+  b: number;
+}
+
+export interface BestType {
+  name: string;
+  name_eng: string;
+  season: string;
+  description: string;
+  probability: number;
+}
+
+export interface Top3Item {
+  name: string;
+  probability: number;
+  distance: number;
+}
+
+export interface ImageResult {
+  status: string;
+  message: string;
+  lab_values: LabValues;
+  season: string;
+  best_type: BestType;
+  top3: Top3Item[];
+  visualization_b64: string;
+}
+
 export interface ImageAnalyzeResponse {
-  image_result?: any;
+  image_result: ImageResult;
   orchestrator?: any;
 }
 
 export interface MakeupResponse {
-  status: string;
-  makeup_image_url: string;
+  key: string;
+  url: string;
 }
 
 export async function analyzeImage(s3_key: string, history_id?: number, influencer_name?: string, user_nickname?: string) {

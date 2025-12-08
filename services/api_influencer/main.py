@@ -369,6 +369,19 @@ class EmotionChainResponse(BaseModel):
     raw: Optional[Dict[str, Any]] = None
 
 
+def _sanitize_color_result(data: Any) -> Any:
+    """Recursively remove keys that might contain specific personal color names."""
+    if isinstance(data, dict):
+        return {
+            k: _sanitize_color_result(v) 
+            for k, v in data.items() 
+            if k not in ['result_name', 'season', 'best_type', 'detailed_type', 'reason']
+        }
+    elif isinstance(data, list):
+        return [_sanitize_color_result(item) for item in data]
+    return data
+
+
 @app.post('/api/influencer/style_emotion', response_model=EmotionChainResponse)
 def style_emotion_chain(payload: EmotionChainRequest):
     # pick influencer only if explicitly provided and allowed
@@ -389,9 +402,27 @@ def style_emotion_chain(payload: EmotionChainRequest):
         else:
             system_prompt = "당신은 퍼스널컬러 및 뷰티 분야의 전문가입니다. 사용자의 감정에 짧게 공감한 후, 전문적인 뷰티/퍼스널컬러 조언으로 대화를 이끄세요. 과도한 심리 상담은 지양합니다."
 
+    # Check for suppression flag in emotion metadata
+    meta = None
+    try:
+        if isinstance(payload.emotion_result, dict):
+            meta = payload.emotion_result.get('_meta') or payload.emotion_result.get('meta')
+    except Exception:
+        meta = None
+        
+    suppress_mention = False
+    if meta and isinstance(meta, dict) and meta.get('suppress_type_mention'):
+        suppress_mention = True
+
     # Build user content: include the emotion JSON, optional color JSON, and a request to rewrite in influencer tone
     emotion_json = json.dumps(payload.emotion_result, ensure_ascii=False)
-    color_json = json.dumps(payload.color_result, ensure_ascii=False) if payload.color_result else ''
+    
+    # Sanitize color result if suppression is requested
+    final_color_result = payload.color_result
+    if suppress_mention and final_color_result:
+        final_color_result = _sanitize_color_result(final_color_result)
+
+    color_json = json.dumps(final_color_result, ensure_ascii=False) if final_color_result else ''
 
     user_content = f"다음은 감정 분석 결과입니다:\n{emotion_json}\n"
     if color_json:
