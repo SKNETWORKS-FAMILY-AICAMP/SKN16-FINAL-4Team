@@ -11,13 +11,10 @@ export interface BestType {
   name_eng: string;
   season: string;
   description: string;
-  probability: number;
 }
 
 export interface Top3Item {
   name: string;
-  probability: number;
-  distance: number;
 }
 
 export interface ImageResult {
@@ -49,7 +46,7 @@ export async function analyzeImage(s3_key: string, history_id?: number, influenc
   return res.data;
 }
 
-export async function applyMakeup(s3_key: string, personal_color: string) {
-  const res = await apiClient.post<MakeupResponse>('/image/makeup', { s3_key, personal_color });
+export async function applyMakeup(s3_key: string, personal_color: string, external_response?: any) {
+  const res = await apiClient.post<MakeupResponse>('/image/makeup', { s3_key, personal_color, external_response });
   return res.data;
 }

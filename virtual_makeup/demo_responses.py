@@ -31,7 +31,7 @@ DEFAULT_MAKEUP = {
         },
         # 아이라이너: 소프트 블랙, 80%
         "eyeliner": {
-            "color": "#2F2F2F",  # 소프트 블랙
+            "color": "#1C1C1C",  # 소프트 블랙
             "intensity": 0.8,
             "thickness": 4,
             "tail_length": 0.32,  # 꼬리 32%
@@ -53,39 +53,36 @@ MAKEUP_RESPONSES = {
     "봄_웜톤": {  # Fallback
         "personal_color": "봄 웜톤",
         "makeup": {
-            "lip": {"color": "#FF7F50", "type": "glossy"},  # Coral
-            "blush": {"color": "#FF9966"},  # Apricot
-            "eyeshadow": {"colors": ["#FFDAB9", "#FFA07A"], "style": "gradient"}
+            "lip": { "color": "#FF7F50" },  # Coral (Mid-tone)
+            "blush": { "color": "#FFA07A" },  # Light Salmon
+            "eyebrow": { "color": "#8B4513" }, # Saddle Brown
         },
         "recommendation_reason": "봄 웜톤의 화사함과 생기를 살려주는 코랄, 피치 컬러가 베스트입니다."
     },
     "봄_라이트": {
         "personal_color": "봄 라이트",
         "makeup": {
-            "lip": {"color": "#FFB7C5", "type": "glossy", "intensity": 0.4},  # Light Pink/Coral
-            "blush": {"color": "#FFDAB9", "intensity": 0.3},  # Peach Puff
-            "eyeshadow": {"colors": ["#FFF5EE", "#FFE4E1"], "style": "gradient"},
-            "eyeliner": {"color": "#8B4513", "thickness": 2, "intensity": 0.6} # Soft Brown
+            "lip": { "color": "#FF9999" },  # Soft Pink/Coral
+            "blush": { "color": "#FFB3B3" },  # Pale Pink
+            "eyebrow": { "color": "#A0522D" }, # Sienna
         },
         "recommendation_reason": "투명하고 맑은 이미지를 위해 연한 파스텔 톤의 코랄과 피치를 사용하고, 진한 아이라인은 피하는 것이 좋습니다."
     },
     "봄_트루": {
         "personal_color": "봄 트루",
         "makeup": {
-            "lip": {"color": "#FF6347", "type": "glossy", "intensity": 0.6},  # Tomato/Coral Red
-            "blush": {"color": "#FF7F50", "intensity": 0.5},  # Coral
-            "eyeshadow": {"colors": ["#FFD700", "#DAA520"], "style": "gradient"}, # Gold
-            "eyeliner": {"color": "#5C4033", "thickness": 3}
+            "lip": { "color": "#FF6B6B" },  # Pastel Red
+            "blush": { "color": "#FF8C69" },  # Salmon
+            "eyebrow": { "color": "#8B4513" }, # Saddle Brown
         },
         "recommendation_reason": "따뜻하고 생동감 넘치는 오렌지, 코랄 레드 컬러가 봄 트루 타입의 에너지를 돋보이게 합니다."
     },
     "봄_브라이트": {
         "personal_color": "봄 브라이트",
         "makeup": {
-            "lip": {"color": "#FF4500", "type": "glossy", "intensity": 0.7},  # Orange Red
-            "blush": {"color": "#FF69B4", "intensity": 0.4},  # Hot Pink (Warm)
-            "eyeshadow": {"colors": ["#FFE4B5", "#FFA500"], "style": "gradient"},
-            "eyeliner": {"color": "#000000", "thickness": 3, "intensity": 0.9} # Clear contrast
+            "lip": { "color": "#FF5252" },  # Red (Mid-bright)
+            "blush": { "color": "#FF80AB" },  # Pink Accent
+            "eyebrow": { "color": "#6D4C41" }, # Medium Brown
         },
         "recommendation_reason": "채도가 높고 선명한 비비드 컬러가 잘 어울리며, 또렷한 아이라인과 립 포인트 메이크업이 베스트입니다."
     },
@@ -94,39 +91,36 @@ MAKEUP_RESPONSES = {
     "여름_쿨톤": { # Fallback
         "personal_color": "여름 쿨톤",
         "makeup": {
-            "lip": {"color": "#FF69B4", "type": "matte"},  # Hot Pink
-            "blush": {"color": "#D8BFD8"},  # Thistle
-            "eyeshadow": {"colors": ["#E6E6FA", "#D8BFD8"], "style": "gradient"}
+            "lip": { "color": "#F06292" },  # Pink (Mid-tone)
+            "blush": { "color": "#F8BBD0" },  # Light Pink
+            "eyebrow": { "color": "#757575" }, # Grey
         },
         "recommendation_reason": "여름 쿨톤의 청량하고 우아한 분위기를 위해 핑크, 라벤더 계열을 추천합니다."
     },
     "여름_라이트": {
         "personal_color": "여름 라이트",
         "makeup": {
-            "lip": {"color": "#FFB6C1", "type": "glossy", "intensity": 0.4},  # Light Pink
-            "blush": {"color": "#E6E6FA", "intensity": 0.3},  # Lavender
-            "eyeshadow": {"colors": ["#F0F8FF", "#E6E6FA"], "style": "gradient"},
-            "eyeliner": {"color": "#696969", "thickness": 2, "intensity": 0.5} # Dim Grey
+            "lip": { "color": "#F48FB1" },  # Pink
+            "blush": { "color": "#FCE4EC" },  # Very Pale Pink
+            "eyebrow": { "color": "#9E9E9E" }, # Light Grey
         },
         "recommendation_reason": "흰기가 섞인 파스텔 톤의 딸기우유 핑크나 라벤더 컬러로 맑고 깨끗한 느낌을 연출하세요."
     },
     "여름_트루": {
         "personal_color": "여름 트루",
         "makeup": {
-            "lip": {"color": "#C71585", "type": "matte", "intensity": 0.6},  # Medium Violet Red
-            "blush": {"color": "#DDA0DD", "intensity": 0.4},  # Plum
-            "eyeshadow": {"colors": ["#D8BFD8", "#BA55D3"], "style": "gradient"},
-            "eyeliner": {"color": "#555555", "thickness": 3}
+            "lip": { "color": "#EC407A" },  # Rose
+            "blush": { "color": "#F48FB1" },  # Pink
+            "eyebrow": { "color": "#757575" }, # Grey
         },
         "recommendation_reason": "쿨톤의 정석인 로즈 핑크, 오키드 컬러를 사용하여 시원하고 세련된 이미지를 강조하세요."
     },
     "여름_뮤트": {
         "personal_color": "여름 뮤트",
         "makeup": {
-            "lip": {"color": "#BC8F8F", "type": "matte", "intensity": 0.5},  # Rosy Brown
-            "blush": {"color": "#D8BFD8", "intensity": 0.3},  # Thistle (Greyish)
-            "eyeshadow": {"colors": ["#C0C0C0", "#778899"], "style": "smoky"}, # Silver/Grey
-            "eyeliner": {"color": "#483D8B", "thickness": 3} # Dark Slate Blue
+            "lip": { "color": "#BC8F8F" },  # Rosy Brown
+            "blush": { "color": "#D8BFD8" },  # Thistle
+            "eyebrow": { "color": "#616161" }, # Dark Grey
         },
         "recommendation_reason": "회색빛이 섞인 차분한 말린 장미(MLBB) 컬러나 모브 톤으로 분위기 있는 메이크업을 완성하세요."
     },
@@ -135,29 +129,27 @@ MAKEUP_RESPONSES = {
     "가을_웜톤": { # Fallback
         "personal_color": "가을 웜톤",
         "makeup": {
-            "lip": {"color": "#A52A2A", "type": "matte"},  # Brown
-            "blush": {"color": "#CD853F"},  # Peru
-            "eyeshadow": {"colors": ["#DEB887", "#8B4513"], "style": "gradient"}
+            "lip": { "color": "#D84315" },  # Burnt Orange
+            "blush": { "color": "#FF8A65" },  # Coral
+            "eyebrow": { "color": "#5D4037" }, # Brown
         },
         "recommendation_reason": "가을 웜톤의 그윽하고 고급스러운 분위기에는 브라운, 테라코타 컬러가 제격입니다."
     },
     "가을_소프트": { # Mute
         "personal_color": "가을 소프트",
         "makeup": {
-            "lip": {"color": "#CD5C5C", "type": "matte", "intensity": 0.5},  # Indian Red
-            "blush": {"color": "#F4A460", "intensity": 0.3},  # Sandy Brown
-            "eyeshadow": {"colors": ["#F5DEB3", "#D2B48C"], "style": "gradient"}, # Wheat/Tan
-            "eyeliner": {"color": "#8B4513", "thickness": 2}
+            "lip": { "color": "#A1887F" },  # Brownish Pink
+            "blush": { "color": "#D7CCC8" },  # Pale Brown
+            "eyebrow": { "color": "#795548" }, # Medium Brown
         },
         "recommendation_reason": "부드럽고 차분한 베이지, 살몬, 누디한 컬러를 사용하여 자연스럽고 우아한 느낌을 주세요."
     },
     "가을_딥": {
         "personal_color": "가을 딥",
         "makeup": {
-            "lip": {"color": "#800000", "type": "matte", "intensity": 0.8},  # Maroon
-            "blush": {"color": "#8B4513", "intensity": 0.4},  # Saddle Brown
-            "eyeshadow": {"colors": ["#CD853F", "#654321"], "style": "smoky"},
-            "eyeliner": {"color": "#2F2F2F", "thickness": 4}
+            "lip": { "color": "#B71C1C" },  # Dark Red
+            "blush": { "color": "#A1887F" },  # Brownish Pink
+            "eyebrow": { "color": "#4E342E" }, # Dark Brown
         },
         "recommendation_reason": "깊이감 있는 칠리, 브릭 레드, 다크 브라운 컬러로 고혹적이고 섹시한 분위기를 연출하세요."
     },
@@ -166,39 +158,36 @@ MAKEUP_RESPONSES = {
     "겨울_쿨톤": { # Fallback
         "personal_color": "겨울 쿨톤",
         "makeup": {
-            "lip": {"color": "#DC143C", "type": "glossy"},  # Crimson
-            "blush": {"color": "#FF00FF", "intensity": 0.2},  # Magenta (Light)
-            "eyeshadow": {"colors": ["#E0FFFF", "#708090"], "style": "glitter"}
+            "lip": { "color": "#C2185B" },  # Dark Pink
+            "blush": { "color": "#F06292" },  # Pink
+            "eyebrow": { "color": "#424242" }, # Dark Grey
         },
         "recommendation_reason": "겨울 쿨톤의 카리스마 있는 이미지를 위해 선명한 레드, 푸시아 핑크와 블랙 아이라인을 추천합니다."
     },
     "겨울_브라이트": {
         "personal_color": "겨울 브라이트",
         "makeup": {
-            "lip": {"color": "#FF00FF", "type": "glossy", "intensity": 0.8},  # Magenta
-            "blush": {"color": "#FF69B4", "intensity": 0.3},  # Hot Pink
-            "eyeshadow": {"colors": ["#FFFFFF", "#C0C0C0"], "style": "glitter"}, # White/Silver
-            "eyeliner": {"color": "#000000", "thickness": 4, "intensity": 1.0}
+            "lip": { "color": "#E91E63" },  # Pink
+            "blush": { "color": "#F48FB1" },  # Pink
+            "eyebrow": { "color": "#212121" }, # Very Dark Grey
         },
         "recommendation_reason": "형광빛이 도는 쨍한 핑크나 레드 립을 포인트로 하고, 눈화장은 깔끔하게 하거나 글리터로 포인트를 주세요."
     },
     "겨울_트루": {
         "personal_color": "겨울 트루",
         "makeup": {
-            "lip": {"color": "#8B008B", "type": "matte", "intensity": 0.7},  # Dark Magenta
-            "blush": {"color": "#DA70D6", "intensity": 0.3},  # Orchid
-            "eyeshadow": {"colors": ["#E6E6FA", "#708090"], "style": "gradient"},
-            "eyeliner": {"color": "#000000", "thickness": 3}
+            "lip": { "color": "#9C27B0" },  # Purple
+            "blush": { "color": "#CE93D8" },  # Plum
+            "eyebrow": { "color": "#424242" }, # Dark Grey
         },
         "recommendation_reason": "차가운 느낌의 플럼, 베리 계열 컬러가 피부를 더욱 하얗고 깨끗하게 보이게 합니다."
     },
     "겨울_딥": {
         "personal_color": "겨울 딥",
         "makeup": {
-            "lip": {"color": "#800080", "type": "matte", "intensity": 0.9},  # Purple
-            "blush": {"color": "#8B008B", "intensity": 0.2},  # Dark Magenta (Very light)
-            "eyeshadow": {"colors": ["#708090", "#2F4F4F"], "style": "smoky"}, # Slate Grey
-            "eyeliner": {"color": "#000000", "thickness": 4}
+            "lip": { "color": "#880E4F" },  # Burgundy
+            "blush": { "color": "#AD1457" },  # Dark Pink
+            "eyebrow": { "color": "#212121" }, # Very Dark Grey
         },
         "recommendation_reason": "검붉은 버건디, 딥 퍼플 등 무게감 있는 컬러로 도시적이고 시크한 매력을 발산하세요."
     },
@@ -321,7 +310,8 @@ def prepare_makeup_response(personal_color: str, external_response: dict | None 
     """
     import copy
 
-    if external_response:
+    # external_response가 있고, 그 안에 'makeup' 키가 있으며 비어있지 않은 경우에만 사용
+    if external_response and external_response.get("makeup"):
         incoming = copy.deepcopy(external_response)
         result = {
             "personal_color": incoming.get("personal_color", personal_color),
@@ -335,6 +325,7 @@ def prepare_makeup_response(personal_color: str, external_response: dict | None 
         result["makeup"]["skin_base"] = copy.deepcopy(DEFAULT_MAKEUP["makeup"]["skin_base"])
         return result
 
+    # 그 외의 경우 (external_response가 없거나, 있어도 makeup 정보가 없는 경우) 기본값 사용
     result = get_makeup_response(personal_color)
     # 피부 베이스는 기본값 고정
     result["makeup"]["skin_base"] = copy.deepcopy(DEFAULT_MAKEUP["makeup"]["skin_base"])

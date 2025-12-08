@@ -16,6 +16,12 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import logging
 from datetime import datetime
+import sys
+import os
+
+# Add project root to sys.path to import virtual_makeup
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+from virtual_makeup.demo_responses import get_makeup_response
 
 # RAG Service 직접 import
 try:
@@ -317,4 +323,69 @@ async def root():
             "health": "GET /api/color/health"
         }
     }
+
+
+def get_makeup_recommendation(personal_color: str) -> Dict[str, Any]:
+    """
+    퍼스널 컬러에 맞는 메이크업 추천을 RAG를 통해 JSON으로 가져옴
+    """
+    if not rag_system:
+        logger.warning("RAG system not initialized, using fallback")
+        return get_makeup_response(personal_color)
+
+    query_text = f"""
+    '{personal_color}' 타입에 어울리는 메이크업 색상을 추천해줘.
+    너무 진하거나 강한 컬러는 제외하고, 자연스럽고 적당한 채도의 컬러를 추천해줘.
+    다음 조건을 반드시 지켜줘:
+    1. lip으로 사용할 수 있는 컬러
+    2. blush로 사용할 수 있는 컬러
+    3. eyebrow로 사용할 수 있는 컬러
+
+    반드시 아래 JSON 형식으로만 답변해줘 (Markdown 코드 블록 없이, 순수 JSON만):
+    {{
+      "personal_color": "{personal_color}",
+      "recommendation_reason": "간단 설명",
+      "makeup": {{
+        "lip": {{ "color": "#HEX" }},
+        "blush": {{ "color": "#HEX" }},
+        "eyebrow": {{ "color": "#HEX" }},
+        "eyeliner": {{ "color": "#1C1C1C" }}
+      }}
+    }}
+    (eyeliner는 항상 #1C1C1C 색상을 추천해줘)
+    """
+    
+    try:
+        rag_result = rag_system.query(
+            question=query_text,
+            temperature=0.3,
+            max_tokens=300
+        )
+        
+        if not rag_result.get("success"):
+            logger.warning(f"RAG query failed for makeup recommendation: {rag_result}")
+            return get_makeup_response(personal_color)
+            
+        answer = rag_result.get("answer", "").strip()
+        # Remove markdown code blocks if present
+        if answer.startswith("```json"):
+            answer = answer[7:]
+        elif answer.startswith("```"):
+            answer = answer[3:]
+            
+        if answer.endswith("```"):
+            answer = answer[:-3]
+            
+        answer = answer.strip()
+        
+        import json
+        return json.loads(answer)
+    except Exception as e:
+        logger.error(f"Makeup recommendation failed: {e}")
+        # Fallback to default makeup
+        try:
+            return get_makeup_response(personal_color)
+        except Exception as fallback_e:
+            logger.error(f"Fallback makeup generation failed: {fallback_e}")
+            return {}
 

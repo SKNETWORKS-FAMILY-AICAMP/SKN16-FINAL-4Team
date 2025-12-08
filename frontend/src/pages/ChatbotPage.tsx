@@ -1922,7 +1922,7 @@ const ChatbotPage: React.FC = () => {
             />
             <div className="flex flex-col gap-1">
               <Title level={3} className="!mb-0">
-                퍼스널컬러 AI 챗봇
+                AI 인플루언서 {activeInfluencerProfile ? `- ${activeInfluencerProfile.influencer_name}` : ''}
               </Title>
               <Text className="!text-gray-500 !text-sm">
                 대화를 통해 AI가 당신의 퍼스널컬러를 분석해드립니다. 편하게
@@ -2078,7 +2078,8 @@ const ChatbotPage: React.FC = () => {
                       // Process all top 3 in parallel
                       Promise.all(imgRes.image_result.top3.map(async (item: any) => {
                         try {
-                          const res = await applyMakeup(s3Key, item.name);
+                          // item에 makeup 정보가 포함되어 있다면 external_response로 전달
+                          const res = await applyMakeup(s3Key, item.name, item);
                           if (res?.url) {
                             setMakeupImageUrls(prev => ({ ...prev, [item.name]: res.url }));
                             console.log(`✅ 가상 메이크업 생성 완료 (${item.name}):`, res.url);
@@ -2089,7 +2090,8 @@ const ChatbotPage: React.FC = () => {
                       }))
                     } else if (imgRes?.image_result?.best_type?.name) {
                       console.log('💄 가상 메이크업 생성 시작 (Best Type):', imgRes.image_result.best_type.name);
-                      applyMakeup(s3Key, imgRes.image_result.best_type.name)
+                      // best_type에 makeup 정보가 포함되어 있다면 external_response로 전달
+                      applyMakeup(s3Key, imgRes.image_result.best_type.name, imgRes.image_result.best_type)
                         .then(res => {
                           if (res?.url) {
                             setMakeupImageUrls(prev => ({ ...prev, [imgRes.image_result.best_type.name]: res.url }));

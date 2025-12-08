@@ -21,7 +21,7 @@ def get_applier():
         _applier = MakeupApplierCV()
     return _applier
 
-def apply_makeup_service(image_bytes: bytes, personal_color: str) -> bytes:
+def apply_makeup_service(image_bytes: bytes, personal_color: str, external_response: dict | None = None) -> bytes:
     """
     Apply makeup to the image based on personal color.
     Returns the processed image as bytes (JPEG).
@@ -36,7 +36,7 @@ def apply_makeup_service(image_bytes: bytes, personal_color: str) -> bytes:
         raise ValueError("Failed to decode image")
 
     # Prepare makeup response based on personal color
-    makeup_response = prepare_makeup_response(personal_color)
+    makeup_response = prepare_makeup_response(personal_color, external_response)
     
     # Apply makeup
     # apply_makeup expects RGB for PIL or BGR for OpenCV if path is not string?

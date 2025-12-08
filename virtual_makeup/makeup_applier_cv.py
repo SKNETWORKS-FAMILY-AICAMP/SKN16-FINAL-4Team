@@ -521,7 +521,7 @@ class MakeupApplierCV:
                 skin_type=skin_base.get("type", "tone_up"),
                 warmth=skin_base.get("warmth", 0.0)
             )
-            print(f"피부 베이스 적용: {skin_base.get('type')} ({skin_base.get('intensity'):.0%})")
+            print(f"피부 베이스 적용: {skin_base.get('type')} ({skin_base.get('intensity', 0.3):.0%})")
 
         # 1. 볼터치
         blush = makeup.get("blush", {})
@@ -532,7 +532,7 @@ class MakeupApplierCV:
                 color_bgr=color_bgr,
                 intensity=blush.get("intensity", 0.4)
             )
-            print(f"볼터치 적용: {blush.get('color')} ({blush.get('intensity'):.0%})")
+            print(f"볼터치 적용: {blush.get('color')} ({blush.get('intensity', 0.4):.0%})")
 
         # 2. 아이섀도우
         eyeshadow = makeup.get("eyeshadow", {})
@@ -559,7 +559,7 @@ class MakeupApplierCV:
                 tail_ratio=eyeliner.get("tail_length", 0.32),
                 tail_angle_deg=eyeliner.get("angle", -15.0)
             )
-            print(f"아이라이너 적용: {eyeliner.get('color')} (두께: {eyeliner.get('thickness')}, 꼬리: {eyeliner.get('tail_length'):.0%}, 각도: {eyeliner.get('angle')}°)")
+            print(f"아이라이너 적용: {eyeliner.get('color')} (두께: {eyeliner.get('thickness', 4)}, 꼬리: {eyeliner.get('tail_length', 0.32):.0%}, 각도: {eyeliner.get('angle', -15.0)}°)")
 
         # 3. 눈썹
         eyebrow = makeup.get("eyebrow", {})
@@ -568,9 +568,9 @@ class MakeupApplierCV:
             result = self.apply_eyebrow_makeup(
                 result, landmarks,
                 color_bgr=color_bgr,
-                intensity=eyebrow.get("intensity", 0.4)
+                intensity=eyebrow.get("intensity", 0.2)
             )
-            print(f"눈썹 적용: {eyebrow.get('color')} ({eyebrow.get('intensity'):.0%})")
+            print(f"눈썹 적용: {eyebrow.get('color')} ({eyebrow.get('intensity', 0.2):.0%})")
 
         # 4. 입술
         lip = makeup.get("lip", {})
@@ -581,7 +581,7 @@ class MakeupApplierCV:
                 color_bgr=color_bgr,
                 intensity=lip.get("intensity", 0.5)
             )
-            print(f"입술 적용: {lip.get('color')} ({lip.get('intensity'):.0%})")
+            print(f"입술 적용: {lip.get('color')} ({lip.get('intensity', 0.5):.0%})")
 
         # PIL 이미지로 변환
         result_pil = Image.fromarray(cv2.cvtColor(result, cv2.COLOR_BGR2RGB))
