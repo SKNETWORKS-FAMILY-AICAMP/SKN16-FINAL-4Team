@@ -103,28 +103,6 @@ def top_k_chunks(query: str, index: Dict[str, Any], client: OpenAI, k: int = 3) 
     similarities.sort(reverse=True, key=lambda x: x[0])
     return [index["chunks"][i] for _, i in similarities[:k]]
 
-def build_rag_index(client: OpenAI, filepath: str) -> Dict[str, Any]:
-    """
-    텍스트 파일로부터 RAG 인덱스 구축
-    
-    Args:
-        client: OpenAI 클라이언트
-        filepath: 텍스트 파일 경로
-        
-    Returns:
-        RAG 인덱스 딕셔너리 (chunks, embeddings)
-    """
-    with open(filepath, encoding="utf-8") as f:
-        text = f.read()
-    
-    chunks = chunk_text(text, chunk_size=800, overlap=100)
-    embeddings = embed_texts(client, chunks)
-    
-    return {
-        "chunks": chunks,
-        "embeddings": embeddings
-    }
-
 def analyze_conversation_for_color_tone(conversation_history: str, current_question: str) -> tuple[str, str]:
     """
     대화 내용을 분석하여 퍼스널컬러 톤을 추정하는 순수 함수

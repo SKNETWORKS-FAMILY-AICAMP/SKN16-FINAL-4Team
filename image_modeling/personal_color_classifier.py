@@ -478,13 +478,10 @@ class PersonalColorClassifier:
                 'name_eng': best_type.subtype_eng,
                 'season': best_type.season,
                 'description': best_type.description,
-                'probability': round(confidence, 1)
             },
             'top3': [
                 {
                     'name': t[0],
-                    'probability': round(t[1], 1),
-                    'distance': round(distances[t[0]], 2)
                 } for t in top3
             ],
             'visualization': vis_image

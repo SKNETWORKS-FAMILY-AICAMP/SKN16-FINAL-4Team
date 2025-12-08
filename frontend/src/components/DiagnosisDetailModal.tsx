@@ -17,7 +17,6 @@ import {
   CalendarOutlined,
 } from '@ant-design/icons';
 import type { SurveyResultDetail } from '@/api/survey';
-import type { PersonalColorType } from '@/types/personalColor';
 import html2canvas from 'html2canvas';
 
 const { Title, Text } = Typography;
@@ -45,10 +44,10 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
   const contentRef = useRef<HTMLDivElement>(null);
   const [activeTabKey, setActiveTabKey] = useState<string>('');
 
-  // selectedResult가 변경될 때 첫 번째 타입을 기본 탭으로 설정
+  // selectedResult가 변경될 때 해당 결과의 ID를 탭 키로 설정
   React.useEffect(() => {
-    if (selectedResult?.top_types && selectedResult.top_types.length > 0) {
-      setActiveTabKey(selectedResult.top_types[0].type);
+    if (selectedResult) {
+      setActiveTabKey(selectedResult.id ? String(selectedResult.id) : 'tab-0');
     } else {
       setActiveTabKey('');
     }
@@ -468,22 +467,88 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
                 onChange={setActiveTabKey}
                 items={recentResults.slice(0, 3).map((result, index) => {
                   const isRecommended = index === 0;
+
+                  // 11가지 퍼스널컬러 타입 정의
                   const typeNames: Record<string, { name: string; emoji: string; color: string }> = {
+                    // Spring
                     spring: { name: '봄 웜톤', emoji: '🌸', color: '#fab1a0' },
+                    spring_light: { name: '봄 라이트', emoji: '🌼', color: '#fff5ba' },
+                    spring_true: { name: '봄 트루', emoji: '🍑', color: '#ffb7b2' },
+                    spring_bright: { name: '봄 브라이트', emoji: '🌺', color: '#ff9ff3' },
+                    // Summer
                     summer: { name: '여름 쿨톤', emoji: '💎', color: '#a8e6cf' },
+                    summer_light: { name: '여름 라이트', emoji: '☁️', color: '#dff9fb' },
+                    summer_true: { name: '여름 트루', emoji: '🍧', color: '#74b9ff' },
+                    summer_mute: { name: '여름 뮤트', emoji: '🌫️', color: '#b2bec3' },
+                    // Autumn
                     autumn: { name: '가을 웜톤', emoji: '🍂', color: '#d4a574' },
+                    autumn_soft: { name: '가을 소프트', emoji: '🌾', color: '#e1b12c' },
+                    autumn_deep: { name: '가을 딥', emoji: '🍁', color: '#a0522d' },
+                    // Winter
                     winter: { name: '겨울 쿨톤', emoji: '❄️', color: '#74b9ff' },
+                    winter_bright: { name: '겨울 브라이트', emoji: '✨', color: '#00cec9' },
+                    winter_true: { name: '겨울 트루', emoji: '🧊', color: '#0984e3' },
+                    winter_deep: { name: '겨울 딥', emoji: '🌌', color: '#2d3436' },
                   };
-                  const typeInfo = typeNames[result.result_tone] || typeNames.spring;
-                  const allBackgrounds = {
+
+                  const allBackgrounds: Record<string, { background: string; color: string }> = {
+                    // Spring
                     spring: { background: 'linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%)', color: '#2d3436' },
+                    spring_light: { background: 'linear-gradient(135deg, #fff5ba 0%, #ffcccc 100%)', color: '#2d3436' },
+                    spring_true: { background: 'linear-gradient(135deg, #fab1a0 0%, #ff7675 100%)', color: '#2d3436' },
+                    spring_bright: { background: 'linear-gradient(135deg, #ff9ff3 0%, #feca57 100%)', color: '#2d3436' },
+                    // Summer
                     summer: { background: 'linear-gradient(135deg, #a8e6cf 0%, #dcedc8 100%)', color: '#2d3436' },
+                    summer_light: { background: 'linear-gradient(135deg, #dff9fb 0%, #c7ecee 100%)', color: '#2d3436' },
+                    summer_true: { background: 'linear-gradient(135deg, #74b9ff 0%, #a29bfe 100%)', color: '#ffffff' },
+                    summer_mute: { background: 'linear-gradient(135deg, #b2bec3 0%, #636e72 100%)', color: '#ffffff' },
+                    // Autumn
                     autumn: { background: 'linear-gradient(135deg, #d4a574 0%, #8b4513 100%)', color: '#ffffff' },
+                    autumn_soft: { background: 'linear-gradient(135deg, #e1b12c 0%, #cd6133 100%)', color: '#ffffff' },
+                    autumn_deep: { background: 'linear-gradient(135deg, #a0522d 0%, #800000 100%)', color: '#ffffff' },
+                    // Winter
                     winter: { background: 'linear-gradient(135deg, #74b9ff 0%, #0984e3 100%)', color: '#ffffff' },
+                    winter_bright: { background: 'linear-gradient(135deg, #00cec9 0%, #6c5ce7 100%)', color: '#ffffff' },
+                    winter_true: { background: 'linear-gradient(135deg, #0984e3 0%, #00cec9 100%)', color: '#ffffff' },
+                    winter_deep: { background: 'linear-gradient(135deg, #2d3436 0%, #636e72 100%)', color: '#ffffff' },
                   };
-                  const displayStyle = allBackgrounds[result.result_tone as PersonalColorType];
+
+                  // 톤 키 정규화 함수
+                  const getNormalizedKey = (r: SurveyResultDetail): string => {
+                    const text = (r.result_name || r.result_tone).toLowerCase().replace(/\s+/g, '_');
+
+                    if (text.includes('spring') || text.includes('봄')) {
+                      if (text.includes('light') || text.includes('라이트')) return 'spring_light';
+                      if (text.includes('bright') || text.includes('브라이트')) return 'spring_bright';
+                      if (text.includes('true') || text.includes('트루')) return 'spring_true';
+                      return 'spring';
+                    }
+                    if (text.includes('summer') || text.includes('여름')) {
+                      if (text.includes('light') || text.includes('라이트')) return 'summer_light';
+                      if (text.includes('mute') || text.includes('뮤트') || text.includes('soft') || text.includes('소프트')) return 'summer_mute';
+                      if (text.includes('true') || text.includes('트루')) return 'summer_true';
+                      return 'summer';
+                    }
+                    if (text.includes('autumn') || text.includes('가을')) {
+                      if (text.includes('mute') || text.includes('뮤트') || text.includes('soft') || text.includes('소프트')) return 'autumn_soft';
+                      if (text.includes('deep') || text.includes('딥')) return 'autumn_deep';
+                      return 'autumn';
+                    }
+                    if (text.includes('winter') || text.includes('겨울')) {
+                      if (text.includes('bright') || text.includes('브라이트')) return 'winter_bright';
+                      if (text.includes('deep') || text.includes('딥') || text.includes('dark') || text.includes('다크')) return 'winter_deep';
+                      if (text.includes('true') || text.includes('트루')) return 'winter_true';
+                      return 'winter';
+                    }
+                    return 'spring';
+                  };
+
+                  const normalizedKey = getNormalizedKey(result);
+                  const typeInfo = typeNames[normalizedKey] || typeNames.spring;
+                  const displayStyle = allBackgrounds[normalizedKey] || allBackgrounds.spring;
+
                   return {
-                    key: result.result_tone,
+                    key: result.id ? String(result.id) : `tab-${index}`,
                     label: (
                       <div className="flex items-center px-2 gap-1">
                         {isRecommended && (

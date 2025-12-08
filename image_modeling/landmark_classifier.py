@@ -593,8 +593,6 @@ class RobustLandmarkClassifier(PersonalColorClassifier):
             prob = max(0, score) * 33.3 
             top3.append({
                 'name': full_name,
-                'probability': round(prob, 1),
-                'distance': round(3 - score, 2)
             })
             
         # Confidence
@@ -613,7 +611,6 @@ class RobustLandmarkClassifier(PersonalColorClassifier):
                 'name_eng': best_type_obj.subtype_eng,
                 'season': best_type_obj.season,
                 'description': best_type_obj.description,
-                'probability': round(season_conf * 100, 1)
             },
             'top3': top3,
             'visualization': vis_image

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Body, Query
+from fastapi import APIRouter, HTTPException, Depends, Body
 from openai import OpenAI
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -21,9 +21,8 @@ from schemas import (
     RecommendQuestionsResponse,
 )
 from routers.feedback_router import generate_ai_feedbacks
-from utils.shared import build_rag_index, analyze_conversation_for_color_tone, normalize_personal_color
+from utils.shared import analyze_conversation_for_color_tone, normalize_personal_color
 from utils.emotion_lottie import lottie_filename, to_canonical
-import random
 import asyncio
 
 # Optional: load influencer personas from the influencer service if available
@@ -412,10 +411,6 @@ def get_influencer_profiles(db: Session = Depends(get_db), current_user: models.
     except Exception as e:
         print(f"[get_influencer_profiles] proxy call failed: {e}")
         return []
-
-# RAG 인덱스 구축 (서버 시작 시 한 번만 실행)
-fixed_index = build_rag_index(client, "data/RAG/personal_color_RAG.txt")
-trend_index = build_rag_index(client, "data/RAG/beauty_trend_2025_autumn_RAG.txt")
 
 def clean_analysis_text(text: str) -> str:
     """
@@ -1218,9 +1213,9 @@ async def analyze(
                     "당신은 한국어로 자연스럽고 친근한 인플루언서 말투를 모방하는 퍼스널컬러 전문가입니다. "
                     "사용자에게 바로 보여줄 수 있는 2~3문장 분량의 응답을 생성하세요. "
                     "감정적인 공감은 짧게 하고, 뷰티/퍼스널컬러 조언 위주로 답변하세요."
+                    " [주의] '봄 웜톤', '여름 쿨톤', '봄 라이트', '겨울 다크', '봄 웜', '여름 쿨' 등 구체적인 퍼스널컬러 진단명이나 타입 이름은 절대 직접적으로 언급하지 마세요. "
+                    "대신 '따뜻한 분위기', '시원한 느낌', '화사한 톤' 등 분위기나 느낌으로 돌려서 표현하세요."
                 )
-                if suppress:
-                    system_msg += " [주의] '봄 라이트', '여름 뮤트' 같은 구체적인 퍼스널 컬러 진단명은 절대 언급하지 말고, 분위기나 느낌으로만 표현하세요."
 
                 user_msg = (
                     f"사용자 상황: {emotion_summary}\n퍼스널 컬러 힌트: {color_summary}\n"
