@@ -76,15 +76,6 @@ def build_rag_index(filepath: str) -> Dict[str, Any]:
         print(f"⚠️ RAG 파일을 찾을 수 없습니다: {filepath}")
         return {"chunks": [], "embeddings": []}
 
-# RAG 인덱스 빌드 (앱 시작 시 한 번만 실행)
-try:
-    personal_color_index = build_rag_index("data/RAG/personal_color_RAG.txt")
-    beauty_trend_index = build_rag_index("data/RAG/beauty_trend_2025_autumn_RAG.txt")
-except Exception as e:
-    print(f"⚠️ RAG 인덱스 빌드 오류: {e}")
-    personal_color_index = {"chunks": [], "embeddings": []}
-    beauty_trend_index = {"chunks": [], "embeddings": []}
-
 def analyze_personal_color_with_openai(answers: list[schemas.SurveyAnswerCreate]) -> dict:
     """
     사용자의 답변을 OpenAI API로 분석하여 퍼스널 컬러 타입 결정
@@ -104,18 +95,6 @@ def analyze_personal_color_with_openai(answers: list[schemas.SurveyAnswerCreate]
         for ans in answers
     ])
     
-    # RAG 검색으로 관련 정보 가져오기
-    rag_context = ""
-    if personal_color_index["chunks"]:
-        related_chunks = top_k_chunks(answers_text, personal_color_index, k=3)
-        rag_context = "\n\n[퍼스널 컬러 참고 정보]\n" + "\n".join(related_chunks)
-    
-    # 트렌드 정보도 추가
-    trend_context = ""
-    if beauty_trend_index["chunks"]:
-        trend_chunks = top_k_chunks(answers_text, beauty_trend_index, k=2)
-        trend_context = "\n\n[최신 뷰티 트렌드]\n" + "\n".join(trend_chunks)
-    
     system_prompt = (
         "당신은 전문적인 퍼스널 컬러 진단 컨설턴트입니다. "
         "사용자의 답변을 기반으로 가장 적합한 퍼스널 컬러 타입을 정확하게 진단해주세요. "
@@ -126,8 +105,6 @@ def analyze_personal_color_with_openai(answers: list[schemas.SurveyAnswerCreate]
     user_prompt = f"""사용자의 퍼스널 컬러 테스트 답변:
 
 {answers_text}
-{rag_context}
-{trend_context}
 
 이 답변들을 기반으로 사용자의 퍼스널 컬러 타입을 분석하세요.
 

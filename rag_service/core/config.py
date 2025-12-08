@@ -40,8 +40,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 # 주의: 실제 파일 ID는 uploaded_files.json에서 관리
 # 5개 부분 문서를 통합한 단일 PDF 파일 사용
 IMMUTABLE_KNOWLEDGE_FILES = {
-    "personal_color.pdf": None,
-    "personal_color_RAG.txt": None,
+    "personal_color.pdf": None
 }
 
 # 🔍 파일 ID 관리 전략:

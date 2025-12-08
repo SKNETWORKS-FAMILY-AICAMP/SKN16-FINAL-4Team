@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Body, Query
+from fastapi import APIRouter, HTTPException, Depends, Body
 from openai import OpenAI
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -21,9 +21,8 @@ from schemas import (
     RecommendQuestionsResponse,
 )
 from routers.feedback_router import generate_ai_feedbacks
-from utils.shared import build_rag_index, analyze_conversation_for_color_tone, normalize_personal_color
+from utils.shared import analyze_conversation_for_color_tone, normalize_personal_color
 from utils.emotion_lottie import lottie_filename, to_canonical
-import random
 import asyncio
 
 # Optional: load influencer personas from the influencer service if available
@@ -412,10 +411,6 @@ def get_influencer_profiles(db: Session = Depends(get_db), current_user: models.
     except Exception as e:
         print(f"[get_influencer_profiles] proxy call failed: {e}")
         return []
-
-# RAG 인덱스 구축 (서버 시작 시 한 번만 실행)
-fixed_index = build_rag_index(client, "data/RAG/personal_color_RAG.txt")
-trend_index = build_rag_index(client, "data/RAG/beauty_trend_2025_autumn_RAG.txt")
 
 def clean_analysis_text(text: str) -> str:
     """

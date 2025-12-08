@@ -153,7 +153,8 @@ class FileManager:
 
             if self.genai_client is not None:
                 try:
-                    cfg = {'name': local_path.name}
+                    # 'name'은 리소스 ID로 엄격한 제약이 있으므로, 'display_name'을 사용해야 함
+                    cfg = {'display_name': local_path.name}
                     uploaded = self.genai_client.files.upload(file=str(local_path), config=cfg)
                     if uploaded and hasattr(uploaded, 'name'):
                         file_name = uploaded.name
@@ -452,7 +453,7 @@ class FileManager:
                     logger.warning(f"upload_to_file_search_store 실패, fallback 시도: {e}")
                     # fallback: upload via Files API then import
                     try:
-                        uploaded = self.genai_client.files.upload(file=str(local_path), config={'name': local_path.name})
+                        uploaded = self.genai_client.files.upload(file=str(local_path), config={'display_name': local_path.name})
                         op = self.genai_client.file_search_stores.import_file(
                             file_search_store_name=store_name,
                             file_name=getattr(uploaded, 'name', None)

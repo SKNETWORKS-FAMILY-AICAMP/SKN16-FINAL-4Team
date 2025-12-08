@@ -674,9 +674,7 @@ class MutableKnowledgeHandler:
         
         # Known mappings
         mappings = {
-            "vogue_articles.json": "Vogue Korea 2025 Fashion Trends",
-            "personal_color_RAG.txt": "Personal Color Analysis Guide",
-            "beauty_trend_2025_autumn_RAG.txt": "2025 Autumn Beauty Trends"
+            "vogue_articles.json": "Vogue Korea 2025 Fashion Trends"
         }
         
         if name in mappings:
