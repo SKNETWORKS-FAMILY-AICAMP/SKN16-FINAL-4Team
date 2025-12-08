@@ -17,7 +17,6 @@ import {
   CalendarOutlined,
 } from '@ant-design/icons';
 import type { SurveyResultDetail } from '@/api/survey';
-import type { PersonalColorType } from '@/types/personalColor';
 import html2canvas from 'html2canvas';
 
 const { Title, Text } = Typography;
@@ -468,7 +467,7 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
                 onChange={setActiveTabKey}
                 items={recentResults.slice(0, 3).map((result, index) => {
                   const isRecommended = index === 0;
-                  
+
                   // 11가지 퍼스널컬러 타입 정의
                   const typeNames: Record<string, { name: string; emoji: string; color: string }> = {
                     // Spring
@@ -517,7 +516,7 @@ const DiagnosisDetailModal: React.FC<DiagnosisDetailModalProps> = ({
                   // 톤 키 정규화 함수
                   const getNormalizedKey = (r: SurveyResultDetail): string => {
                     const text = (r.result_name || r.result_tone).toLowerCase().replace(/\s+/g, '_');
-                    
+
                     if (text.includes('spring') || text.includes('봄')) {
                       if (text.includes('light') || text.includes('라이트')) return 'spring_light';
                       if (text.includes('bright') || text.includes('브라이트')) return 'spring_bright';

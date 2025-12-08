@@ -6,7 +6,7 @@ import type { GenderType } from '@/api/user';
 import { useCreateUser } from '@/hooks/useUser';
 import RouterPaths from '@/routes/Router';
 
-import personalInfoText from '../../../../docs/personal_information_terms.txt?raw';
+import personalInfoText from '../../assets/personal_information_terms.txt?raw';
 
 
 interface SignUpFormValues {
