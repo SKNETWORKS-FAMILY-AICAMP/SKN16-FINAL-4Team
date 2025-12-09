@@ -25,7 +25,7 @@ services:
 
   # FastAPI 백엔드
   backend:
-    image: ${DOCKERHUB_USERNAME}/skn16-fastapi:latest
+    image: wonjun525/skn16-fastapi:latest
     container_name: fastapi-prod
     restart: always
     build:
@@ -61,7 +61,7 @@ services:
 
   # React 프론트엔드 (Nginx)
   frontend:
-    image: ${DOCKERHUB_USERNAME}/skn16-frontend:latest
+    image: wonjun525/skn16-frontend:latest
     container_name: frontend-prod
     restart: always
     build:
