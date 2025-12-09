@@ -18,7 +18,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -28,9 +28,7 @@ services:
     image: wonjun525/skn16-fastapi:latest
     container_name: fastapi-prod
     restart: always
-    build:
-      context: .
-      dockerfile: Dockerfile
+
     environment:
       DB_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}
       SECRET_KEY: ${SECRET_KEY}
@@ -64,9 +62,7 @@ services:
     image: wonjun525/skn16-frontend:latest
     container_name: frontend-prod
     restart: always
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+
     ports:
       - "80:80"
     depends_on:
