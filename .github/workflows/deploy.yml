@@ -46,6 +46,8 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/skn16-frontend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            VITE_API_BASE_URL=${{ secrets.VITE_API_BASE_URL }}
           
       # 6. SSH를 사용하여 EC2 서버에 접속 및 배포
       - name: Deploy via SSH

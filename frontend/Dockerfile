@@ -10,7 +10,6 @@ COPY package*.json ./
 # 소스 코드 복사
 # .env 파일을 빌드에 사용하기 위해 먼저 복사합니다.
 # .env 파일이 이미 공인 IP 주소(15.165.155.233:8000)를 포함하고 있어야 합니다.
-COPY .env .
 
 
 # 의존성 설치
@@ -20,6 +19,11 @@ RUN npm ci
 
 # 소스 코드 복사
 COPY . .
+
+
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
 
 # 프로덕션 빌드
 RUN npm run build
