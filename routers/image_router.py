@@ -54,7 +54,9 @@ async def presign_upload(payload: dict):
 
     try:
         import boto3
-        s3 = boto3.client('s3')
+        from botocore.config import Config
+        region = os.getenv('AWS_REGION', 'ap-northeast-2')
+        s3 = boto3.client('s3', region_name=region, config=Config(signature_version='s3v4'))
         key = f"uploads/{uuid.uuid4().hex}_{filename}"
         presigned_url = s3.generate_presigned_url(
             'put_object',
@@ -92,7 +94,9 @@ async def presign_get(payload: dict):
 
     try:
         import boto3
-        s3 = boto3.client('s3')
+        from botocore.config import Config
+        region = os.getenv('AWS_REGION', 'ap-northeast-2')
+        s3 = boto3.client('s3', region_name=region, config=Config(signature_version='s3v4'))
         presigned_url = s3.generate_presigned_url(
             'get_object',
             Params={'Bucket': bucket, 'Key': key},
@@ -113,7 +117,9 @@ async def upload_to_s3(file: UploadFile = File(...)):
     if bucket:
         try:
             import boto3
-            s3 = boto3.client('s3')
+            from botocore.config import Config
+            region = os.getenv('AWS_REGION', 'ap-northeast-2')
+            s3 = boto3.client('s3', region_name=region, config=Config(signature_version='s3v4'))
             key = f"uploads/{uuid.uuid4().hex}_{file.filename}"
             # keep object private by default
             s3.put_object(Bucket=bucket, Key=key, Body=data)
@@ -163,7 +169,9 @@ async def analyze_image(req: ImageAnalyzeRequest):
                 raise HTTPException(status_code=500, detail='S3_BUCKET 설정이 필요합니다')
             try:
                 import boto3
-                s3 = boto3.client('s3')
+                from botocore.config import Config
+                region = os.getenv('AWS_REGION', 'ap-northeast-2')
+                s3 = boto3.client('s3', region_name=region, config=Config(signature_version='s3v4'))
                 resp = s3.get_object(Bucket=bucket, Key=req.s3_key)
                 content = resp['Body'].read()
                 filename = os.path.basename(req.s3_key)
@@ -270,7 +278,9 @@ async def apply_makeup(req: ImageMakeupRequest):
                 raise HTTPException(status_code=500, detail='S3_BUCKET 설정이 필요합니다')
             try:
                 import boto3
-                s3 = boto3.client('s3')
+                from botocore.config import Config
+                region = os.getenv('AWS_REGION', 'ap-northeast-2')
+                s3 = boto3.client('s3', region_name=region, config=Config(signature_version='s3v4'))
                 resp = s3.get_object(Bucket=bucket, Key=req.s3_key)
                 content = resp['Body'].read()
             except Exception as e:
@@ -302,9 +312,11 @@ async def apply_makeup(req: ImageMakeupRequest):
     if bucket:
         try:
             import boto3
-            s3 = boto3.client('s3')
+            from botocore.config import Config
+            region = os.getenv('AWS_REGION', 'ap-northeast-2')
+            s3 = boto3.client('s3', region_name=region, config=Config(signature_version='s3v4'))
             s3.put_object(Bucket=bucket, Key=result_key, Body=result_bytes, ContentType='image/jpeg')
-            
+
             # Generate presigned URL for immediate display
             presigned_url = s3.generate_presigned_url(
                 'get_object',
