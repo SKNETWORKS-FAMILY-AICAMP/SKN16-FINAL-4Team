@@ -6,7 +6,7 @@ import { useNavigate, useLocation, useBlocker } from 'react-router-dom';
 import { useCurrentUser } from '@/hooks/useUser';
 import { useSurveyResultsLive, useInvalidateSurveyResults } from '@/hooks/useSurvey';
 import useChatbot from '@/hooks/useChatbot';
-import type { ChatResModel, InfluencerHistoryItem } from '@/api/chatbot';
+import type { InfluencerHistoryItem } from '@/api/chatbot';
 import { chatbotApi } from '@/api/chatbot';
 import { surveyApi } from '@/api/survey';
 import { analyzeImage, applyMakeup } from '@/api/image';
@@ -20,32 +20,23 @@ import AnimatedEmoji from '@/components/AnimatedEmoji';
 import { Loading } from '@/components';
 import InfluencerImage from '@/components/InfluencerImage';
 
-import dayjs from '@/utils/dayjsTimezoneSetup';
 import { formatKoreanDate } from '@/utils/dateUtils';
 import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
 import { getAvatarRenderInfo } from '@/utils/genderUtils';
 
+import { type ChatMessageData } from '@/components/chatbot/ChatMessage';
+import {
+  historyItemsToChatMessages,
+  extractBotContentFromItem,
+  isDiagnosisBubble,
+  groupMessagesByDate,
+  formatDateHeader,
+  mapInfluencerRespItems,
+  sanitizeForChat,
+} from '@/utils/chatbot/messageHelpers';
+
 const { Title, Text } = antd.Typography;
 const { TextArea } = antd.Input;
-
-interface ChatMessage {
-  id: string;
-  question?: string;
-  content: string;
-  customContent?: React.ReactNode;
-  isUser: boolean;
-  timestamp: string | Date;
-  chatRes?: ChatResModel;
-  questionId?: number;
-  diagnosisData?: {
-    result_name: string;
-    detailed_analysis: string;
-    color_palette: string[];
-    style_keywords: string[];
-    makeup_tips: string[];
-  };
-  isWelcome?: boolean;
-}
 
 /**
  * 챗봇 페이지 컴포넌트
@@ -78,7 +69,7 @@ const ChatbotPage: React.FC = () => {
   const lastLoadedInfluencerRef = useRef<string | number | null>(null);
   const autoCloseRef = useRef<number | null>(null);
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessageData[]>([]);
   // description 버블 딜레이 표시용
   const [delayedDescriptions, setDelayedDescriptions] = useState<{ [id: string]: boolean }>({});
   const [inputMessage, setInputMessage] = useState('');
@@ -119,7 +110,7 @@ const ChatbotPage: React.FC = () => {
       setPendingMakeupTone(null);
 
       const url = makeupImageUrls[pendingMakeupTone];
-      const imageMessage: ChatMessage = {
+      const imageMessage: ChatMessageData = {
         id: `makeup-result-auto-${Date.now()}`,
         content: '가상 메이크업 결과입니다.',
         isUser: false,
@@ -175,91 +166,6 @@ const ChatbotPage: React.FC = () => {
   }, [hasNewConversation]);
 
   // Small helpers to reduce duplicated parsing/mapping logic
-  const parseRawChatRes = (raw: any): ChatResModel | undefined => {
-    if (!raw) return undefined;
-    try {
-      return typeof raw === 'string' ? JSON.parse(raw) : raw;
-    } catch (e) {
-      return undefined;
-    }
-  };
-
-  const mapInfluencerRespItems = (items: any[], inflId: string | number) => {
-    return (items || []).map((m: any, idx: number) => {
-      const isUser = (m.role || '').toString().toLowerCase() === 'user';
-      let chatRes = undefined as any;
-      try {
-        if (m.raw) chatRes = parseRawChatRes(m.raw);
-      } catch (e) {
-        chatRes = undefined;
-      }
-      return {
-        id: `infl-${inflId}-${idx}-${m.history_id || ''}`,
-        content: m.text || '',
-        isUser,
-        // preserve server ISO timestamp string when available so parsing is deterministic
-        timestamp: m.created_at ? String(m.created_at) : new Date().toISOString(),
-        chatRes,
-        questionId: undefined,
-      } as ChatMessage;
-    });
-  };
-
-  const historyItemsToChatMessages = (items: any[], historyId?: number) => {
-    const out: ChatMessage[] = [];
-    let baseTs = Date.now() - (items?.length || 0) * 2000;
-    for (const it of items || []) {
-      // prefer server-provided ISO timestamps when available; otherwise synthesize ISO
-      const userTsIso = it.question_created_at ? String(it.question_created_at) : new Date(baseTs).toISOString();
-
-      const isWelcome = !it.question || it.question.trim() === '';
-
-      // Only add user message if question is not empty (skip hidden welcome triggers)
-      if (!isWelcome) {
-        out.push({
-          id: `h-${historyId}-${it.question_id}-u`,
-          content: it.question || '',
-          isUser: true,
-          timestamp: userTsIso,
-        });
-      }
-      // advance baseTs relative to parsed time
-      baseTs = Math.max(baseTs + 1000, dayjs(userTsIso).valueOf() + 500);
-
-      const botTsIso = it.created_at ? String(it.created_at) : new Date(baseTs).toISOString();
-
-      out.push({
-        id: `h-${historyId}-${it.question_id}-b`,
-        content: it.answer || '',
-        isUser: false,
-        timestamp: botTsIso,
-        chatRes: it.chat_res,
-        isWelcome: isWelcome,
-      });
-      baseTs = Math.max(baseTs + 1000, dayjs(botTsIso).valueOf() + 500);
-    }
-    return out;
-  };
-
-  const extractBotContentFromItem = (item: any) => {
-    let botContent = item.answer;
-    if (!botContent || botContent.trim() === '') {
-      botContent = item.chat_res?.description || '답변을 준비 중입니다...';
-    }
-    try {
-      const trimmed = (botContent || '').trim();
-      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-        const parsed = JSON.parse(trimmed);
-        if (parsed && typeof parsed === 'object') {
-          return parsed.description || parsed.answer || item.chat_res?.description || '답변을 준비 중입니다...';
-        }
-      }
-    } catch (e) {
-      // ignore parse errors and return raw content
-    }
-    return botContent;
-  };
-
   // Scroll helper: scroll messages container to bottom only when it overflows
   const scrollToBottom = (smooth: boolean = true) => {
     try {
@@ -278,33 +184,6 @@ const ChatbotPage: React.FC = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
-
-  // Helper to sanitize large objects before sending to chat API
-  const sanitizeForChat = (obj: any): any => {
-    if (!obj) return obj;
-    if (typeof obj === 'string') {
-      // Truncate very long strings (e.g. base64 images)
-      return obj.length > 500 ? obj.substring(0, 500) + '...[truncated]' : obj;
-    }
-    if (Array.isArray(obj)) {
-      return obj.map(sanitizeForChat);
-    }
-    if (typeof obj === 'object') {
-      const newObj: any = {};
-      for (const key in obj) {
-        // Skip keys that are known to contain large data
-        if (key.toLowerCase().includes('base64') ||
-          key.toLowerCase().includes('image_data') ||
-          key.toLowerCase().includes('encoded_image')) {
-          newObj[key] = '[Image Data Omitted]';
-        } else {
-          newObj[key] = sanitizeForChat(obj[key]);
-        }
-      }
-      return newObj;
-    }
-    return obj;
-  };
 
   // 라우터 state로 전달된 인플루언서 프로필(예: MyPage에서 클릭으로 전달)을 수신
   useEffect(() => {
@@ -342,7 +221,7 @@ const ChatbotPage: React.FC = () => {
           items = (resp as any).items || [];
         }
 
-        const loaded: ChatMessage[] = mapInfluencerRespItems(items, inflId);
+        const loaded: ChatMessageData[] = mapInfluencerRespItems(items, inflId);
 
         if (!mounted) return;
 
@@ -400,7 +279,7 @@ const ChatbotPage: React.FC = () => {
           try {
             const hist = await chatbotApi.getHistory(res.history_id);
             if (hist && Array.isArray(hist.items) && hist.items.length > 0) {
-              const loaded: ChatMessage[] = historyItemsToChatMessages(hist.items, res.history_id);
+              const loaded: ChatMessageData[] = historyItemsToChatMessages(hist.items, res.history_id);
               setMessages(loaded);
               setTimeout(() => scrollToBottom(false), 50);
 
@@ -431,7 +310,7 @@ const ChatbotPage: React.FC = () => {
               const latestItem = response.items[response.items.length - 1];
               const botContent = extractBotContentFromItem(latestItem);
 
-              const botMessage: ChatMessage = {
+              const botMessage: ChatMessageData = {
                 id: (Date.now() + 1).toString(),
                 content: botContent,
                 isUser: false,
@@ -467,7 +346,7 @@ const ChatbotPage: React.FC = () => {
   }, []);
 
   // 메시지에 리포트(진단) 상세보기 버튼을 보여야 하는지 판단
-  const shouldShowReportButton = (msg: ChatMessage): boolean => {
+  const shouldShowReportButton = (msg: ChatMessageData): boolean => {
     if (msg.isWelcome && surveyResults && surveyResults.length > 0) return true;
     if (msg.diagnosisData) return true;
     return false;
@@ -541,7 +420,7 @@ const ChatbotPage: React.FC = () => {
     console.log('  - surveyResults:', surveyResults);
     console.log('  - surveyResults?.length:', surveyResults?.length);
 
-    const userMessage: ChatMessage = {
+    const userMessage: ChatMessageData = {
       id: Date.now().toString(),
       content: inputMessage.trim(),
       isUser: true,
@@ -585,7 +464,7 @@ const ChatbotPage: React.FC = () => {
       if (latestItem) {
         const botContent = extractBotContentFromItem(latestItem);
 
-        const botMessage: ChatMessage = {
+        const botMessage: ChatMessageData = {
           id: (Date.now() + 1).toString(),
           content: botContent,
           isUser: false,
@@ -725,7 +604,7 @@ const ChatbotPage: React.FC = () => {
             }
 
             // 요약 리포트 생성 완료 메시지
-            const summaryMessage: ChatMessage = {
+            const summaryMessage: ChatMessageData = {
               id: `diagnosis-summary-${Date.now()}`,
               content: '',
               customContent: (
@@ -945,7 +824,7 @@ const ChatbotPage: React.FC = () => {
                   const lastItem = proposalRes.items[proposalRes.items.length - 1];
                   const botContent = extractBotContentFromItem(lastItem);
 
-                  const proposalMessage: ChatMessage = {
+                  const proposalMessage: ChatMessageData = {
                     id: `makeup-proposal-${Date.now()}`,
                     content: botContent,
                     isUser: false,
@@ -965,7 +844,7 @@ const ChatbotPage: React.FC = () => {
                     console.log(`🎨 메이크업 이미지 확인: resultName='${resultName}', available=${Object.keys(makeupImageUrls).join(', ')}`);
                     if (makeupImageUrls[resultName]) {
                       const url = makeupImageUrls[resultName];
-                      const imageMessage: ChatMessage = {
+                      const imageMessage: ChatMessageData = {
                         id: `makeup-result-auto-${Date.now()}`,
                         content: '가상 메이크업 결과입니다.',
                         isUser: false,
@@ -1025,7 +904,7 @@ const ChatbotPage: React.FC = () => {
             const diagnosisErrorId = `diagnosis-error-${currentHistoryId}`;
 
             // 진단 에러 메시지 버블
-            const diagnosisErrorMessage: ChatMessage = {
+            const diagnosisErrorMessage: ChatMessageData = {
               id: diagnosisErrorId,
               content: '',
               customContent: (
@@ -1123,7 +1002,7 @@ const ChatbotPage: React.FC = () => {
                           setMessages(prev => prev.filter(m => m.id !== diagnosisErrorId));
 
                           // 성공 메시지 추가
-                          const successMessage: ChatMessage = {
+                          const successMessage: ChatMessageData = {
                             id: `diagnosis-success-${currentHistoryId}`,
                             content: '',
                             customContent: (
@@ -1271,7 +1150,7 @@ const ChatbotPage: React.FC = () => {
         errorTitle = '네트워크 오류';
       }
 
-      const errorMessage: ChatMessage = {
+      const errorMessage: ChatMessageData = {
         id: (Date.now() + 1).toString(),
         content: errorContent,
         isUser: false,
@@ -1393,50 +1272,7 @@ const ChatbotPage: React.FC = () => {
     }
   };
 
-
-  // 진단 챗봇 버블 여부 판별 함수 (예시: description에 '진단', '분석', '추천', '퍼스널컬러', '톤', '결과' 등 포함 시)
-  // 진단 완료 요약 customContent가 있는 메시지(진단 완료 버블)만 true 반환
-  function isDiagnosisBubble(msg?: any): boolean {
-    // 진단 요약 customContent가 있는 경우만 진단 버블로 간주
-    if (msg && msg.customContent && typeof msg.customContent === 'object') {
-      return true;
-    }
-    return false;
-  }
-
-  // Helpers to group messages by date and format headers
-  const isSameDay = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-
-  const formatDateHeader = (d: Date) => {
-    const today = new Date();
-    if (isSameDay(d, today)) return '오늘';
-    const weekdays = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
-    return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${weekdays[d.getDay()]}`;
-  };
-
-  const groupMessagesByDate = (msgs: ChatMessage[]) => {
-    const map = new Map<string, ChatMessage[]>();
-    for (const m of msgs) {
-      // normalize to YYYY-MM-DD key using Asia/Seoul timezone so grouping matches displayed dates
-      const d = dayjs(m.timestamp).tz('Asia/Seoul');
-      const key = `${d.year()}-${String(d.month() + 1).padStart(2, '0')}-${String(d.date()).padStart(2, '0')}`;
-      if (!map.has(key)) {
-        map.set(key, []);
-      }
-      map.get(key)!.push(m);
-    }
-
-    // sort keys (YYYY-MM-DD strings) ascending so oldest date comes first
-    const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
-
-    return keys.map(k => {
-      const items = (map.get(k) || []).slice().sort((x, y) => dayjs(x.timestamp).valueOf() - dayjs(y.timestamp).valueOf());
-      const date = items.length > 0 ? dayjs(items[0].timestamp).toDate() : new Date(k);
-      return { key: k, items, date };
-    });
-  };
-
+  // Helpers to group messages by date and format headers - imported from messageHelpers
   // Memoized grouped sections so we don't recompute on every render
   const groupedSections = useMemo(() => groupMessagesByDate(messages), [messages]);
 
@@ -1455,7 +1291,7 @@ const ChatbotPage: React.FC = () => {
     </svg>
   );
 
-  const renderMessage = (msg: ChatMessage) => {
+  const renderMessage = (msg: ChatMessageData) => {
     const idx = messages.findIndex(m => m.id === msg.id);
     return (
       <div
@@ -1785,7 +1621,7 @@ const ChatbotPage: React.FC = () => {
                   <div className="mt-3 pt-2 border-t border-gray-100">
                     <div className="text-xs text-gray-500 flex flex-wrap gap-1 items-center">
                       <span className="font-bold mr-1">📚 참고 자료:</span>
-                      {msg.chatRes.references.map((ref, idx) => (
+                      {msg.chatRes.references.map((ref: string, idx: number) => (
                         <React.Fragment key={idx}>
                           {idx > 0 && <span className="mr-1">,</span>}
                           <antd.Tooltip title={<div className="whitespace-pre-wrap max-h-60 overflow-y-auto text-xs">{ref}</div>} styles={{ root: { maxWidth: '400px' } }}>
@@ -2044,7 +1880,7 @@ const ChatbotPage: React.FC = () => {
                   try {
                     // 1. 사용자 메시지 먼저 표시
                     const imageUrl = URL.createObjectURL(file);
-                    const userMsg: ChatMessage = {
+                    const userMsg: ChatMessageData = {
                       id: `img-u-${Date.now()}`,
                       content: `이미지 업로드: ${file.name}`,
                       customContent: (
@@ -2114,7 +1950,7 @@ const ChatbotPage: React.FC = () => {
                         const latestItem = resp.items[resp.items.length - 1];
                         const botContent = extractBotContentFromItem(latestItem);
 
-                        const botMsg: ChatMessage = {
+                        const botMsg: ChatMessageData = {
                           id: `img-b-${Date.now()}`,
                           content: botContent,
                           isUser: false,
@@ -2130,7 +1966,7 @@ const ChatbotPage: React.FC = () => {
                       setPendingImageFollowup({ primary: primary, sub: sub, image_result: imgRes?.image_result, history_id: resp.history_id });
                     } catch (e) {
                       const summary = (imgRes?.orchestrator?.color && (imgRes.orchestrator.color.parsed?.description || imgRes.orchestrator.color.parsed?.detected_color_hints)) || (imgRes?.orchestrator?.emotion && imgRes.orchestrator.emotion.parsed?.description) || '이미지 분석 결과를 불러오지 못했습니다.';
-                      const botMsg: ChatMessage = { id: `img-b-${Date.now()}`, content: `이미지 분석 요약: ${primary}${sub ? ' / ' + sub : ''}\n${typeof summary === 'string' ? summary : JSON.stringify(summary)}`, isUser: false, timestamp: new Date() };
+                      const botMsg: ChatMessageData = { id: `img-b-${Date.now()}`, content: `이미지 분석 요약: ${primary}${sub ? ' / ' + sub : ''}\n${typeof summary === 'string' ? summary : JSON.stringify(summary)}`, isUser: false, timestamp: new Date() };
                       setMessages(prev => [...prev, botMsg]);
                     }
                   } catch (err: any) {

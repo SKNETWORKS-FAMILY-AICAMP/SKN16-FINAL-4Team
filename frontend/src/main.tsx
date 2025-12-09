@@ -14,6 +14,7 @@ import {
   MyPage,
   // PersonalColorTestPage, // 대화형 진단으로 변경으로 인해 비활성화
   ChatbotPage,
+  StreamTestPage,
   AdminDashboard,
 } from './pages';
 
@@ -45,6 +46,10 @@ const router = createBrowserRouter([
       {
         path: 'chatbot',
         element: <ChatbotPage />,
+      },
+      {
+        path: 'stream-test',
+        element: <StreamTestPage />,
       },
       {
         path: 'admin-dashboard',

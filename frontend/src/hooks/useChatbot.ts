@@ -119,8 +119,27 @@ export function useChatbot(options?: UseChatbotOptions) {
   } as any);
 
   // convenience wrappers that return mutation promises so callers can await
-  const analyze = (params: { question: string; history_id?: number | undefined }) =>
-    (analyzeMutation.mutateAsync as any)(params);
+  const analyze = (
+    params: { question: string; history_id?: number | undefined },
+    onChunk?: (data: any) => void
+  ) => {
+    // 스트리밍 콜백이 제공된 경우 직접 API 호출
+    if (onChunk) {
+      return chatbotApi.analyze(params, onChunk).then((data) => {
+        // Invalidate influencer histories
+        try {
+          queryClient.invalidateQueries({ queryKey: ['influencerHistories'] });
+        } catch (e) {}
+        options?.onAnalyzeSuccess?.(data);
+        return data;
+      }).catch((error) => {
+        options?.onAnalyzeError?.(error);
+        throw error;
+      });
+    }
+    // 스트리밍 없이 일반 호출
+    return (analyzeMutation.mutateAsync as any)(params);
+  };
 
   const analyzeChatForDiagnosis = (historyId: number) =>
     (diagnosisMutation.mutateAsync as any)(historyId);
