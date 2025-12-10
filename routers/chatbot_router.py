@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi.responses import StreamingResponse
 from openai import OpenAI
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -90,8 +91,9 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
     사용자와 퍼스널 컬러 전문가의 대화:
     {conversation_text}
 
-    위 대화를 바탕으로 사용자의 퍼스널 컬러를 진단해주세요.
-    기본적으로 '{season}' 타입일 가능성이 높지만, 대화 내용을 분석하여 다음 11가지 세부 타입 중 가장 적절한 하나를 선택해주세요:
+    위 대화를 분석하여 사용자의 퍼스널 컬러를 진단해주세요.
+    대화 내용에서 명확하게 언급된 타입이 있다면 반드시 그것을 최우선으로 고려하세요.
+    다음 11가지 세부 타입 중 대화 내용에 가장 부합하는 하나를 선택해주세요:
     {', '.join(valid_types)}
 
     다음 유효한 JSON 객체 하나만, 다른 설명 없이 반환해주세요. JSON은 반드시 아래 키들을 포함해야 합니다:
@@ -100,8 +102,8 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
         "primary_tone": "'웜' 또는 '쿨' (짧은 문자열)",
         "sub_tone": "'봄','여름','가을' 또는 '겨울' (짧은 문자열)",
         "emotional_description": "감성적이고 긍정적인 한 문장",
-        "color_palette": ["{season} 타입에 어울리는 5개의 HEX 색상 코드"],
-        "style_keywords": ["{season} 타입의 특성을 나타내는 5개 키워드"],
+        "color_palette": ["선택된 타입에 어울리는 5개의 HEX 색상 코드"],
+        "style_keywords": ["선택된 타입의 특성을 나타내는 5개 키워드"],
         "makeup_tips": ["실용적인 메이크업 팁 4개"],
         "detailed_analysis": "대화 내용을 반영한 개인화된 분석 (2-3문단, 구체적이고 실용적인 조언 포함)",
         "top_types": [
@@ -110,6 +112,7 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
     }}
 
     중요 요구사항:
+    - 대화에서 명시적으로 언급된 퍼스널 컬러 타입이 있다면 반드시 그것을 선택하세요.
     - `result_name`과 `top_types` 배열의 각 항목 `name`은 반드시 위 11가지 세부 타입 중 하나여야 합니다.
     - `top_types[0].name`은 `result_name`과 동일한 값이어야 합니다.
     - `primary_tone`은 반드시 '웜' 또는 '쿨'로 표기하고, `sub_tone`은 '봄/여름/가을/겨울' 중 하나로 표기하세요.
@@ -299,10 +302,11 @@ def generate_welcome(db: Session, current_user: models.User, influencer_id: str 
         # Mandatory instruction: Request image upload
         user_prompt_lines.append("필수 포함 내용: 정확한 퍼스널컬러 진단을 위해 사용자의 얼굴이 잘 나온 사진(이미지)을 업로드해달라고 요청하는 문장을 반드시 포함하세요.")
 
-        if has_prev and prev_summary:
-            user_prompt_lines.append(f"이 사용자는 이전에 '{prev_summary}' 타입으로 진단된 기록이 있습니다. 환영 인사에서 '이전 진단 내역'이라는 단어를 포함하여 이를 언급하고, 이전 결과를 참고해 어떤 도움을 줄 수 있는지 알려주세요. 인플루언서의 말투로 작성하세요.")
-        else:
-            user_prompt_lines.append("이 사용자는 이전 진단 기록이 없습니다. 자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 안내하고, 인플루언서의 말투로 작성하세요.")
+        # if has_prev and prev_summary:
+        #     user_prompt_lines.append(f"이 사용자는 이전에 '{prev_summary}' 타입으로 진단된 기록이 있습니다. 환영 인사에서 '이전 진단 내역'이라는 단어를 포함하여 이를 언급하고, 이전 결과를 참고해 어떤 도움을 줄 수 있는지 알려주세요. 인플루언서의 말투로 작성하세요.")
+        # else:
+            # user_prompt_lines.append("이 사용자는 이전 진단 기록이 없습니다. 자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 안내하고, 인플루언서의 말투로 작성하세요.")
+        user_prompt_lines.append("자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 안내하고, 인플루언서의 말투로 작성하세요. 처음이라는 언급은 하지 마세요.")
 
         user_prompt_lines.append("응답은 2~4개의 짧은 문단(또는 문장들)으로 요약해주고, 추가 지시나 메타 정보는 출력하지 마세요. 오직 환영 텍스트만 출력하세요.")
 
@@ -322,30 +326,24 @@ def generate_welcome(db: Session, current_user: models.User, influencer_id: str 
             ai_message = resp.choices[0].message.content.strip()
             message = ai_message
         except Exception as e:
-            # LLM failed — fall back to safe messages
+            # LLM failed — fall back to safe messages (이전 진단 내역 언급 제거)
             print(f"[welcome] LLM 호출 실패, 폴백 메시지 사용: {e}")
-            if has_prev and prev_summary:
-                if infl_name:
-                    message = f"안녕하세요, {user_nick}! 이전 진단은 \"{prev_summary}\" 타입입니다. {infl_name}님 스타일을 참고해 이전 결과를 바탕으로 도와드릴게요. 원하시면 바로 추천을 시작할게요."
-                else:
-                    message = f"안녕하세요, {user_nick}! 이전 진단은 \"{prev_summary}\" 타입입니다. 이전 결과를 참고해 도움을 드릴게요. 무엇을 먼저 도와드릴까요?"
-            else:
-                if infl_name:
-                    if infl_excerpt:
-                        message = (
-                            f"안녕하세요, {user_nick}! {infl_name}님 스타일로 퍼스널컬러를 도와드릴게요 — {infl_excerpt} 전문가입니다. "
-                            "먼저 몇 가지 질문 드릴게요: 평소 자주 입는 옷 색상은 무엇인가요? 피부톤은 밝은 편인가요, 어두운 편인가요? 평소 선호하는 메이크업 스타일은 어떤가요?"
-                        )
-                    else:
-                        message = (
-                            f"안녕하세요, {user_nick}! {infl_name}님 스타일로 퍼스널컬러 진단을 도와드릴게요. "
-                            "먼저 간단한 질문 몇 개만 드릴게요: 평소 자주 입는 색상은요? 피부톤은 밝은 편인가요, 어두운 편인가요? 메이크업이나 스타일 선호가 있으신가요?"
-                        )
+            if infl_name:
+                if infl_excerpt:
+                    message = (
+                        f"안녕하세요, {user_nick}! {infl_name}님 스타일로 퍼스널컬러를 도와드릴게요 — {infl_excerpt} 전문가입니다. "
+                        "먼저 몇 가지 질문 드릴게요: 평소 자주 입는 옷 색상은 무엇인가요? 피부톤은 밝은 편인가요, 어두운 편인가요? 평소 선호하는 메이크업 스타일은 어떤가요?"
+                    )
                 else:
                     message = (
-                        f"안녕하세요, {user_nick}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다. "
-                        "퍼스널컬러를 알아보려면 간단한 질문 몇 가지가 필요해요 — 평소 자주 입는 색상, 피부톤(밝음/어두움), 선호하는 메이크업 스타일을 알려주실래요?"
+                        f"안녕하세요, {user_nick}! {infl_name}님 스타일로 퍼스널컬러 진단을 도와드릴게요. "
+                        "먼저 간단한 질문 몇 개만 드릴게요: 평소 자주 입는 색상은요? 피부톤은 밝은 편인가요, 어두운 편인가요? 메이크업이나 스타일 선호가 있으신가요?"
                     )
+            else:
+                message = (
+                    f"안녕하세요, {user_nick}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다. "
+                    "퍼스널컬러를 알아보려면 간단한 질문 몇 가지가 필요해요 — 평소 자주 입는 색상, 피부톤(밝음/어두움), 선호하는 메이크업 스타일을 알려주실래요?"
+                )
     except Exception as e:
         print(f"[welcome] 메시지 생성 중 오류: {e}")
         message = f"안녕하세요, {user_nick}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다! 무엇을 도와드릴까요?"
@@ -974,546 +972,384 @@ async def _resolve_emotion_tag(emotion_res: dict, conversation_history: list | N
 
     return "neutral"
 
-@router.post("/analyze", response_model=ChatbotHistoryResponse)
+@router.post("/analyze")
 async def analyze(
     request: ChatbotRequest,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Debug: log incoming request and user for tracing 400 errors
-    try:
-        print(f"[analyze] incoming request: history_id={request.history_id}, question={request.question}")
-        print(f"[analyze] current_user.id={getattr(current_user,'id',None)}")
-    except Exception:
-        pass
-
-    # 신규 세션 생성 또는 기존 세션 이어받기
-    if not request.history_id:
-        chat_history = models.ChatHistory(user_id=current_user.id)
-        db.add(chat_history)
-        db.commit()
-        db.refresh(chat_history)
-    else:
-        chat_history = db.query(models.ChatHistory).filter_by(id=request.history_id, user_id=current_user.id).first()
-        if not chat_history:
-            raise HTTPException(status_code=404, detail="해당 history_id 세션 없음")
-        if chat_history.ended_at:
-            # Log ended session to help debugging
-            print(f"[analyze] requested history_id {request.history_id} is already ended at {chat_history.ended_at}")
-            raise HTTPException(status_code=400, detail="이미 종료된 세션입니다.")
-    user_msg = models.ChatMessage(history_id=chat_history.id, role="user", text=request.question)
-    db.add(user_msg)
-    db.commit()
-    db.refresh(user_msg)
-
-    # If the incoming request has an empty question, treat this call as a "welcome" request
-    # and return the same welcome message that `/welcome` provides so clients can use
-    # a single endpoint for both welcome + normal analyze flows.
-    if not request.question or (isinstance(request.question, str) and request.question.strip() == ""):
-        try:
-            # Reuse the existing welcome helper to build the message. Pass current db and user.
-            infl_id = chat_history.influencer_id or chat_history.influencer_name
-            welcome_resp = generate_welcome(db=db, current_user=current_user, influencer_id=infl_id)
-            welcome_text = (welcome_resp or {}).get('message') or '안녕하세요! 퍼스널컬러 AI입니다.'
-        except Exception as e:
-            print(f"[analyze] welcome generation failed: {e}")
-            welcome_text = '안녕하세요! 퍼스널컬러 AI입니다.'
-
-        # persist AI welcome message
-        ai_msg = models.ChatMessage(
-            history_id=chat_history.id,
-            role='ai',
-            text=welcome_text,
-            raw=json.dumps({'description': welcome_text}, ensure_ascii=False),
-        )
-        db.add(ai_msg)
-        db.commit()
-        db.refresh(ai_msg)
-
-        # build items response compatible with frontend ChatbotHistoryResponse
-        item = {
-            'question_id': 0,
-            'question': '',
-            'answer': welcome_text,
-            'chat_res': {
-                'primary_tone': '',
-                'sub_tone': '',
-                'description': welcome_text,
-                'recommendations': [],
-                'emotion': 'neutral',
-            }
-        }
-        # ensure top-level `emotion` exists to satisfy ChatItemModel response validation
-        item['emotion'] = item['chat_res'].get('emotion', 'neutral')
-        return {'history_id': chat_history.id, 'items': [item]}
-    # 이전 대화 히스토리에서 사용자 정보 수집
-    prev_messages = db.query(models.ChatMessage).filter_by(history_id=chat_history.id).order_by(models.ChatMessage.id.asc()).all()
-    # 닉네임 사용: current_user.nickname이 있으면, 없으면 '사용자'
-    user_display_name = getattr(current_user, "nickname", None)
-    if not user_display_name:
-        user_display_name = "사용자"
-    # 최근 메시지는 later used to build `convo_list`; no separate summary needed here.
+    """
+    스트리밍 방식으로 챗봇 응답을 전송하는 엔드포인트
+    Server-Sent Events (SSE) 형식으로 실시간 응답 전송
+    """
     
-    # Use the local orchestrator service to run color+emotion -> influencer chain
-    if not orchestrator_service:
-        raise HTTPException(status_code=500, detail="Orchestrator service not available in this runtime")
-
-    # Build a structured conversation history for the orchestrator
-    convo_list = []
-    for msg in prev_messages:
+    async def event_generator():
         try:
-            if msg.role == 'user':
-                convo_list.append({"role": "user", "text": msg.text})
-            else:
-                # ai messages may contain JSON with a description field
-                try:
-                    ai_data = json.loads(msg.text)
-                    convo_list.append({"role": "ai", "text": ai_data.get("description", msg.text)})
-                except Exception:
-                    convo_list.append({"role": "ai", "text": msg.text})
-        except Exception:
-            continue
-
-    try:
-        # include any persona stored on the chat history so the orchestrator and influencer chain
-        # can adapt responses to the selected persona
-        persona_name = getattr(chat_history, 'influencer_name', None)
-        orch_payload = orchestrator_service.OrchestratorRequest(
-            user_text=request.question,
-            conversation_history=convo_list,
-            user_nickname=getattr(current_user, 'nickname', None),
-            personal_color=None,
-            use_color=True,
-            use_emotion=True,
-        )
-        # attach influencer persona if available (some orchestrator implementations accept this)
-        if persona_name and hasattr(orch_payload, 'dict'):
-            # safest approach: set attribute when present
+            # Debug: log incoming request and user for tracing 400 errors
             try:
-                setattr(orch_payload, 'influencer_name', persona_name)
-            except Exception:
-                pass
-        orch_resp = await orchestrator_service.analyze(orch_payload)
-
-        # Debug: print orchestrator full response for troubleshooting
-        try:
-            orch_serializable = None
-            if hasattr(orch_resp, 'dict'):
-                try:
-                    orch_serializable = orch_resp.dict()
-                except Exception:
-                    # some pydantic models may require .dict(exclude_none=True)
-                    try:
-                        orch_serializable = orch_resp.dict(exclude_none=True)
-                    except Exception:
-                        orch_serializable = None
-            elif isinstance(orch_resp, dict):
-                orch_serializable = orch_resp
-
-            if orch_serializable is not None:
-                try:
-                    print("[analyze] orch_resp:", json.dumps(orch_serializable, ensure_ascii=False)[:4000])
-                except Exception:
-                    print("[analyze] orch_resp (repr):", repr(orch_serializable)[:4000])
-            else:
-                print("[analyze] orch_resp (raw):", repr(orch_resp)[:4000])
-        except Exception as e:
-            print(f"[analyze] orch_resp logging failed: {e}")
-    except Exception as e:
-        print(f"❌ Orchestrator error: {e}")
-        raise HTTPException(status_code=500, detail=f"Orchestrator failed: {str(e)}")
-    # Extract results (orchestrator now returns namespaced structures)
-    raw_emotion = orch_resp.emotion if getattr(orch_resp, 'emotion', None) is not None else (orch_resp.get('emotion') if isinstance(orch_resp, dict) else {})
-    raw_color = orch_resp.color if getattr(orch_resp, 'color', None) is not None else (orch_resp.get('color') if isinstance(orch_resp, dict) else {})
-
-    # unwrap parsed parts if present
-    def _unwrap(parsed_like):
-        if isinstance(parsed_like, dict) and parsed_like.get("parsed") is not None:
-            return parsed_like.get("parsed"), parsed_like
-        return (parsed_like if isinstance(parsed_like, dict) else {}, parsed_like)
-
-    emotion_res, emotion_wrapped = _unwrap(raw_emotion)
-    color_res, color_wrapped = _unwrap(raw_color)
-
-    # Prefer influencer-styled text when available; it may be wrapped as well
-    influencer_info = None
-    if isinstance(raw_emotion, dict):
-        # Check for direct styled_text first (as per orchestrator/main.py update)
-        if raw_emotion.get("styled_text"):
-             influencer_info = {"styled_text": raw_emotion.get("styled_text")}
-        else:
-            inf = raw_emotion.get("influencer_styled") or raw_emotion.get("influencer")
-            if isinstance(inf, dict) and inf.get("parsed") is not None:
-                influencer_info = inf.get("parsed")
-            else:
-                influencer_info = inf
-
-    # Defensive fixes: if influencer_info contains an error object, ignore it
-    try:
-        if isinstance(influencer_info, dict) and influencer_info.get('error'):
-            influencer_info = None
-    except Exception:
-        influencer_info = influencer_info
-
-    try:
-        # if not found, check wrapped/raw payloads (various shapes)
-        if isinstance(emotion_wrapped, dict):
-            # common nested locations
-            candidates = [emotion_wrapped.get('raw_model_output'), emotion_wrapped.get('raw'), emotion_wrapped.get('parsed')]
-            for cand in candidates:
-                try:
-                    if isinstance(cand, dict):
-                        mo = cand.get('model_output') or cand
-                except Exception:
-                    continue
-
-        # also check orch_resp top-level dict forms if available
-        if isinstance(orch_resp, dict):
-            try:
-                er = orch_resp.get('emotion') or {}
-                if isinstance(er, dict):
-                    rm = er.get('raw_model_output') or er.get('raw') or er.get('parsed')
-                    if isinstance(rm, dict):
-                        mo = rm.get('model_output') or rm
+                print(f"[analyze] incoming request: history_id={request.history_id}, question={request.question}")
+                print(f"[analyze] current_user.id={getattr(current_user,'id',None)}")
             except Exception:
                 pass
 
-    except Exception:
-        pass
-
-    # If influencer_info is missing or invalid, try a safe fallback: generate a short
-    # influencer-styled message using the available color/emotion outputs via OpenAI.
-    # This ensures the response follows the desired chain: color -> emotion -> influencer.
-    try:
-        if not influencer_info:
-            # build a compact prompt summarizing color + emotion outputs
-            try:
-                color_summary = ''
-                if isinstance(color_res, dict):
-                    hints = color_res.get('detected_color_hints') or color_res.get('detected_color_hints') or {}
-                    if isinstance(hints, dict):
-                        color_summary = hints.get('result_name') or hints.get('reason') or ''
-                        
-                        # Check for suppression flag
-                        suppress = False
-                        if isinstance(emotion_res, dict):
-                             meta = emotion_res.get('_meta') or emotion_res.get('meta')
-                             if isinstance(meta, dict) and meta.get('suppress_type_mention'):
-                                 suppress = True
-                        
-                        if suppress:
-                             # Mask the explicit name in the fallback prompt
-                             color_summary = "이미지에서 감지된 퍼스널 컬러 특징 (구체적 타입 언급 금지)"
-
-                emotion_summary = ''
-                if isinstance(emotion_res, dict):
-                    emotion_summary = emotion_res.get('description') or emotion_res.get('primary_tone') or ''
-
-                system_msg = (
-                    "당신은 한국어로 자연스럽고 친근한 인플루언서 말투를 모방하는 퍼스널컬러 전문가입니다. "
-                    "사용자에게 바로 보여줄 수 있는 2~3문장 분량의 응답을 생성하세요. "
-                    "감정적인 공감은 짧게 하고, 뷰티/퍼스널컬러 조언 위주로 답변하세요."
-                    " [주의] '봄 웜톤', '여름 쿨톤', '봄 라이트', '겨울 다크', '봄 웜', '여름 쿨' 등 구체적인 퍼스널컬러 진단명이나 타입 이름은 절대 직접적으로 언급하지 마세요. "
-                    "대신 '따뜻한 분위기', '시원한 느낌', '화사한 톤' 등 분위기나 느낌으로 돌려서 표현하세요."
-                )
-
-                user_msg = (
-                    f"사용자 상황: {emotion_summary}\n퍼스널 컬러 힌트: {color_summary}\n"
-                    "위 정보를 바탕으로 친근하고 전문적인 말투로 간단한 응답을 만들어주세요. 감정적 위로는 1문장으로 제한하세요."
-                )
-
-                resp = client.chat.completions.create(
-                    model=get_model_to_use(),
-                    messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}],
-                    max_tokens=200,
-                    temperature=0.7,
-                )
-                styled = ''
-                try:
-                    styled = resp.choices[0].message.content.strip()
-                except Exception:
-                    styled = str(resp)[:500]
-                if styled:
-                    influencer_info = {"styled_text": styled, "generated_by": "fallback_openai"}
-            except Exception as e:
-                # if OpenAI fallback fails, keep influencer_info as None
-                print(f"[analyze] influencer fallback generation failed: {e}")
-    except Exception:
-        pass
-
-    # Compose the data payload to store and return (keep structure compatible with frontend)
-    data = {}
-    # primary/sub tones: prefer personal-color hints from color service, fallback to emotion
-    primary = None
-    sub = None
-    if isinstance(color_res, dict):
-        detected = color_res.get("detected_color_hints") or {}
-        primary = detected.get("primary_tone")
-        sub = detected.get("sub_tone")
-    if not primary and isinstance(emotion_res, dict):
-        primary = emotion_res.get("primary_tone")
-    if not sub and isinstance(emotion_res, dict):
-        sub = emotion_res.get("sub_tone")
-
-    # Normalize arbitrary model/free-text tones to canonical values
-    try:
-        norm_primary, norm_sub = normalize_personal_color(primary, sub)
-        primary = norm_primary
-        sub = norm_sub
-    except Exception:
-        # if normalization fails for any reason, fall back to raw values
-        pass
-
-    data["primary_tone"] = primary or ""
-    data["sub_tone"] = sub or ""
-
-    # Extract references from color_res (RAG metadata)
-    references = []
-    if isinstance(color_res, dict):
-        hints = color_res.get("detected_color_hints", {})
-        rag_meta = hints.get("rag_metadata", {})
-        sources = rag_meta.get("sources", [])
-        if sources:
-            for src in sources:
-                # Assuming src is a string (filename) or dict
-                if isinstance(src, dict):
-                    ref_text = src.get("source", "")
-                    if ref_text:
-                        references.append(ref_text)
-                elif isinstance(src, str):
-                    references.append(src)
-    
-    data["references"] = references
-
-    # description: influencer styled text (string) > influencer fields > emotion.description > color.description
-    desc = None
-    try:
-        # influencer_info might be a string (already-styled text) or a dict with fields
-        if isinstance(influencer_info, str) and influencer_info.strip():
-            desc = influencer_info
-        elif isinstance(influencer_info, dict):
-            # prefer explicit styled_text, then description, then model_output.description
-            desc = influencer_info.get('styled_text') or influencer_info.get('description')
-            if not desc:
-                mo = influencer_info.get('model_output') or influencer_info.get('raw') or None
-                if isinstance(mo, dict):
-                    desc = mo.get('description') or mo.get('styled_text')
-    except Exception:
-        desc = None
-
-    if not desc:
-        desc = (emotion_res.get("description") if isinstance(emotion_res, dict) else None) or (color_res.get("description") if isinstance(color_res, dict) else None)
-    
-    # Ensure desc is not a JSON string (fix for double-encoded JSON)
-    if isinstance(desc, str):
-        desc_stripped = desc.strip()
-        if desc_stripped.startswith('{') and desc_stripped.endswith('}'):
-            try:
-                parsed = json.loads(desc_stripped)
-                if isinstance(parsed, dict):
-                    desc = parsed.get('styled_text') or parsed.get('description') or desc
-            except Exception:
-                pass
-
-    data["description"] = desc or "안녕하세요! 퍼스널컬러 전문가입니다. 어떤 부분이 고민이신가요?"
-
-
-
-    # recommendations: merge lists from emotion, color, and influencer (if any)
-    recs = []
-    if isinstance(emotion_res, dict):
-        recs.extend(emotion_res.get("recommendations", []) or [])
-    if isinstance(color_res, dict):
-        recs.extend(color_res.get("recommendations", []) or [])
-    # influencer may include explicit recommendations
-    if influencer_info and isinstance(influencer_info, dict):
-        if influencer_info.get("recommendations"):
-            recs.extend(influencer_info.get("recommendations"))
-
-    # flatten and dedupe
-    flat = []
-    for item in recs:
-        if isinstance(item, list):
-            for subit in item:
-                if isinstance(subit, str) and subit not in flat:
-                    flat.append(subit)
-        elif isinstance(item, str):
-            if item not in flat:
-                flat.append(item)
-    if not flat:
-        flat = ["더 자세한 정보를 위해 피부톤이나 선호 색을 알려주세요."]
-    data["recommendations"] = flat
-
-    # attach influencer metadata for frontend
-    if influencer_info:
-        data["influencer"] = influencer_info
-
-    # Resolve emotion tag (orchestrator -> api_emotion -> local detector)
-    # Fast pre-check: if the user's message or recent convo contains strong anger/fear cues,
-    # short-circuit and use that label before calling external services.
-
-    # Skip pre-check if the input looks like a JSON payload (system injection)
-    is_json_payload = False
-    if request.question and isinstance(request.question, str):
-        stripped = request.question.strip()
-        if stripped.startswith('{') and stripped.endswith('}'):
-            is_json_payload = True
-
-    convo_text = "\n".join([c.get("text", "") for c in convo_list]) if convo_list else ""
-    
-    precheck_label = ""
-    if not is_json_payload:
-        precheck_label = _precheck_strong_anger_fear(request.question, convo_text)
-
-    if precheck_label:
-        user_emotion = precheck_label
-    else:
-        # If this analyze call appears to be a welcome / image-upload prompt,
-        # or the orchestrator explicitly marked it as a welcome, skip emotion
-        # resolution and default to neutral to avoid UX confusion.
-        try:
-            # detect welcome flag coming from orchestrator (various shapes)
-            is_welcome_meta = False
-            try:
-                meta = None
-                if isinstance(orch_resp, dict):
-                    meta = orch_resp.get('_meta') or orch_resp.get('meta')
-                elif hasattr(orch_resp, 'dict'):
-                    try:
-                        orch_dict = orch_resp.dict()
-                        meta = orch_dict.get('_meta') or orch_dict.get('meta')
-                    except Exception:
-                        meta = getattr(orch_resp, 'meta', None)
-                if isinstance(meta, dict) and meta.get('is_welcome'):
-                    is_welcome_meta = True
-            except Exception:
-                is_welcome_meta = False
-
-            qtxt = request.question or ''
-            if is_welcome_meta or (isinstance(qtxt, str) and re.search(r"이미지|업로드|환영|환영합니다|환영해", qtxt)):
-                print('[analyze] welcome-like detected (meta or question); forcing emotion=neutral')
-                user_emotion = 'neutral'
+            # 신규 세션 생성 또는 기존 세션 이어받기
+            if not request.history_id:
+                chat_history = models.ChatHistory(user_id=current_user.id)
+                db.add(chat_history)
+                db.commit()
+                db.refresh(chat_history)
             else:
-                user_emotion = await _resolve_emotion_tag(emotion_res, convo_list, request.question)
-        except Exception:
-            user_emotion = await _resolve_emotion_tag(emotion_res, convo_list, request.question)
-    # canonicalize and attach emotion + lottie filename for frontend
-    user_emotion = to_canonical(user_emotion)
-    data["emotion"] = user_emotion
-    # provide the frontend with the exact lottie filename it should load
-    data["emotion_lottie"] = lottie_filename(user_emotion)
-    # Store a human-readable message in the `text` field so the frontend
-    # doesn't render a raw JSON blob. Prefer the `description` (influencer-styled
-    # text) when available; fall back to the full JSON payload string.
-    human_text = data.get("description") or json.dumps(data, ensure_ascii=False)
-    # Store both human-friendly text and the structured payload as `raw`.
-    ai_msg = models.ChatMessage(
-        history_id=chat_history.id,
-        role="ai",
-        text=human_text,
-        raw=json.dumps({
-            "primary_tone": data.get("primary_tone"),
-            "sub_tone": data.get("sub_tone"),
-            "description": data.get("description"),
-            "recommendations": data.get("recommendations"),
-            "influencer": data.get("influencer"),
-            "emotion": data.get("emotion"),
-            "emotion_lottie": data.get("emotion_lottie"),
-            "references": data.get("references"),
-        }, ensure_ascii=False),
-    )
-    db.add(ai_msg)
-    db.commit()
-    db.refresh(ai_msg)
+                chat_history = db.query(models.ChatHistory).filter_by(id=request.history_id, user_id=current_user.id).first()
+                if not chat_history:
+                    yield f"data: {json.dumps({'type': 'error', 'error': '해당 history_id 세션 없음'}, ensure_ascii=False)}\n\n"
+                    return
+                if chat_history.ended_at:
+                    print(f"[analyze] requested history_id {request.history_id} is already ended at {chat_history.ended_at}")
+                    yield f"data: {json.dumps({'type': 'error', 'error': '이미 종료된 세션입니다.'}, ensure_ascii=False)}\n\n"
+                    return
+            
+            # history_id 먼저 전송
+            yield f"data: {json.dumps({'type': 'history_id', 'history_id': chat_history.id}, ensure_ascii=False)}\n\n"
+            
+            user_msg = models.ChatMessage(history_id=chat_history.id, role="user", text=request.question)
+            db.add(user_msg)
+            db.commit()
+            db.refresh(user_msg)
 
-    # AI 답변 저장 후, AI 피드백 자동 평가 실행 (채팅 종료 전에도 평가 가능하도록 예외 무시)
-    try:
-        generate_ai_feedbacks(history_id=chat_history.id, current_user=current_user, db=db)
-    except Exception as e:
-        # 예: 채팅 종료 전에는 평가 불가 등의 예외 발생 가능, 무시하고 진행
-        pass
-    msgs = db.query(models.ChatMessage).filter_by(history_id=chat_history.id).order_by(models.ChatMessage.id.asc()).all()
-    items = []
-    qid = 1
-    i = 0
-    # Robust pairing: for each user message, find the next AI message (if any)
-    while i < len(msgs):
-        try:
-            if msgs[i].role == 'user':
-                # find next ai message
-                j = i + 1
-                while j < len(msgs) and msgs[j].role != 'ai':
-                    j += 1
-                if j < len(msgs) and msgs[j].role == 'ai':
-                    ai_msg = msgs[j]
-                    raw_blob = getattr(ai_msg, 'raw', None) or (ai_msg.text or "")
-                    d = None
-                    try:
-                        if isinstance(raw_blob, str):
-                            d = json.loads(raw_blob)
-                        elif isinstance(raw_blob, dict):
-                            d = raw_blob
-                        else:
-                            d = {"description": str(raw_blob)}
-                    except Exception:
-                        try:
-                            text_blob = ai_msg.text or ""
-                            d = json.loads(text_blob)
-                        except Exception:
-                            d = {"description": ai_msg.text or ""}
+            # If the incoming request has an empty question, treat this call as a "welcome" request
+            if not request.question or (isinstance(request.question, str) and request.question.strip() == ""):
+                try:
+                    infl_id = chat_history.influencer_id or chat_history.influencer_name
+                    welcome_resp = generate_welcome(db=db, current_user=current_user, influencer_id=infl_id)
+                    welcome_text = (welcome_resp or {}).get('message') or '안녕하세요! 퍼스널컬러 AI입니다.'
+                except Exception as e:
+                    print(f"[analyze] welcome generation failed: {e}")
+                    welcome_text = '안녕하세요! 퍼스널컬러 AI입니다.'
 
-                    # normalize nested description/json
-                    if isinstance(d.get("description"), str):
-                        desc_text = d.get("description", "").strip()
-                        if desc_text.startswith("{") or desc_text.startswith("["):
-                            try:
-                                parsed_desc = json.loads(desc_text)
-                                if isinstance(parsed_desc, dict):
-                                    # Extract styled_text if present and use as description
-                                    if parsed_desc.get('styled_text'):
-                                        d['description'] = parsed_desc.get('styled_text')
+                # persist AI welcome message
+                ai_msg = models.ChatMessage(
+                    history_id=chat_history.id,
+                    role='ai',
+                    text=welcome_text,
+                    raw=json.dumps({'description': welcome_text}, ensure_ascii=False),
+                )
+                db.add(ai_msg)
+                db.commit()
 
-                                    for k, v in parsed_desc.items():
-                                        if k not in d or k == 'description':
-                                            d[k] = v
-                            except Exception:
-                                pass
+                # 한 글자씩 스트리밍
+                for char in welcome_text:
+                    yield f"data: {json.dumps({'type': 'content', 'content': char}, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0.02)
 
-                    recommendations = d.get("recommendations", [])
-                    if isinstance(recommendations, dict):
-                        recommendations = list(recommendations.values())
-                    elif isinstance(recommendations, list):
-                        flattened_recommendations = []
-                        for item in recommendations:
-                            if isinstance(item, list):
-                                flattened_recommendations.extend(item)
-                            elif isinstance(item, str):
-                                flattened_recommendations.append(item)
-                        recommendations = flattened_recommendations
+                # 완료 메타데이터 전송
+                yield f"data: {json.dumps({'type': 'metadata', 'emotion': 'neutral', 'primary_tone': '', 'sub_tone': '', 'recommendations': []}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                return
+            # 이전 대화 히스토리에서 사용자 정보 수집
+            prev_messages = db.query(models.ChatMessage).filter_by(history_id=chat_history.id).order_by(models.ChatMessage.id.asc()).all()
+            user_display_name = getattr(current_user, "nickname", None) or "사용자"
+            
+            # Use the local orchestrator service to run color+emotion -> influencer chain
+            if not orchestrator_service:
+                yield f"data: {json.dumps({'type': 'error', 'error': 'Orchestrator service not available'}, ensure_ascii=False)}\n\n"
+                return
+
+            # Build a structured conversation history for the orchestrator
+            convo_list = []
+            for msg in prev_messages:
+                try:
+                    if msg.role == 'user':
+                        convo_list.append({"role": "user", "text": msg.text})
                     else:
-                        recommendations = []
-                    d["recommendations"] = recommendations
-                    d.setdefault('primary_tone', '')
-                    d.setdefault('sub_tone', '')
-                    d.setdefault('emotion', d.get('emotion', 'neutral') or 'neutral')
-                    d.setdefault('description', d.get('description') or '')
-                    d.setdefault('references', [])
-
-                    items.append(ChatItemModel(
-                        question_id=qid,
-                        question=msgs[i].text,
-                        answer=d.get("description",""),
-                        chat_res=ChatResModel.model_validate(d),
-                        emotion=d.get("emotion", "neutral")
-                    ))
-                    qid += 1
-                    # advance i to after this ai message
-                    i = j + 1
+                        try:
+                            ai_data = json.loads(msg.text)
+                            convo_list.append({"role": "ai", "text": ai_data.get("description", msg.text)})
+                        except Exception:
+                            convo_list.append({"role": "ai", "text": msg.text})
+                except Exception:
                     continue
-            i += 1
-        except Exception:
-            i += 1
-    return {"history_id": chat_history.id, "items": items}
+
+            try:
+                persona_name = getattr(chat_history, 'influencer_name', None)
+                print(f"🤖 [CHATBOT] Orchestrator 호출 시작...")
+                print(f"   - question: {request.question[:100] if isinstance(request.question, str) else str(request.question)[:100]}...")
+                print(f"   - conversation_history: {len(convo_list)} messages")
+                print(f"   - use_color: True, use_emotion: True")
+                
+                orch_payload = orchestrator_service.OrchestratorRequest(
+                    user_text=request.question,
+                    conversation_history=convo_list,
+                    user_nickname=getattr(current_user, 'nickname', None),
+                    personal_color=None,
+                    use_color=True,
+                    use_emotion=True,
+                )
+                if persona_name and hasattr(orch_payload, 'dict'):
+                    try:
+                        setattr(orch_payload, 'influencer_name', persona_name)
+                    except Exception:
+                        pass
+                orch_resp = await orchestrator_service.analyze(orch_payload)
+                print(f"✅ [CHATBOT] Orchestrator 응답 받음")
+
+            except Exception as e:
+                print(f"❌ Orchestrator error: {e}")
+                import traceback
+                traceback.print_exc()
+                yield f"data: {json.dumps({'type': 'error', 'error': f'Orchestrator failed: {str(e)}'}, ensure_ascii=False)}\n\n"
+                return
+
+            # 결과 파싱
+            raw_emotion = orch_resp.emotion if getattr(orch_resp, 'emotion', None) is not None else {}
+            raw_color = orch_resp.color if getattr(orch_resp, 'color', None) is not None else {}
+
+            def _unwrap(parsed_like):
+                if isinstance(parsed_like, dict) and parsed_like.get("parsed") is not None:
+                    return parsed_like.get("parsed"), parsed_like
+                return (parsed_like if isinstance(parsed_like, dict) else {}, parsed_like)
+
+            emotion_res, emotion_wrapped = _unwrap(raw_emotion)
+            color_res, color_wrapped = _unwrap(raw_color)
+
+            # 인플루언서 스타일 텍스트 추출
+            influencer_info = None
+            if isinstance(raw_emotion, dict):
+                if raw_emotion.get("styled_text"):
+                    influencer_info = {"styled_text": raw_emotion.get("styled_text")}
+                else:
+                    inf = raw_emotion.get("influencer_styled") or raw_emotion.get("influencer")
+                    if isinstance(inf, dict) and inf.get("parsed") is not None:
+                        influencer_info = inf.get("parsed")
+                    else:
+                        influencer_info = inf
+
+            # Defensive: ignore error objects
+            try:
+                if isinstance(influencer_info, dict) and influencer_info.get('error'):
+                    influencer_info = None
+            except Exception:
+                pass
+
+            # OpenAI fallback with streaming
+            if not influencer_info or not influencer_info.get("styled_text"):
+                try:
+                    color_summary = ''
+                    if isinstance(color_res, dict):
+                        hints = color_res.get('detected_color_hints') or {}
+                        if isinstance(hints, dict):
+                            color_summary = hints.get('result_name') or hints.get('reason') or ''
+                            
+                            suppress = False
+                            if isinstance(emotion_res, dict):
+                                meta = emotion_res.get('_meta') or emotion_res.get('meta')
+                                if isinstance(meta, dict) and meta.get('suppress_type_mention'):
+                                    suppress = True
+                            
+                            if suppress:
+                                color_summary = "이미지에서 감지된 퍼스널 컬러 특징 (구체적 타입 언급 금지)"
+
+                    emotion_summary = ''
+                    if isinstance(emotion_res, dict):
+                        emotion_summary = emotion_res.get('description') or emotion_res.get('primary_tone') or ''
+
+                    system_msg = (
+                        "당신은 한국어로 자연스럽고 친근한 인플루언서 말투를 모방하는 퍼스널컬러 전문가입니다. "
+                        "사용자에게 바로 보여줄 수 있는 2~3문장 분량의 응답을 생성하세요. "
+                        "감정적인 공감은 짧게 하고, 뷰티/퍼스널컬러 조언 위주로 답변하세요."
+                        " [주의] '봄 웜톤', '여름 쿨톤', '봄 라이트', '겨울 다크', '봄 웜', '여름 쿨' 등 구체적인 퍼스널컬러 진단명이나 타입 이름은 절대 직접적으로 언급하지 마세요. "
+                        "대신 '따뜻한 분위기', '시원한 느낌', '화사한 톤' 등 분위기나 느낌으로 돌려서 표현하세요."
+                        f" [중요] 사용자의 닉네임은 '{user_display_name}'입니다. 반드시 '{user_display_name}님' 형태로 친근하게 호칭하세요."
+                    )
+
+                    user_msg_content = (
+                        f"사용자 닉네임: {user_display_name}\n"
+                        f"사용자 상황: {emotion_summary}\n퍼스널 컬러 힌트: {color_summary}\n"
+                        f"위 정보를 바탕으로 {user_display_name}님께 친근하고 전문적인 말투로 간단한 응답을 만들어주세요. 감정적 위로는 1문장으로 제한하세요."
+                    )
+
+                    response = client.chat.completions.create(
+                        model=get_model_to_use(),
+                        messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg_content}],
+                        max_tokens=200,
+                        temperature=0.7,
+                        stream=True
+                    )
+                    
+                    full_text = ""
+                    # ✅ content 먼저 스트리밍 (메타데이터 없이!)
+                    for chunk in response:
+                        if chunk.choices[0].delta.content:
+                            content = chunk.choices[0].delta.content
+                            full_text += content
+                            print(f"[STREAM] Sending chunk: {repr(content)}")
+                            yield f"data: {json.dumps({'type': 'content', 'content': content}, ensure_ascii=False)}\n\n"
+                            await asyncio.sleep(0.01)  # 명시적 flush 대기
+                    
+                    influencer_info = {"styled_text": full_text, "generated_by": "fallback_openai_stream"}
+                    
+                except Exception as e:
+                    print(f"[analyze] influencer fallback streaming failed: {e}")
+                    fallback_text = "죄송합니다. 일시적인 오류가 발생했습니다."
+                    yield f"data: {json.dumps({'type': 'content', 'content': fallback_text}, ensure_ascii=False)}\n\n"
+                    influencer_info = {"styled_text": fallback_text}
+            else:
+                # 기존 텍스트를 한 글자씩 스트리밍 (메타데이터 없이!)
+                text = influencer_info.get("styled_text", "")
+                print(f"[STREAM] Sending char-by-char: {len(text)} chars")
+                for i, char in enumerate(text):
+                    yield f"data: {json.dumps({'type': 'content', 'content': char}, ensure_ascii=False)}\n\n"
+                    if i % 5 == 0:  # 5글자마다 로그
+                        print(f"[STREAM] Sent char {i}/{len(text)}")
+                    await asyncio.sleep(0.02)
+
+            # ========================================
+            # ✅ content 스트리밍 완료 후 메타데이터 준비
+            # ========================================
+            
+            # 메타데이터 조합
+            primary = None
+            sub = None
+            if isinstance(color_res, dict):
+                detected = color_res.get("detected_color_hints") or {}
+                primary = detected.get("primary_tone")
+                sub = detected.get("sub_tone")
+            if not primary and isinstance(emotion_res, dict):
+                primary = emotion_res.get("primary_tone")
+            if not sub and isinstance(emotion_res, dict):
+                sub = emotion_res.get("sub_tone")
+
+            # Normalize tones
+            try:
+                norm_primary, norm_sub = normalize_personal_color(primary, sub)
+                primary = norm_primary
+                sub = norm_sub
+            except Exception:
+                pass
+
+            # Extract references
+            references = []
+            if isinstance(color_res, dict):
+                hints = color_res.get("detected_color_hints", {})
+                rag_meta = hints.get("rag_metadata", {})
+                sources = rag_meta.get("sources", [])
+                if sources:
+                    for src in sources:
+                        if isinstance(src, dict):
+                            ref_text = src.get("source", "")
+                            if ref_text:
+                                references.append(ref_text)
+                        elif isinstance(src, str):
+                            references.append(src)
+
+            # Extract recommendations
+            recs = []
+            if isinstance(emotion_res, dict):
+                recs.extend(emotion_res.get("recommendations", []) or [])
+            if isinstance(color_res, dict):
+                recs.extend(color_res.get("recommendations", []) or [])
+            if influencer_info and isinstance(influencer_info, dict):
+                if influencer_info.get("recommendations"):
+                    recs.extend(influencer_info.get("recommendations"))
+
+            # Flatten and dedupe recommendations
+            flat = []
+            for item in recs:
+                if isinstance(item, list):
+                    for subit in item:
+                        if isinstance(subit, str) and subit not in flat:
+                            flat.append(subit)
+                elif isinstance(item, str):
+                    if item not in flat:
+                        flat.append(item)
+            if not flat:
+                flat = ["더 자세한 정보를 위해 피부톤이나 선호 색을 알려주세요."]
+
+            # Resolve emotion tag
+            user_emotion = "neutral"
+            try:
+                is_json_payload = False
+                if request.question and isinstance(request.question, str):
+                    stripped = request.question.strip()
+                    if stripped.startswith('{') and stripped.endswith('}'):
+                        is_json_payload = True
+
+                convo_text = "\n".join([c.get("text", "") for c in convo_list]) if convo_list else ""
+                
+                precheck_label = ""
+                if not is_json_payload:
+                    precheck_label = _precheck_strong_anger_fear(request.question, convo_text)
+
+                if precheck_label:
+                    user_emotion = precheck_label
+                else:
+                    user_emotion = await _resolve_emotion_tag(emotion_res, convo_list, request.question)
+            except Exception:
+                user_emotion = "neutral"
+
+            user_emotion = to_canonical(user_emotion)
+            emotion_lottie = lottie_filename(user_emotion)
+
+            # ========================================
+            # ✅ 메타데이터 이벤트 전송 (content 스트리밍 완료 후!)
+            # ========================================
+            metadata = {
+                'type': 'metadata',
+                'emotion': user_emotion,
+                'emotion_lottie': emotion_lottie,
+                'primary_tone': primary or "",
+                'sub_tone': sub or "",
+                'recommendations': flat,
+                'references': references
+            }
+            print(f"[STREAM] Sending metadata after content completed")
+            yield f"data: {json.dumps(metadata, ensure_ascii=False)}\n\n"
+
+            # AI 메시지 DB 저장
+            final_text = influencer_info.get("styled_text", "") if influencer_info else ""
+            chat_res_dict = {
+                "primary_tone": primary or "",
+                "sub_tone": sub or "",
+                "description": final_text,
+                "recommendations": flat,
+                "emotion": user_emotion,
+                "emotion_lottie": emotion_lottie,
+                "references": references,
+                "influencer": influencer_info,
+            }
+            
+            ai_msg = models.ChatMessage(
+                history_id=chat_history.id,
+                role='ai',
+                text=final_text,
+                raw=json.dumps(chat_res_dict, ensure_ascii=False),
+            )
+            db.add(ai_msg)
+            db.commit()
+
+            # AI 피드백 자동 평가
+            try:
+                generate_ai_feedbacks(history_id=chat_history.id, current_user=current_user, db=db)
+            except Exception:
+                pass
+
+            # ========================================
+            # ✅ 완료 신호 (모든 스트리밍 완료)
+            # ========================================
+            print(f"[STREAM] Sending done signal")
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            print(f"Stream error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 @router.post("/start")
@@ -1533,58 +1369,66 @@ def start_chat_session(
     # creating duplicate open sessions. Locking the user row is lightweight and
     # avoids requiring DB schema changes (partial unique indexes) here.
     try:
-        # optional influencer_name from request body
+        # optional influencer_id and influencer_name from request body
+        influencer_id = None
         influencer_name = None
         try:
             if payload and isinstance(payload, dict):
-                influencer_name = payload.get('influencer_name') or payload.get('influencer')
+                influencer_id = payload.get('influencer_id') or payload.get('influencer')
+                influencer_name = payload.get('influencer_name')
+                # Fallback: if only one is provided, use it for both
+                if influencer_id and not influencer_name:
+                    influencer_name = influencer_id
+                elif influencer_name and not influencer_id:
+                    influencer_id = influencer_name
         except Exception:
+            influencer_id = None
             influencer_name = None
 
         # Lock the user row for this transaction
         db.query(models.User).filter(models.User.id == current_user.id).with_for_update().first()
 
         # Now check again for an existing open session while holding the lock
-        # If an influencer_name was requested, prefer reusing an open session for that influencer
+        # If an influencer was requested, ONLY reuse an open session for that specific influencer
         existing = None
-        if influencer_name:
+        if influencer_id or influencer_name:
             try:
                 existing = db.query(models.ChatHistory).filter(
                     models.ChatHistory.user_id == current_user.id,
                     models.ChatHistory.ended_at == None,
-                    models.ChatHistory.influencer_name == influencer_name,
+                ).filter(
+                    (models.ChatHistory.influencer_id == influencer_id) |
+                    (models.ChatHistory.influencer_name == influencer_name)
+                ).order_by(models.ChatHistory.created_at.desc()).first()
+            except Exception:
+                existing = None
+        else:
+            # Only use fallback (any open session) when NO influencer is specified
+            try:
+                existing = db.query(models.ChatHistory).filter(
+                    models.ChatHistory.user_id == current_user.id,
+                    models.ChatHistory.ended_at == None,
                 ).order_by(models.ChatHistory.created_at.desc()).first()
             except Exception:
                 existing = None
 
-        # fallback: any existing open session
-        if not existing:
-            existing = db.query(models.ChatHistory).filter(
-                models.ChatHistory.user_id == current_user.id,
-                models.ChatHistory.ended_at == None,
-            ).order_by(models.ChatHistory.created_at.desc()).first()
-
         if existing:
             user_turns = db.query(models.ChatMessage).filter_by(history_id=existing.id, role='user').count()
-            print(f"🔁 기존 열린 세션 재사용: user_id={current_user.id}, history_id={existing.id}, user_turns={user_turns}")
+            print(f"🔁 기존 열린 세션 재사용: user_id={current_user.id}, history_id={existing.id}, influencer_id={existing.influencer_id}, user_turns={user_turns}")
             return {"history_id": existing.id, "reused": True, "user_turns": user_turns}
 
         # No existing open session found while holding the lock: create one
         chat_history = models.ChatHistory(user_id=current_user.id)
         # persist both influencer id and name when available
-        try:
-            if influencer_name:
-                # if influencer_name is actually an id (slug), store in influencer_id
-                if isinstance(influencer_name, str) and '_' in influencer_name:
-                    chat_history.influencer_id = influencer_name
-                else:
-                    chat_history.influencer_name = influencer_name
-        except Exception:
-            pass
+        if influencer_id:
+            chat_history.influencer_id = influencer_id
+        if influencer_name:
+            chat_history.influencer_name = influencer_name
+        
         db.add(chat_history)
         db.commit()
         db.refresh(chat_history)
-        print(f"➕ 새 채팅 세션 생성: user_id={current_user.id}, history_id={chat_history.id}")
+        print(f"➕ 새 채팅 세션 생성: user_id={current_user.id}, history_id={chat_history.id}, influencer_id={influencer_id}, influencer_name={influencer_name}")
         return {"history_id": chat_history.id, "reused": False, "user_turns": 0}
     except Exception as e:
         # Roll back on error and return a 500 so clients can retry safely
@@ -1927,9 +1771,13 @@ def get_messages_for_influencer(influencer_id: str, current_user: models.User = 
         if not user_id:
             raise HTTPException(status_code=401, detail="로그인 필요")
 
-        # find histories that match influencer_id (exact match on influencer_id OR name-like match)
-        histories = db.query(models.ChatHistory).filter(models.ChatHistory.user_id==user_id).filter(
-            (models.ChatHistory.influencer_id == influencer_id) | (models.ChatHistory.influencer_name.like(f"%{influencer_id}%"))
+        # find histories that match influencer_id (exact match only on influencer_id OR influencer_name)
+        # Use exact match to prevent mixing different influencers
+        histories = db.query(models.ChatHistory).filter(
+            models.ChatHistory.user_id == user_id
+        ).filter(
+            (models.ChatHistory.influencer_id == influencer_id) | 
+            (models.ChatHistory.influencer_name == influencer_id)
         ).order_by(models.ChatHistory.created_at.asc()).all()
 
         if not histories:
@@ -2263,10 +2111,11 @@ async def recommend_questions(
             .order_by(models.SurveyResult.created_at.desc())
             .first()
         )
-        if prev_diagnosis:
-            context_lines.append(f"사용자는 이전에 '{prev_diagnosis.result_name}'({prev_diagnosis.result_tone}) 진단을 받았습니다.")
-        else:
-            context_lines.append("사용자는 아직 퍼스널컬러 진단을 받지 않았습니다.")
+        # if prev_diagnosis:
+        #     context_lines.append(f"사용자는 이전에 '{prev_diagnosis.result_name}'({prev_diagnosis.result_tone}) 진단을 받았습니다.")
+        # else:
+        #     context_lines.append("사용자는 아직 퍼스널컬러 진단을 받지 않았습니다.")
+        context_lines.append("사용자는 아직 퍼스널컬러 진단을 받지 않았습니다.")
 
         # 2-2. 현재 대화 이력 확인 (history_id가 있는 경우)
         if request.history_id:
@@ -2291,7 +2140,7 @@ async def recommend_questions(
             "(예: '저에게 어울리는 옷 색상은 뭐에요?', '어떤 액세서리가 잘 어울릴까요?') "
             "질문은 간결하고 명확한 한국어 문장으로 작성하세요. "
             "각 질문은 줄바꿈으로 구분하여 출력하고, 번호나 기호는 붙이지 마세요."
-            "[봄 웜톤], [여름 쿨톤] 등 진단 결과를 직접 언급하지 마세요."
+            "[봄 웜톤], [여름 쿨톤] 등 진단 결과를 절대로 직접 언급하지 마세요."
         )
         
         user_prompt = "\n".join(context_lines)

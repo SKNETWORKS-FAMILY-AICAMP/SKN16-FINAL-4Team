@@ -364,7 +364,7 @@ class EmotionChainRequest(BaseModel):
 
 
 class EmotionChainResponse(BaseModel):
-    influencer: str
+    influencer: Optional[str] = None
     styled_text: str
     raw: Optional[Dict[str, Any]] = None
 

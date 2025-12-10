@@ -102,19 +102,18 @@ async def analyze(payload: OrchestratorRequest):
 
     emo_res = None
     color_res = None
+    
+    # 🔥 이미지 분석 결과가 있어도 RAG 기반 추천을 위해 api_color 호출 필요
+    should_call_color_api = payload.use_color and pre_analyzed and pre_analyzed.get('image_result')
 
     if pre_analyzed:
         logger.info("[orchestrator] Using pre-analyzed data from payload")
         orch_data = pre_analyzed.get('orchestrator') or {}
         emo_res = orch_data.get('emotion')
-        color_res = orch_data.get('color')
         
-        # Always prioritize image_result for color hints if available
-        # This ensures we use the vision model's output (e.g. Spring Light) instead of generic hints
+        # 🔥 이미지 결과가 있으면 일단 기본 color_res만 구성 (RAG는 아래에서 호출)
         if pre_analyzed.get('image_result'):
             img_res = pre_analyzed.get('image_result')
-            # Construct a minimal color result structure
-            # Try to extract best type
             best_type = img_res.get('best_type') or {}
             season = img_res.get('season') or best_type.get('season')
             
@@ -139,15 +138,8 @@ async def analyze(payload: OrchestratorRequest):
                 "confidence": best_type.get('probability', 0.0) / 100.0 if best_type.get('probability') else 0.8
             }
             
-            # If color_res exists, merge/overwrite detected_color_hints
-            if not color_res:
-                color_res = {"detected_color_hints": new_color_hints}
-            else:
-                # Ensure detected_color_hints exists
-                if "detected_color_hints" not in color_res:
-                    color_res["detected_color_hints"] = {}
-                # Overwrite with image analysis data
-                color_res["detected_color_hints"].update(new_color_hints)
+            # 임시 color_res 구성 (아래에서 RAG 호출로 업데이트됨)
+            color_res = {"detected_color_hints": new_color_hints}
             
         # If emotion is missing, default to neutral or extract from image message
         if not emo_res:
@@ -208,6 +200,10 @@ async def analyze(payload: OrchestratorRequest):
         async def _call_color():
             t0 = time.time()
             try:
+                print(f"🎨 [Orchestrator] Color API 호출 시작...")
+                print(f"   - user_text: {payload.user_text[:100] if payload.user_text else 'None'}...")
+                print(f"   - conversation_history: {len(payload.conversation_history) if payload.conversation_history else 0} messages")
+                
                 color_payload = api_color.ColorRequest(
                     user_text=payload.user_text,
                     conversation_history=payload.conversation_history,
@@ -229,6 +225,8 @@ async def analyze(payload: OrchestratorRequest):
             except Exception as e:
                 logger.error(f"[color] 실패: {e}")
                 print(f"❌ [Orchestrator] Color API Error: {e}")
+                import traceback
+                traceback.print_exc()
                 return {"error": str(e)}
 
         # 병렬 실행
@@ -245,6 +243,54 @@ async def analyze(payload: OrchestratorRequest):
         
         emo_res = results_list[0] if payload.use_emotion else None
         color_res = results_list[1] if (payload.use_emotion and payload.use_color) or (not payload.use_emotion and payload.use_color) else None
+    
+    # 🔥 이미지 분석 시에도 RAG 기반 추천을 위해 api_color 호출
+    if should_call_color_api:
+        print(f"🎨 [Orchestrator] 이미지 결과 있음 -> RAG 기반 추천 위해 api_color 호출")
+        async def _call_color_for_image():
+            t0 = time.time()
+            try:
+                # 이미지 결과를 user_text에 포함
+                img_info = f"퍼스널 컬러: {color_res.get('detected_color_hints', {}).get('result_name', '')}"
+                
+                color_payload = api_color.ColorRequest(
+                    user_text=img_info,
+                    conversation_history=payload.conversation_history,
+                )
+                res = None
+                if asyncio.iscoroutinefunction(api_color.analyze_color):
+                    res = await api_color.analyze_color(color_payload)
+                else:
+                    result = api_color.analyze_color(color_payload)
+                    if asyncio.iscoroutine(result):
+                        res = await result
+                    else:
+                        res = result
+                print(f"✅ [Orchestrator] RAG 기반 Color 응답: {res}")
+                logger.info(f"[orchestrator] RAG Color API took {time.time() - t0:.2f}s")
+                return res
+            except Exception as e:
+                logger.error(f"[color RAG] 실패: {e}")
+                print(f"❌ [Orchestrator] RAG Color API Error: {e}")
+                import traceback
+                traceback.print_exc()
+                return None
+        
+        rag_color_res = await _call_color_for_image()
+        if rag_color_res:
+            # RAG 응답을 기존 color_res에 병합
+            rag_dict = _to_dict(rag_color_res)
+            if rag_dict and 'detected_color_hints' in rag_dict:
+                # 기존 이미지 분석 결과는 유지하면서 RAG 추천만 추가
+                if color_res and 'detected_color_hints' in color_res:
+                    # RAG에서 받은 추천 정보만 병합
+                    rag_hints = rag_dict['detected_color_hints']
+                    if 'recommended_palette' in rag_hints:
+                        color_res['detected_color_hints']['recommended_palette'] = rag_hints['recommended_palette']
+                    if 'suggested_styles' in rag_hints:
+                        color_res['detected_color_hints']['suggested_styles'] = rag_hints['suggested_styles']
+                    if 'rag_metadata' in rag_hints:
+                        color_res['detected_color_hints']['rag_metadata'] = rag_hints['rag_metadata']
 
     # 2. 결과 변환 (Pydantic v2 호환)
     emo_result = _to_dict(emo_res) if emo_res else None

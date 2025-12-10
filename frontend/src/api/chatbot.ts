@@ -69,9 +69,116 @@ export interface InfluencerMessageItem {
  */
 class ChatbotApi {
   /**
-   * 챗봇에게 메시지 전송 및 분석
+   * 챗봇에게 메시지 전송 및 분석 (스트리밍)
    */
-  async analyze(request: ChatbotRequest): Promise<ChatbotHistoryResponse> {
+  async analyze(
+    request: ChatbotRequest,
+    onChunk?: (data: {
+      type: 'history_id' | 'content' | 'metadata' | 'done' | 'error';
+      history_id?: number;
+      content?: string;
+      emotion?: string;
+      emotion_lottie?: string;
+      primary_tone?: string;
+      sub_tone?: string;
+      recommendations?: string[];
+      references?: string[];
+      error?: string;
+    }) => void
+  ): Promise<ChatbotHistoryResponse> {
+    const token = localStorage.getItem('access_token');
+    const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+    
+    const response = await fetch(`${baseURL}/chatbot/analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    let historyId: number | undefined;
+    let fullContent = '';
+    let metadata: any = {};
+    let buffer = ''; // 불완전한 데이터를 저장할 버퍼
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        // 새로운 청크를 버퍼에 추가
+        buffer += decoder.decode(value, { stream: true });
+        
+        // 완전한 라인들만 처리 (마지막 불완전한 라인은 버퍼에 남김)
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // 마지막 불완전한 라인은 다음 청크와 합침
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data) {
+              try {
+                const parsed = JSON.parse(data);
+                
+                if (parsed.type === 'history_id') {
+                  historyId = parsed.history_id;
+                } else if (parsed.type === 'content') {
+                  fullContent += parsed.content || '';
+                } else if (parsed.type === 'metadata') {
+                  metadata = parsed;
+                }
+                
+                // 콜백 즉시 호출 - 실시간 반영
+                if (onChunk) {
+                  onChunk(parsed);
+                }
+              } catch (e) {
+                console.warn('Failed to parse SSE data:', data, e);
+              }
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    // 스트리밍 완료 후 전통적인 응답 형식으로 반환
+    return {
+      history_id: historyId || request.history_id || 0,
+      items: [{
+        question_id: 1,
+        question: request.question,
+        answer: fullContent,
+        chat_res: {
+          primary_tone: metadata.primary_tone || '',
+          sub_tone: metadata.sub_tone || '',
+          description: fullContent,
+          recommendations: metadata.recommendations || [],
+          emotion: metadata.emotion || 'neutral',
+          references: metadata.references || [],
+        }
+      }]
+    };
+  }
+
+  /**
+   * 챗봇에게 메시지 전송 및 분석 (레거시, 비스트리밍)
+   */
+  async analyzeLegacy(request: ChatbotRequest): Promise<ChatbotHistoryResponse> {
     try {
       const response = await apiClient.post<ChatbotHistoryResponse>(
         '/chatbot/analyze',

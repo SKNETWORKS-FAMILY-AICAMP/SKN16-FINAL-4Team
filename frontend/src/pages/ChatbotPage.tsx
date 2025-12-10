@@ -6,7 +6,7 @@ import { useNavigate, useLocation, useBlocker } from 'react-router-dom';
 import { useCurrentUser } from '@/hooks/useUser';
 import { useSurveyResultsLive, useInvalidateSurveyResults } from '@/hooks/useSurvey';
 import useChatbot from '@/hooks/useChatbot';
-import type { ChatResModel, InfluencerHistoryItem } from '@/api/chatbot';
+import type { InfluencerHistoryItem } from '@/api/chatbot';
 import { chatbotApi } from '@/api/chatbot';
 import { surveyApi } from '@/api/survey';
 import { analyzeImage, applyMakeup } from '@/api/image';
@@ -20,32 +20,22 @@ import AnimatedEmoji from '@/components/AnimatedEmoji';
 import { Loading } from '@/components';
 import InfluencerImage from '@/components/InfluencerImage';
 
-import dayjs from '@/utils/dayjsTimezoneSetup';
 import { formatKoreanDate } from '@/utils/dateUtils';
 import { convertReportDataToSurveyDetail } from '@/utils/reportUtils';
 import { getAvatarRenderInfo } from '@/utils/genderUtils';
 
+import { type ChatMessageData } from '@/components/chatbot/ChatMessage';
+import {
+  historyItemsToChatMessages,
+  isDiagnosisBubble,
+  groupMessagesByDate,
+  formatDateHeader,
+  mapInfluencerRespItems,
+  sanitizeForChat,
+} from '@/utils/chatbot/messageHelpers';
+
 const { Title, Text } = antd.Typography;
 const { TextArea } = antd.Input;
-
-interface ChatMessage {
-  id: string;
-  question?: string;
-  content: string;
-  customContent?: React.ReactNode;
-  isUser: boolean;
-  timestamp: string | Date;
-  chatRes?: ChatResModel;
-  questionId?: number;
-  diagnosisData?: {
-    result_name: string;
-    detailed_analysis: string;
-    color_palette: string[];
-    style_keywords: string[];
-    makeup_tips: string[];
-  };
-  isWelcome?: boolean;
-}
 
 /**
  * 챗봇 페이지 컴포넌트
@@ -78,11 +68,9 @@ const ChatbotPage: React.FC = () => {
   const lastLoadedInfluencerRef = useRef<string | number | null>(null);
   const autoCloseRef = useRef<number | null>(null);
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  // description 버블 딜레이 표시용
-  const [delayedDescriptions, setDelayedDescriptions] = useState<{ [id: string]: boolean }>({});
+  const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [inputMessage, setInputMessage] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+  const [isTyping] = useState(false);
   const isBusy = isTyping || isAnalyzing || isDiagnosing;
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   // 새로 생성된(현재 세션에서 시작된) 대화가 있는지 여부
@@ -110,6 +98,8 @@ const ChatbotPage: React.FC = () => {
   const [pendingMakeupRequest, setPendingMakeupRequest] = useState(false);
   const [pendingMakeupTone, setPendingMakeupTone] = useState<string | null>(null);
   const [uploadedS3Key, setUploadedS3Key] = useState<string | null>(null);
+  const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
+  const [unlockedMakeupImages, setUnlockedMakeupImages] = useState<Set<string>>(new Set());
 
 
   // 가상 메이크업 생성이 완료되면 대기 중이던 요청 처리
@@ -119,20 +109,35 @@ const ChatbotPage: React.FC = () => {
       setPendingMakeupTone(null);
 
       const url = makeupImageUrls[pendingMakeupTone];
-      const imageMessage: ChatMessage = {
+      const imageMessage: ChatMessageData = {
         id: `makeup-result-auto-${Date.now()}`,
         content: '가상 메이크업 결과입니다.',
         isUser: false,
         timestamp: new Date(),
         customContent: (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
-            <antd.Image
-              src={url}
-              alt="Virtual Makeup"
-              style={{ maxWidth: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
-            />
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              * 진단된 퍼스널컬러({pendingMakeupTone})를 기반으로 생성된 가상 메이크업 이미지입니다.
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', width: '100%' }}>
+            <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', width: '100%', overflow: 'auto' }}>
+              {originalImageUrl && (
+                <div style={{ flex: '0 0 auto', width: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <Text strong style={{ textAlign: 'center', fontSize: '14px' }}>📷 원본</Text>
+                  <antd.Image
+                    src={originalImageUrl}
+                    alt="Original"
+                    style={{ width: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+                  />
+                </div>
+              )}
+              <div style={{ flex: '0 0 auto', width: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <Text strong style={{ textAlign: 'center', fontSize: '14px' }}>💄 가상 메이크업</Text>
+                <MakeupImageWithAd
+                  imageUrl={url}
+                  imageId={`makeup-${pendingMakeupTone}-${Date.now()}`}
+                  toneName={pendingMakeupTone}
+                />
+              </div>
+            </div>
+            <Text type="secondary" style={{ fontSize: '12px', textAlign: 'center' }}>
+              💡 진단된 퍼스널컬러({pendingMakeupTone})를 기반으로 생성된 가상 메이크업입니다.
             </Text>
           </div>
         )
@@ -175,91 +180,6 @@ const ChatbotPage: React.FC = () => {
   }, [hasNewConversation]);
 
   // Small helpers to reduce duplicated parsing/mapping logic
-  const parseRawChatRes = (raw: any): ChatResModel | undefined => {
-    if (!raw) return undefined;
-    try {
-      return typeof raw === 'string' ? JSON.parse(raw) : raw;
-    } catch (e) {
-      return undefined;
-    }
-  };
-
-  const mapInfluencerRespItems = (items: any[], inflId: string | number) => {
-    return (items || []).map((m: any, idx: number) => {
-      const isUser = (m.role || '').toString().toLowerCase() === 'user';
-      let chatRes = undefined as any;
-      try {
-        if (m.raw) chatRes = parseRawChatRes(m.raw);
-      } catch (e) {
-        chatRes = undefined;
-      }
-      return {
-        id: `infl-${inflId}-${idx}-${m.history_id || ''}`,
-        content: m.text || '',
-        isUser,
-        // preserve server ISO timestamp string when available so parsing is deterministic
-        timestamp: m.created_at ? String(m.created_at) : new Date().toISOString(),
-        chatRes,
-        questionId: undefined,
-      } as ChatMessage;
-    });
-  };
-
-  const historyItemsToChatMessages = (items: any[], historyId?: number) => {
-    const out: ChatMessage[] = [];
-    let baseTs = Date.now() - (items?.length || 0) * 2000;
-    for (const it of items || []) {
-      // prefer server-provided ISO timestamps when available; otherwise synthesize ISO
-      const userTsIso = it.question_created_at ? String(it.question_created_at) : new Date(baseTs).toISOString();
-
-      const isWelcome = !it.question || it.question.trim() === '';
-
-      // Only add user message if question is not empty (skip hidden welcome triggers)
-      if (!isWelcome) {
-        out.push({
-          id: `h-${historyId}-${it.question_id}-u`,
-          content: it.question || '',
-          isUser: true,
-          timestamp: userTsIso,
-        });
-      }
-      // advance baseTs relative to parsed time
-      baseTs = Math.max(baseTs + 1000, dayjs(userTsIso).valueOf() + 500);
-
-      const botTsIso = it.created_at ? String(it.created_at) : new Date(baseTs).toISOString();
-
-      out.push({
-        id: `h-${historyId}-${it.question_id}-b`,
-        content: it.answer || '',
-        isUser: false,
-        timestamp: botTsIso,
-        chatRes: it.chat_res,
-        isWelcome: isWelcome,
-      });
-      baseTs = Math.max(baseTs + 1000, dayjs(botTsIso).valueOf() + 500);
-    }
-    return out;
-  };
-
-  const extractBotContentFromItem = (item: any) => {
-    let botContent = item.answer;
-    if (!botContent || botContent.trim() === '') {
-      botContent = item.chat_res?.description || '답변을 준비 중입니다...';
-    }
-    try {
-      const trimmed = (botContent || '').trim();
-      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-        const parsed = JSON.parse(trimmed);
-        if (parsed && typeof parsed === 'object') {
-          return parsed.description || parsed.answer || item.chat_res?.description || '답변을 준비 중입니다...';
-        }
-      }
-    } catch (e) {
-      // ignore parse errors and return raw content
-    }
-    return botContent;
-  };
-
   // Scroll helper: scroll messages container to bottom only when it overflows
   const scrollToBottom = (smooth: boolean = true) => {
     try {
@@ -278,33 +198,6 @@ const ChatbotPage: React.FC = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
-
-  // Helper to sanitize large objects before sending to chat API
-  const sanitizeForChat = (obj: any): any => {
-    if (!obj) return obj;
-    if (typeof obj === 'string') {
-      // Truncate very long strings (e.g. base64 images)
-      return obj.length > 500 ? obj.substring(0, 500) + '...[truncated]' : obj;
-    }
-    if (Array.isArray(obj)) {
-      return obj.map(sanitizeForChat);
-    }
-    if (typeof obj === 'object') {
-      const newObj: any = {};
-      for (const key in obj) {
-        // Skip keys that are known to contain large data
-        if (key.toLowerCase().includes('base64') ||
-          key.toLowerCase().includes('image_data') ||
-          key.toLowerCase().includes('encoded_image')) {
-          newObj[key] = '[Image Data Omitted]';
-        } else {
-          newObj[key] = sanitizeForChat(obj[key]);
-        }
-      }
-      return newObj;
-    }
-    return obj;
-  };
 
   // 라우터 state로 전달된 인플루언서 프로필(예: MyPage에서 클릭으로 전달)을 수신
   useEffect(() => {
@@ -342,7 +235,7 @@ const ChatbotPage: React.FC = () => {
           items = (resp as any).items || [];
         }
 
-        const loaded: ChatMessage[] = mapInfluencerRespItems(items, inflId);
+        const loaded: ChatMessageData[] = mapInfluencerRespItems(items, inflId);
 
         if (!mounted) return;
 
@@ -375,8 +268,9 @@ const ChatbotPage: React.FC = () => {
       try {
         const params = new URLSearchParams((location as any).search || window.location.search);
         const inflIdFromQuery = params.get('infl_id');
-        const inflNameFromState = (location as any).state?.influencerProfile?.influencer_name || activeInfluencerProfile?.influencer_name;
-        const startWith = inflIdFromQuery || inflNameFromState;
+        // Prefer influencer_id over influencer_name for accurate session creation
+        const inflIdFromState = (location as any).state?.influencerProfile?.influencer_id || activeInfluencerProfile?.influencer_id;
+        const startWith = inflIdFromQuery || inflIdFromState;
 
         const res = await startSession(startWith as any);
         if (!mounted) return;
@@ -400,7 +294,7 @@ const ChatbotPage: React.FC = () => {
           try {
             const hist = await chatbotApi.getHistory(res.history_id);
             if (hist && Array.isArray(hist.items) && hist.items.length > 0) {
-              const loaded: ChatMessage[] = historyItemsToChatMessages(hist.items, res.history_id);
+              const loaded: ChatMessageData[] = historyItemsToChatMessages(hist.items, res.history_id);
               setMessages(loaded);
               setTimeout(() => scrollToBottom(false), 50);
 
@@ -423,30 +317,97 @@ const ChatbotPage: React.FC = () => {
         // 단, 이미 마지막 메시지가 환영 메시지라면 생략
         if (!skipWelcome) {
           try {
-            setIsTyping(true);
+            const typingMsgId = `typing-welcome-${Date.now()}`;
+            const typingMessage: ChatMessageData = {
+              id: typingMsgId,
+              content: '',
+              isUser: false,
+              timestamp: new Date(),
+              isWelcome: true,
+              customContent: <TypingAnimation size={8} color="#6b7280" />,
+            };
+            setMessages(prev => [...prev, typingMessage]);
+
+            const welcomeMsgId = `welcome-${Date.now()}`;
+            let welcomeContent = '';
+            let welcomeMetadata: any = null;
+            let welcomeEmojiMsgId: string | null = null;
+            let welcomePlaceholderCreated = false;
+
             // 빈 문자열을 보내면 백엔드에서 인플루언서 말투로 환영 메시지를 생성함
-            const response = await analyze({ question: "", history_id: res.history_id });
+            await analyze(
+              { question: "", history_id: res.history_id },
+              (data) => {
+                if (data.type === 'content' && data.content) {
+                  // Replace typing indicator with content on FIRST chunk
+                  if (!welcomePlaceholderCreated) {
+                    const welcomePlaceholder: ChatMessageData = {
+                      id: welcomeMsgId,
+                      content: '',
+                      isUser: false,
+                      timestamp: new Date(),
+                      isWelcome: true,
+                    };
+                    setMessages(prev => prev.map(m => m.id === typingMsgId ? welcomePlaceholder : m));
+                    welcomePlaceholderCreated = true;
+                  }
+                  
+                  welcomeContent += data.content;
+                  setMessages(prev => 
+                    prev.map(msg => 
+                      msg.id === welcomeMsgId
+                        ? { ...msg, content: welcomeContent }
+                        : msg
+                    )
+                  );
+                } else if (data.type === 'metadata') {
+                  welcomeMetadata = {
+                    emotion: data.emotion,
+                    primary_tone: data.primary_tone,
+                    sub_tone: data.sub_tone,
+                    description: data.description,
+                    recommendations: data.recommendations,
+                    references: data.references,
+                  };
+                  
+                  // Add emoji bubble AFTER content message
+                  if (welcomeMetadata.emotion && !welcomeEmojiMsgId) {
+                    welcomeEmojiMsgId = `emoji-${welcomeMsgId}`;
+                    const emojiMsg: ChatMessageData = {
+                      id: welcomeEmojiMsgId,
+                      content: '',
+                      isUser: false,
+                      timestamp: new Date(),
+                      chatRes: { emotion: welcomeMetadata.emotion },
+                      isWelcome: true,
+                    };
+                    setMessages(prev => [...prev, emojiMsg]);
+                  }
+                  
+                  // Update content message with metadata
+                  setMessages(prev => 
+                    prev.map(msg => 
+                      msg.id === welcomeMsgId
+                        ? { ...msg, chatRes: welcomeMetadata }
+                        : msg
+                    )
+                  );
+                }
+              }
+            );
 
-            if (mounted && response && response.items && response.items.length > 0) {
-              const latestItem = response.items[response.items.length - 1];
-              const botContent = extractBotContentFromItem(latestItem);
-
-              const botMessage: ChatMessage = {
-                id: (Date.now() + 1).toString(),
-                content: botContent,
-                isUser: false,
-                timestamp: new Date(),
-                chatRes: latestItem.chat_res,
-                questionId: latestItem.question_id,
-                isWelcome: true,
-              };
-
-              setMessages(prev => [...prev, botMessage]);
+            // Update final welcome message with metadata
+            if (mounted && welcomeMetadata) {
+              setMessages(prev => 
+                prev.map(msg => 
+                  msg.id === welcomeMsgId
+                    ? { ...msg, content: welcomeContent, chatRes: welcomeMetadata }
+                    : msg
+                )
+              );
             }
           } catch (welcomeError) {
             console.warn('환영 메시지 생성 실패:', welcomeError);
-          } finally {
-            if (mounted) setIsTyping(false);
           }
         }
 
@@ -467,7 +428,7 @@ const ChatbotPage: React.FC = () => {
   }, []);
 
   // 메시지에 리포트(진단) 상세보기 버튼을 보여야 하는지 판단
-  const shouldShowReportButton = (msg: ChatMessage): boolean => {
+  const shouldShowReportButton = (msg: ChatMessageData): boolean => {
     if (msg.isWelcome && surveyResults && surveyResults.length > 0) return true;
     if (msg.diagnosisData) return true;
     return false;
@@ -541,7 +502,7 @@ const ChatbotPage: React.FC = () => {
     console.log('  - surveyResults:', surveyResults);
     console.log('  - surveyResults?.length:', surveyResults?.length);
 
-    const userMessage: ChatMessage = {
+    const userMessage: ChatMessageData = {
       id: Date.now().toString(),
       content: inputMessage.trim(),
       isUser: true,
@@ -552,56 +513,234 @@ const ChatbotPage: React.FC = () => {
     // 이번 세션에서 새 대화가 시작되었음을 표시
     setHasNewConversation(true);
     setInputMessage('');
-    setIsTyping(true);
 
     try {
       // If there is a pending image follow-up, send a specialized prompt that
       // asks the backend to combine the image analysis and the user's answer
       // and produce a more detailed personal-color analysis.
       let response: any;
+      let streamedBotMessageId: string | null = null;
+      let streamContent = '';
+      let streamMetadata: any = null;
+
       if (pendingImageFollowup) {
         const { primary, sub } = pendingImageFollowup;
         const followupPrompt = `사진에서 감지된 퍼스널컬러: ${primary}${sub ? ' / ' + sub : ''}.
 사용자가 다음과 같이 답변했습니다: "${inputMessage.trim()}"
 위 정보를 모두 고려해, 사용자의 퍼스널컬러를 더 자세히 판별해 주세요. 가능한 경우 서브톤(예: 봄/여름/가을/겨울), 추천 색상(HEX 3~5개), 피해야 할 색상, 짧은 스타일/메이크업 팁을 제시하세요. 응답은 친근한 상담 말투로 요약해 주세요.`;
 
-        response = await analyze({ question: followupPrompt, history_id: currentHistoryId });
+        // Add typing indicator message immediately
+        const typingMsgId = `typing-${Date.now()}`;
+        const typingMessage: ChatMessageData = {
+          id: typingMsgId,
+          content: '',
+          isUser: false,
+          timestamp: new Date(),
+          customContent: <TypingAnimation size={8} color="#6b7280" />,
+        };
+        setMessages(prev => [...prev, typingMessage]);
+
+        streamedBotMessageId = `bot-${Date.now()}`;
+        let contentPlaceholderCreated = false;
+        let emojiMsgId: string | null = null;
+
+        // Stream the response
+        await analyze(
+          { question: followupPrompt, history_id: currentHistoryId },
+          (data) => {
+            if (data.type === 'history_id' && data.history_id) {
+              setCurrentHistoryId(data.history_id);
+              response = { history_id: data.history_id, items: [] };
+            } else if (data.type === 'content' && data.content) {
+              // Replace typing indicator with content on FIRST chunk
+              if (!contentPlaceholderCreated) {
+                const botPlaceholder: ChatMessageData = {
+                  id: streamedBotMessageId!,
+                  content: '',
+                  isUser: false,
+                  timestamp: new Date(),
+                };
+                setMessages(prev => prev.map(m => m.id === typingMsgId ? botPlaceholder : m));
+                contentPlaceholderCreated = true;
+              }
+              
+              streamContent += data.content;
+              // Update message in real-time
+              setMessages(prev => 
+                prev.map(msg => 
+                  msg.id === streamedBotMessageId
+                    ? { ...msg, content: streamContent }
+                    : msg
+                )
+              );
+            } else if (data.type === 'metadata') {
+              streamMetadata = {
+                emotion: data.emotion,
+                primary_tone: data.primary_tone,
+                sub_tone: data.sub_tone,
+                description: data.description,
+                recommendations: data.recommendations,
+                references: data.references,
+              };
+              
+              // Add emoji bubble AFTER content message
+              if (streamMetadata.emotion && streamedBotMessageId && !emojiMsgId) {
+                emojiMsgId = `emoji-${streamedBotMessageId}`;
+                const emojiMsg: ChatMessageData = {
+                  id: emojiMsgId,
+                  content: '',
+                  isUser: false,
+                  timestamp: new Date(),
+                  chatRes: { emotion: streamMetadata.emotion },
+                };
+                setMessages(prev => [...prev, emojiMsg]);
+              }
+              
+              // Update content message with metadata
+              setMessages(prev => 
+                prev.map(msg => 
+                  msg.id === streamedBotMessageId
+                    ? { ...msg, chatRes: streamMetadata }
+                    : msg
+                )
+              );
+            }
+          }
+        );
+
+        // Update final message with metadata
+        if (streamedBotMessageId && streamMetadata) {
+          setMessages(prev => 
+            prev.map(msg => 
+              msg.id === streamedBotMessageId
+                ? { ...msg, content: streamContent, chatRes: streamMetadata }
+                : msg
+            )
+          );
+        }
+
+        // Construct response object for later processing
+        if (!response) response = { items: [] };
+        response.items = [{
+          answer: streamContent,
+          chat_res: streamMetadata,
+        }];
+
         // clear pending followup regardless of success/failure to avoid repeated special flows
         setPendingImageFollowup(null);
       } else {
-        // 일반 챗봇 대화
-        response = await analyze({ question: inputMessage.trim(), history_id: currentHistoryId });
+        // 일반 챗봇 대화 - streaming version
+        
+        // Add typing indicator message immediately
+        const typingMsgId = `typing-${Date.now()}`;
+        const typingMessage: ChatMessageData = {
+          id: typingMsgId,
+          content: '',
+          isUser: false,
+          timestamp: new Date(),
+          customContent: <TypingAnimation size={8} color="#6b7280" />,
+        };
+        setMessages(prev => [...prev, typingMessage]);
+
+        streamedBotMessageId = `bot-${Date.now()}`;
+        let contentPlaceholderCreated = false;
+        let emojiMsgId: string | null = null;
+
+        await analyze(
+          { question: inputMessage.trim(), history_id: currentHistoryId },
+          (data) => {
+            if (data.type === 'history_id' && data.history_id) {
+              setCurrentHistoryId(data.history_id);
+              response = { history_id: data.history_id, items: [] };
+            } else if (data.type === 'content' && data.content) {
+              // Replace typing indicator with content on FIRST chunk
+              if (!contentPlaceholderCreated) {
+                const botPlaceholder: ChatMessageData = {
+                  id: streamedBotMessageId!,
+                  content: '',
+                  isUser: false,
+                  timestamp: new Date(),
+                };
+                setMessages(prev => prev.map(m => m.id === typingMsgId ? botPlaceholder : m));
+                contentPlaceholderCreated = true;
+              }
+              
+              streamContent += data.content;
+              // Update message in real-time
+              setMessages(prev => 
+                prev.map(msg => 
+                  msg.id === streamedBotMessageId
+                    ? { ...msg, content: streamContent }
+                    : msg
+                )
+              );
+            } else if (data.type === 'metadata') {
+              streamMetadata = {
+                emotion: data.emotion,
+                primary_tone: data.primary_tone,
+                sub_tone: data.sub_tone,
+                description: data.description,
+                recommendations: data.recommendations,
+                references: data.references,
+              };
+              
+              // Add emoji bubble AFTER content message
+              if (streamMetadata.emotion && streamedBotMessageId && !emojiMsgId) {
+                emojiMsgId = `emoji-${streamedBotMessageId}`;
+                const emojiMsg: ChatMessageData = {
+                  id: emojiMsgId,
+                  content: '',
+                  isUser: false,
+                  timestamp: new Date(),
+                  chatRes: { emotion: streamMetadata.emotion },
+                };
+                setMessages(prev => [...prev, emojiMsg]);
+              }
+              
+              // Update content message with metadata
+              setMessages(prev => 
+                prev.map(msg => 
+                  msg.id === streamedBotMessageId
+                    ? { ...msg, chatRes: streamMetadata }
+                    : msg
+                )
+              );
+            }
+          }
+        );
+
+        // Update final message with metadata
+        if (streamedBotMessageId && streamMetadata) {
+          setMessages(prev => 
+            prev.map(msg => 
+              msg.id === streamedBotMessageId
+                ? { ...msg, content: streamContent, chatRes: streamMetadata }
+                : msg
+            )
+          );
+        }
+
+        // Construct response object for later processing
+        if (!response) response = { items: [] };
+        response.items = [{
+          answer: streamContent,
+          chat_res: streamMetadata,
+        }];
       }
-
       console.log('💬 챗봇 응답:', response);
-      console.log('🆔 새로운 history_id:', response.history_id);
-      console.log('📝 Items 정보:', response.items);
+      console.log('🆔 새로운 history_id:', response?.history_id);
+      console.log('📝 Items 정보:', response?.items);
 
-      setCurrentHistoryId(response.history_id);
-      const latestItem = response.items[response.items.length - 1];
+      if (response?.history_id) {
+        setCurrentHistoryId(response.history_id);
+      }
+      const latestItem = response?.items?.[response.items.length - 1];
 
       console.log('📋 Latest Item:', latestItem);
 
-      if (latestItem) {
-        const botContent = extractBotContentFromItem(latestItem);
-
-        const botMessage: ChatMessage = {
-          id: (Date.now() + 1).toString(),
-          content: botContent,
-          isUser: false,
-          timestamp: new Date(),
-          chatRes: latestItem.chat_res,
-          questionId: latestItem.question_id,
-        };
-
-        // 이모티콘 버블 먼저, description 버블은 딜레이 후 표시
-        setMessages(prev => [...prev, botMessage]);
-        if (botMessage.chatRes?.emotion && botMessage.content) {
-          setDelayedDescriptions(prev => ({ ...prev, [botMessage.id]: false }));
-          setTimeout(() => {
-            setDelayedDescriptions(prev => ({ ...prev, [botMessage.id]: true }));
-          }, 400); // 400ms 딜레이
-        }
+      if (latestItem && streamedBotMessageId) {
+        // Message already created and updated during streaming
+        // No additional processing needed
 
         // 사용자 턴 카운트 증가
         const newTurnCount = userTurnCount + 1;
@@ -725,7 +864,7 @@ const ChatbotPage: React.FC = () => {
             }
 
             // 요약 리포트 생성 완료 메시지
-            const summaryMessage: ChatMessage = {
+            const summaryMessage: ChatMessageData = {
               id: `diagnosis-summary-${Date.now()}`,
               content: '',
               customContent: (
@@ -935,80 +1074,139 @@ const ChatbotPage: React.FC = () => {
 
                 const proposalPrompt = "퍼스널컬러 진단이 완료되었습니다. 사용자에게 '진단된 톤에 맞는 가상 메이크업을 적용한 이미지를 보여드릴게요.'라고 자연스럽게 제안하는 메시지를 작성해주세요.";
 
-                // analyze 호출 (history_id 유지)
-                const proposalRes = await analyze({
-                  question: proposalPrompt,
-                  history_id: response.history_id
-                });
+                const proposalMsgId = `makeup-proposal-${Date.now()}`;
+                let proposalContent = '';
+                let proposalMetadata: any = null;
+                let proposalPlaceholderCreated = false;
 
-                if (proposalRes && proposalRes.items && proposalRes.items.length > 0) {
-                  const lastItem = proposalRes.items[proposalRes.items.length - 1];
-                  const botContent = extractBotContentFromItem(lastItem);
-
-                  const proposalMessage: ChatMessage = {
-                    id: `makeup-proposal-${Date.now()}`,
-                    content: botContent,
-                    isUser: false,
-                    timestamp: new Date(),
-                    chatRes: lastItem.chat_res,
-                    questionId: lastItem.question_id
-                  };
-
-                  setTimeout(() => {
-                    setMessages(prev => [...prev, proposalMessage]);
-
-                    // 진단된 톤 이름 추출 (예: "봄 라이트")
-                    // diagnosisResult.result_name이 있으면 사용, 없으면 chatRes에서 조합
-                    const resultName = diagnosisResult.result_name || `${latestItem.chat_res.sub_tone} ${latestItem.chat_res.primary_tone}톤`;
-
-                    // 가상 메이크업 이미지가 준비되어 있다면 바로 표시
-                    console.log(`🎨 메이크업 이미지 확인: resultName='${resultName}', available=${Object.keys(makeupImageUrls).join(', ')}`);
-                    if (makeupImageUrls[resultName]) {
-                      const url = makeupImageUrls[resultName];
-                      const imageMessage: ChatMessage = {
-                        id: `makeup-result-auto-${Date.now()}`,
-                        content: '가상 메이크업 결과입니다.',
-                        isUser: false,
-                        timestamp: new Date(),
-                        customContent: (
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
-                            <antd.Image
-                              src={url}
-                              alt="Virtual Makeup"
-                              style={{ maxWidth: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
-                            />
-                            <Text type="secondary" style={{ fontSize: '12px' }}>
-                              * 진단된 퍼스널컬러({resultName})를 기반으로 생성된 가상 메이크업 이미지입니다.
-                            </Text>
-                          </div>
-                        )
-                      };
-                      setMessages(prev => [...prev, imageMessage]);
-                    } else {
-                      // 이미지가 준비되지 않은 경우
-                      if (uploadedS3Key) {
-                        // 이미지가 업로드된 상태라면 생성을 시도하고 대기
-                        // (이미 생성 중일 수도 있지만, Top 3에 포함되지 않았을 경우를 대비해 명시적으로 요청)
-                        console.log(`🎨 진단 결과(${resultName})에 해당하는 메이크업 이미지가 없어 생성을 시도합니다.`);
-                        setPendingMakeupRequest(true);
-                        setPendingMakeupTone(resultName);
-
-                        applyMakeup(uploadedS3Key, resultName).then(res => {
-                          if (res?.url) {
-                            setMakeupImageUrls(prev => ({ ...prev, [resultName]: res.url }));
-                          }
-                        }).catch(e => {
-                          console.warn('추가 메이크업 생성 실패', e);
-                          // 실패 시 대기 상태 해제 (무한 대기 방지)
-                          setPendingMakeupRequest(false);
-                          setPendingMakeupTone(null);
-                        });
+                // analyze 호출 (history_id 유지) - streaming version
+                await analyze(
+                  {
+                    question: proposalPrompt,
+                    history_id: response.history_id
+                  },
+                  (data) => {
+                    if (data.type === 'content' && data.content) {
+                      // Create placeholder on FIRST content chunk
+                      if (!proposalPlaceholderCreated) {
+                        const proposalPlaceholder: ChatMessageData = {
+                          id: proposalMsgId,
+                          content: '',
+                          isUser: false,
+                          timestamp: new Date(),
+                        };
+                        setMessages(prev => [...prev, proposalPlaceholder]);
+                        proposalPlaceholderCreated = true;
                       }
+                      
+                      proposalContent += data.content;
+                      setMessages(prev => 
+                        prev.map(msg => 
+                          msg.id === proposalMsgId
+                            ? { ...msg, content: proposalContent }
+                            : msg
+                        )
+                      );
+                    } else if (data.type === 'metadata') {
+                      proposalMetadata = {
+                        emotion: data.emotion,
+                        primary_tone: data.primary_tone,
+                        sub_tone: data.sub_tone,
+                        description: data.description,
+                        recommendations: data.recommendations,
+                        references: data.references,
+                      };
+                      
+                      // Update with metadata
+                      setMessages(prev => 
+                        prev.map(msg => 
+                          msg.id === proposalMsgId
+                            ? { ...msg, chatRes: proposalMetadata }
+                            : msg
+                        )
+                      );
                     }
+                  }
+                );
 
-                    scrollToBottom();
-                  }, 1500); // 진단 완료 메시지 후 1.5초 뒤
+                // Update final message with metadata (already done in metadata handler)
+                if (proposalMetadata) {
+                  setMessages(prev => 
+                    prev.map(msg => 
+                      msg.id === proposalMsgId
+                        ? { ...msg, content: proposalContent, chatRes: proposalMetadata }
+                        : msg
+                    )
+                  );
                 }
+
+                setTimeout(() => {
+                  // 진단된 톤 이름 추출 (예: "봄 라이트")
+                  // diagnosisResult.result_name이 있으면 사용, 없으면 chatRes에서 조합
+                  const resultName = diagnosisResult.result_name || `${latestItem.chat_res.sub_tone} ${latestItem.chat_res.primary_tone}톤`;
+
+                  // 가상 메이크업 이미지가 준비되어 있다면 바로 표시
+                  console.log(`🎨 메이크업 이미지 확인: resultName='${resultName}', available=${Object.keys(makeupImageUrls).join(', ')}`);
+                  if (makeupImageUrls[resultName]) {
+                    const url = makeupImageUrls[resultName];
+                    const imageMessage: ChatMessageData = {
+                      id: `makeup-result-auto-${Date.now()}`,
+                      content: '가상 메이크업 결과입니다.',
+                      isUser: false,
+                      timestamp: new Date(),
+                      customContent: (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', width: '100%' }}>
+                          <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', width: '100%', overflow: 'auto' }}>
+                            {originalImageUrl && (
+                              <div style={{ flex: '0 0 auto', width: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <Text strong style={{ textAlign: 'center', fontSize: '14px' }}>📷 원본</Text>
+                                <antd.Image
+                                  src={originalImageUrl}
+                                  alt="Original"
+                                  style={{ width: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+                                />
+                              </div>
+                            )}
+                            <div style={{ flex: '0 0 auto', width: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              <Text strong style={{ textAlign: 'center', fontSize: '14px' }}>💄 가상 메이크업</Text>
+                              <MakeupImageWithAd
+                                imageUrl={url}
+                                imageId={`makeup-${resultName}-${Date.now()}`}
+                                toneName={resultName}
+                              />
+                            </div>
+                          </div>
+                          <Text type="secondary" style={{ fontSize: '12px', textAlign: 'center' }}>
+                            💡 진단된 퍼스널컬러({resultName})를 기반으로 생성된 가상 메이크업입니다.
+                          </Text>
+                        </div>
+                      )
+                    };
+                    setMessages(prev => [...prev, imageMessage]);
+                  } else {
+                    // 이미지가 준비되지 않은 경우
+                    if (uploadedS3Key) {
+                      // 이미지가 업로드된 상태라면 생성을 시도하고 대기
+                      // (이미 생성 중일 수도 있지만, Top 3에 포함되지 않았을 경우를 대비해 명시적으로 요청)
+                      console.log(`🎨 진단 결과(${resultName})에 해당하는 메이크업 이미지가 없어 생성을 시도합니다.`);
+                      setPendingMakeupRequest(true);
+                      setPendingMakeupTone(resultName);
+
+                      applyMakeup(uploadedS3Key, resultName).then(res => {
+                        if (res?.url) {
+                          setMakeupImageUrls(prev => ({ ...prev, [resultName]: res.url }));
+                        }
+                      }).catch(e => {
+                        console.warn('추가 메이크업 생성 실패', e);
+                        // 실패 시 대기 상태 해제 (무한 대기 방지)
+                        setPendingMakeupRequest(false);
+                        setPendingMakeupTone(null);
+                      });
+                    }
+                  }
+
+                  scrollToBottom();
+                }, 1500); // 진단 완료 메시지 후 1.5초 뒤
               } catch (e) {
                 console.warn('메이크업 제안 메시지 생성 실패', e);
               }
@@ -1025,7 +1223,7 @@ const ChatbotPage: React.FC = () => {
             const diagnosisErrorId = `diagnosis-error-${currentHistoryId}`;
 
             // 진단 에러 메시지 버블
-            const diagnosisErrorMessage: ChatMessage = {
+            const diagnosisErrorMessage: ChatMessageData = {
               id: diagnosisErrorId,
               content: '',
               customContent: (
@@ -1076,7 +1274,6 @@ const ChatbotPage: React.FC = () => {
                       size="small"
                       onClick={async () => {
                         try {
-                          setIsTyping(true);
                           console.log('🔄 진단 결과 재시도 중...');
 
                           const diagnosisResult = await analyzeChatForDiagnosis(
@@ -1123,7 +1320,7 @@ const ChatbotPage: React.FC = () => {
                           setMessages(prev => prev.filter(m => m.id !== diagnosisErrorId));
 
                           // 성공 메시지 추가
-                          const successMessage: ChatMessage = {
+                          const successMessage: ChatMessageData = {
                             id: `diagnosis-success-${currentHistoryId}`,
                             content: '',
                             customContent: (
@@ -1208,8 +1405,6 @@ const ChatbotPage: React.FC = () => {
                         } catch (retryError) {
                           console.error('진단 결과 재시도 실패:', retryError);
                           antd.message.error('다시 시도해도 실패했습니다. 잠시 후 다시 시도해주세요.');
-                        } finally {
-                          setIsTyping(false);
                         }
                       }}
                     >
@@ -1271,7 +1466,7 @@ const ChatbotPage: React.FC = () => {
         errorTitle = '네트워크 오류';
       }
 
-      const errorMessage: ChatMessage = {
+      const errorMessage: ChatMessageData = {
         id: (Date.now() + 1).toString(),
         content: errorContent,
         isUser: false,
@@ -1280,8 +1475,6 @@ const ChatbotPage: React.FC = () => {
 
       setMessages(prev => [...prev, errorMessage]);
       antd.message.error(errorTitle);
-    } finally {
-      setIsTyping(false);
     }
   };
 
@@ -1303,7 +1496,7 @@ const ChatbotPage: React.FC = () => {
     if (hasNewConversation) {
       setIsFeedbackModalOpen(true);
     } else {
-      navigate('/');
+      navigate('/mypage');
     }
   };
 
@@ -1352,7 +1545,7 @@ const ChatbotPage: React.FC = () => {
       if (blocker.state === "blocked") {
         blocker.proceed();
       } else {
-        setTimeout(() => navigate('/'), 500);
+        setTimeout(() => navigate('/mypage'), 500);
       }
     } catch (error) {
       console.error('피드백 제출 중 오류:', error);
@@ -1365,7 +1558,7 @@ const ChatbotPage: React.FC = () => {
       if (blocker.state === "blocked") {
         blocker.proceed();
       } else {
-        setTimeout(() => navigate('/'), 500);
+        setTimeout(() => navigate('/mypage'), 500);
       }
     }
   };
@@ -1389,54 +1582,11 @@ const ChatbotPage: React.FC = () => {
     if (blocker.state === "blocked") {
       blocker.proceed();
     } else {
-      navigate('/');
+      navigate('/mypage');
     }
   };
 
-
-  // 진단 챗봇 버블 여부 판별 함수 (예시: description에 '진단', '분석', '추천', '퍼스널컬러', '톤', '결과' 등 포함 시)
-  // 진단 완료 요약 customContent가 있는 메시지(진단 완료 버블)만 true 반환
-  function isDiagnosisBubble(msg?: any): boolean {
-    // 진단 요약 customContent가 있는 경우만 진단 버블로 간주
-    if (msg && msg.customContent && typeof msg.customContent === 'object') {
-      return true;
-    }
-    return false;
-  }
-
-  // Helpers to group messages by date and format headers
-  const isSameDay = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-
-  const formatDateHeader = (d: Date) => {
-    const today = new Date();
-    if (isSameDay(d, today)) return '오늘';
-    const weekdays = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
-    return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${weekdays[d.getDay()]}`;
-  };
-
-  const groupMessagesByDate = (msgs: ChatMessage[]) => {
-    const map = new Map<string, ChatMessage[]>();
-    for (const m of msgs) {
-      // normalize to YYYY-MM-DD key using Asia/Seoul timezone so grouping matches displayed dates
-      const d = dayjs(m.timestamp).tz('Asia/Seoul');
-      const key = `${d.year()}-${String(d.month() + 1).padStart(2, '0')}-${String(d.date()).padStart(2, '0')}`;
-      if (!map.has(key)) {
-        map.set(key, []);
-      }
-      map.get(key)!.push(m);
-    }
-
-    // sort keys (YYYY-MM-DD strings) ascending so oldest date comes first
-    const keys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
-
-    return keys.map(k => {
-      const items = (map.get(k) || []).slice().sort((x, y) => dayjs(x.timestamp).valueOf() - dayjs(y.timestamp).valueOf());
-      const date = items.length > 0 ? dayjs(items[0].timestamp).toDate() : new Date(k);
-      return { key: k, items, date };
-    });
-  };
-
+  // Helpers to group messages by date and format headers - imported from messageHelpers
   // Memoized grouped sections so we don't recompute on every render
   const groupedSections = useMemo(() => groupMessagesByDate(messages), [messages]);
 
@@ -1455,8 +1605,178 @@ const ChatbotPage: React.FC = () => {
     </svg>
   );
 
-  const renderMessage = (msg: ChatMessage) => {
-    const idx = messages.findIndex(m => m.id === msg.id);
+  // 광고를 시청한 후 가상 메이크업 이미지를 볼 수 있는 컴포넌트
+  const MakeupImageWithAd: React.FC<{ imageUrl: string; imageId: string; toneName: string }> = ({ imageUrl, imageId, toneName }) => {
+    const [isLocked, setIsLocked] = useState(!unlockedMakeupImages.has(imageId));
+    const [adModalOpen, setAdModalOpen] = useState(false);
+    const [adProgress, setAdProgress] = useState(0);
+    const [isWatchingAd, setIsWatchingAd] = useState(false);
+
+    const handleUnlockClick = () => {
+      setAdModalOpen(true);
+      setIsWatchingAd(true);
+      setAdProgress(0);
+
+      // 3초 광고 시뮬레이션
+      const interval = setInterval(() => {
+        setAdProgress(prev => {
+          if (prev >= 100) {
+            clearInterval(interval);
+            setIsWatchingAd(false);
+            return 100;
+          }
+          return prev + 3.33; // 30 steps for 3 seconds
+        });
+      }, 100);
+    };
+
+    const handleAdComplete = () => {
+      setUnlockedMakeupImages(prev => new Set(prev).add(imageId));
+      setIsLocked(false);
+      setAdModalOpen(false);
+      setAdProgress(0);
+      antd.message.success('잠금이 해제되었습니다! 가상 메이크업 결과를 확인하세요.');
+    };
+
+    return (
+      <>
+        <div style={{ position: 'relative' }}>
+          <antd.Image
+            src={imageUrl}
+            alt="Virtual Makeup"
+            style={{
+              width: '100%',
+              borderRadius: '8px',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+              filter: isLocked ? 'blur(20px)' : 'none',
+              transition: 'filter 0.3s ease'
+            }}
+            preview={!isLocked}
+          />
+          {isLocked && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'rgba(0,0,0,0.3)',
+                borderRadius: '8px',
+                cursor: 'pointer'
+              }}
+              onClick={handleUnlockClick}
+            >
+              <antd.Button
+                type="primary"
+                size="large"
+                icon={<antd.Typography.Text style={{ fontSize: '24px' }}>🔒</antd.Typography.Text>}
+                style={{
+                  height: '60px',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  border: 'none'
+                }}
+              >
+                광고 보고 결과 확인하기
+              </antd.Button>
+            </div>
+          )}
+        </div>
+
+        <antd.Modal
+          open={adModalOpen}
+          title={null}
+          footer={null}
+          closable={!isWatchingAd}
+          onCancel={() => {
+            if (!isWatchingAd) {
+              setAdModalOpen(false);
+              setAdProgress(0);
+            }
+          }}
+          width={600}
+          centered
+        >
+          <div style={{ padding: '24px', textAlign: 'center' }}>
+            <Title level={3} style={{ marginBottom: '16px' }}>📺 광고 시청 중...</Title>
+            <Text type="secondary" style={{ fontSize: '14px', display: 'block', marginBottom: '24px' }}>
+              광고를 시청하시면 {toneName} 가상 메이크업 결과를 확인하실 수 있습니다.
+            </Text>
+
+            {/* 광고 콘텐츠 영역 */}
+            <div
+              style={{
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                borderRadius: '12px',
+                padding: '48px 24px',
+                marginBottom: '24px',
+                color: 'white'
+              }}
+            >
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎓</div>
+              <Title level={2} style={{ color: 'white', marginBottom: '8px' }}>SKN16기 화이팅! 💪</Title>
+              <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: '16px', display: 'block', marginBottom: '16px' }}>
+                AI가 분석한 맞춤형 메이크업을 만나보세요
+              </Text>
+              <div style={{
+                marginTop: '20px',
+                padding: '12px 20px',
+                background: 'rgba(255,255,255,0.15)',
+                borderRadius: '8px',
+                backdropFilter: 'blur(10px)'
+              }}>
+                <Text style={{ color: 'white', fontSize: '18px', fontWeight: 'bold' }}>
+                  💄 당신만의 퍼스널컬러
+                </Text>
+              </div>
+            </div>
+
+            {/* 진행률 표시 */}
+            <antd.Progress
+              percent={adProgress}
+              status={adProgress === 100 ? 'success' : 'active'}
+              strokeColor={{
+                '0%': '#667eea',
+                '100%': '#764ba2'
+              }}
+              style={{ marginBottom: '16px' }}
+            />
+
+            {adProgress === 100 && (
+              <antd.Button
+                type="primary"
+                size="large"
+                onClick={handleAdComplete}
+                style={{
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  border: 'none',
+                  height: '48px',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                ✨ 결과 확인하기
+              </antd.Button>
+            )}
+
+            {adProgress < 100 && (
+              <Text type="secondary" style={{ fontSize: '12px' }}>
+                {Math.ceil((100 - adProgress) / 20)}초 후 확인 가능
+              </Text>
+            )}
+          </div>
+        </antd.Modal>
+      </>
+    );
+  };
+
+  const renderMessage = (msg: ChatMessageData) => {
     return (
       <div
         className={`flex mb-3 ${msg.isUser ? 'justify-end' : 'justify-start'}`}
@@ -1557,7 +1877,7 @@ const ChatbotPage: React.FC = () => {
             })()
           )}
           <div className="flex flex-col gap-1">
-            {!msg.isUser && (idx === 0 || (msg.chatRes?.emotion && !isDiagnosisBubble(msg))) && (
+            {!msg.isUser && msg.chatRes?.emotion && !msg.content && !isDiagnosisBubble(msg) && (
               <div
                 className="relative px-4 py-2 rounded-lg bg-white border border-gray-200 mb-1 flex items-center chatbot-balloon"
                 style={{ maxWidth: 'fit-content' }}
@@ -1587,7 +1907,7 @@ const ChatbotPage: React.FC = () => {
                 <AnimatedEmoji emotion={msg?.chatRes?.emotion ?? 'neutral'} size={40} />
               </div>
             )}
-            {(msg.isUser || !msg.chatRes?.emotion || delayedDescriptions[msg.id] || typeof delayedDescriptions[msg.id] === 'undefined') && (
+            {(msg.isUser || msg.content || msg.customContent) && (
               <div
                 className={`relative px-4 py-2 rounded-lg ${msg.isUser
                   ? 'bg-blue-500 text-white user-balloon'
@@ -1654,7 +1974,7 @@ const ChatbotPage: React.FC = () => {
                 )}
                 {msg.customContent ? (
                   msg.customContent
-                ) : msg.content.includes('[상세보기]') ? (
+                ) : msg.content && msg.content.includes('[상세보기]') ? (
                   <div>
                     {msg.content.includes('🌈 **추천 컬러 팔레트**') &&
                       msg.diagnosisData ? (
@@ -1785,7 +2105,7 @@ const ChatbotPage: React.FC = () => {
                   <div className="mt-3 pt-2 border-t border-gray-100">
                     <div className="text-xs text-gray-500 flex flex-wrap gap-1 items-center">
                       <span className="font-bold mr-1">📚 참고 자료:</span>
-                      {msg.chatRes.references.map((ref, idx) => (
+                      {msg.chatRes.references.map((ref: string, idx: number) => (
                         <React.Fragment key={idx}>
                           {idx > 0 && <span className="mr-1">,</span>}
                           <antd.Tooltip title={<div className="whitespace-pre-wrap max-h-60 overflow-y-auto text-xs">{ref}</div>} styles={{ root: { maxWidth: '400px' } }}>
@@ -2044,7 +2364,10 @@ const ChatbotPage: React.FC = () => {
                   try {
                     // 1. 사용자 메시지 먼저 표시
                     const imageUrl = URL.createObjectURL(file);
-                    const userMsg: ChatMessage = {
+                    // 원본 이미지 URL 저장 (메이크업 비교용)
+                    setOriginalImageUrl(imageUrl);
+                    
+                    const userMsg: ChatMessageData = {
                       id: `img-u-${Date.now()}`,
                       content: `이미지 업로드: ${file.name}`,
                       customContent: (
@@ -2060,9 +2383,6 @@ const ChatbotPage: React.FC = () => {
                     setMessages(prev => [...prev, userMsg]);
                     // 이미지 업로드는 사용자 주도 액션으로 간주하여 새 대화 플래그 설정
                     setHasNewConversation(true);
-
-                    // 2. 타이핑 시작
-                    setIsTyping(true);
 
                     // 업로드 후 ChatbotPage 기존 분석 흐름 실행
                     const s3Key = up.key;
@@ -2105,39 +2425,115 @@ const ChatbotPage: React.FC = () => {
                     const primary = best_type?.name || best_type?.season || '';
                     const sub = best_type?.name_eng || '';
 
+                    // === 스트리밍 처리 시작 (useChatbot의 analyze 사용) ===
                     try {
                       const hint = JSON.stringify(sanitizeForChat(imgRes));
-                      const resp = await chatbotApi.analyze({ question: hint, history_id: currentHistoryId });
-                      setCurrentHistoryId(resp.history_id);
 
-                      if (resp.items && resp.items.length > 0) {
-                        const latestItem = resp.items[resp.items.length - 1];
-                        const botContent = extractBotContentFromItem(latestItem);
+                      // 1. 타이핑 메시지 생성
+                      const typingMsgId = `typing-${Date.now()}`;
+                      setMessages(prev => [...prev, {
+                        id: typingMsgId,
+                        isUser: false,
+                        timestamp: new Date(),
+                        customContent: <TypingAnimation />
+                      }]);
 
-                        const botMsg: ChatMessage = {
-                          id: `img-b-${Date.now()}`,
-                          content: botContent,
-                          isUser: false,
-                          timestamp: new Date(),
-                          chatRes: latestItem.chat_res,
-                          questionId: latestItem.question_id
-                        };
-                        setMessages(prev => [...prev, botMsg]);
-                      }
+                      let contentBuf = '';
+                      let finalChatRes: any = null;
+                      let finalQuestionId: number | undefined = undefined;
+                      let receivedHistoryId: number | undefined = undefined;
+
+                      // 2. useChatbot의 analyze 함수 사용 (onChunk 콜백)
+                      const resp = await analyze(
+                        { question: hint, history_id: currentHistoryId },
+                        (chunk) => {
+                          // history_id 수신
+                          if (chunk.type === 'history_id' && chunk.history_id) {
+                            receivedHistoryId = chunk.history_id;
+                            setCurrentHistoryId(chunk.history_id);
+                          }
+
+                          // content 청크 수신
+                          if (chunk.type === 'content' && chunk.content) {
+                            contentBuf += chunk.content;
+                            setMessages(prev => {
+                              const idx = prev.findIndex(m => m.id === typingMsgId);
+                              if (idx === -1) return prev;
+                              const updated = [...prev];
+                              updated[idx] = {
+                                ...updated[idx],
+                                content: contentBuf,
+                                customContent: undefined,
+                                chatRes: finalChatRes,
+                                questionId: finalQuestionId
+                              };
+                              return updated;
+                            });
+                          }
+
+                          // metadata 수신
+                          if (chunk.type === 'metadata') {
+                            finalChatRes = {
+                              emotion: chunk.emotion || 'neutral',
+                              primary_tone: chunk.primary_tone || '',
+                              sub_tone: chunk.sub_tone || '',
+                              description: contentBuf,
+                              recommendations: chunk.recommendations || [],
+                              references: chunk.references || []
+                            };
+
+                            setMessages(prev => {
+                              const idx = prev.findIndex(m => m.id === typingMsgId);
+                              if (idx === -1) return prev;
+                              const updated = [...prev];
+                              updated[idx] = {
+                                ...updated[idx],
+                                chatRes: finalChatRes,
+                                questionId: finalQuestionId
+                              };
+
+                              // 이모티콘 메시지 추가
+                              if (chunk.emotion) {
+                                updated.push({
+                                  id: `emoji-${Date.now()}`,
+                                  isUser: false,
+                                  timestamp: new Date(),
+                                  chatRes: finalChatRes
+                                });
+                              }
+                              return updated;
+                            });
+                          }
+
+                          if (chunk.type === 'done') {
+                            console.log('[IMAGE STREAM] Done');
+                          }
+                        }
+                      );
 
                       // mark that we expect one follow-up from the user which should trigger
                       // a more detailed analysis combining the image_result and the user's answer
-                      setPendingImageFollowup({ primary: primary, sub: sub, image_result: imgRes?.image_result, history_id: resp.history_id });
+                      setPendingImageFollowup({ 
+                        primary: primary, 
+                        sub: sub, 
+                        image_result: imgRes?.image_result, 
+                        history_id: receivedHistoryId || resp.history_id || currentHistoryId 
+                      });
+
                     } catch (e) {
+                      console.error('[IMAGE STREAM] Error:', e);
                       const summary = (imgRes?.orchestrator?.color && (imgRes.orchestrator.color.parsed?.description || imgRes.orchestrator.color.parsed?.detected_color_hints)) || (imgRes?.orchestrator?.emotion && imgRes.orchestrator.emotion.parsed?.description) || '이미지 분석 결과를 불러오지 못했습니다.';
-                      const botMsg: ChatMessage = { id: `img-b-${Date.now()}`, content: `이미지 분석 요약: ${primary}${sub ? ' / ' + sub : ''}\n${typeof summary === 'string' ? summary : JSON.stringify(summary)}`, isUser: false, timestamp: new Date() };
+                      const botMsg: ChatMessageData = { 
+                        id: `img-b-${Date.now()}`, 
+                        content: `이미지 분석 요약: ${primary}${sub ? ' / ' + sub : ''}\n${typeof summary === 'string' ? summary : JSON.stringify(summary)}`, 
+                        isUser: false, 
+                        timestamp: new Date() 
+                      };
                       setMessages(prev => [...prev, botMsg]);
                     }
                   } catch (err: any) {
                     console.error('이미지 업로드/분석 오류', err);
                     antd.message.error('이미지 업로드 또는 분석 중 오류가 발생했습니다.');
-                  } finally {
-                    setIsTyping(false);
                   }
                 }} />
               </React.Suspense>

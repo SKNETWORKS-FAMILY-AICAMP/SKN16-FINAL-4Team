@@ -219,14 +219,18 @@ async def analyze_color(payload: ColorRequest):
         # 통합 쿼리 구성
         query_text = _compose_query_from_payload(payload)
         logger.info(f"[api_color] 쿼리 생성: {query_text[:100]}...")
+        print(f"🔍 [API_COLOR] 쿼리 구성 완료 ({len(query_text)} chars)")
+        print(f"📝 [API_COLOR] Query preview: {query_text[:200]}...")
         
         # RAG 시스템에 쿼리 전송 (동기 호출)
+        print(f"🚀 [API_COLOR] RAG 시스템 쿼리 시작...")
         rag_result = rag_system.query(
             question=query_text,
             temperature=0.2,  # 퍼스널 컬러는 일관성 중요
             max_tokens=500,
             force_route=None  # 자동 라우팅: 최적의 지식 소스 선택
         )
+        print(f"✅ [API_COLOR] RAG 응답 수신: {rag_result.get('route', 'unknown route')}")
         
         # RAG 응답 처리
         if not rag_result.get("success"):
@@ -235,6 +239,7 @@ async def analyze_color(payload: ColorRequest):
         
         answer = rag_result.get("answer", "")
         logger.info(f"[api_color] RAG 응답 받음 (route: {rag_result.get('route')})")
+        print(f"📊 [API_COLOR] RAG Answer preview: {answer[:200]}...")
         
         # 응답 파싱
         hints = _parse_rag_answer_to_color_hints(answer, query_text)
