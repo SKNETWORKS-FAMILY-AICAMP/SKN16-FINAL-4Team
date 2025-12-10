@@ -9,6 +9,10 @@ RUN apt-get update && apt-get install -y \
     gcc \
     default-libmysqlclient-dev \
     pkg-config \
+    libgl1 \
+    libglx-mesa0 \
+    libgl1-mesa-dri \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # requirements.txt 복사 및 의존성 설치
