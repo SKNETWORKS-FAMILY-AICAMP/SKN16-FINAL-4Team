@@ -91,8 +91,9 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
     사용자와 퍼스널 컬러 전문가의 대화:
     {conversation_text}
 
-    위 대화를 바탕으로 사용자의 퍼스널 컬러를 진단해주세요.
-    기본적으로 '{season}' 타입일 가능성이 높지만, 대화 내용을 분석하여 다음 11가지 세부 타입 중 가장 적절한 하나를 선택해주세요:
+    위 대화를 분석하여 사용자의 퍼스널 컬러를 진단해주세요.
+    대화 내용에서 명확하게 언급된 타입이 있다면 반드시 그것을 최우선으로 고려하세요.
+    다음 11가지 세부 타입 중 대화 내용에 가장 부합하는 하나를 선택해주세요:
     {', '.join(valid_types)}
 
     다음 유효한 JSON 객체 하나만, 다른 설명 없이 반환해주세요. JSON은 반드시 아래 키들을 포함해야 합니다:
@@ -101,8 +102,8 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
         "primary_tone": "'웜' 또는 '쿨' (짧은 문자열)",
         "sub_tone": "'봄','여름','가을' 또는 '겨울' (짧은 문자열)",
         "emotional_description": "감성적이고 긍정적인 한 문장",
-        "color_palette": ["{season} 타입에 어울리는 5개의 HEX 색상 코드"],
-        "style_keywords": ["{season} 타입의 특성을 나타내는 5개 키워드"],
+        "color_palette": ["선택된 타입에 어울리는 5개의 HEX 색상 코드"],
+        "style_keywords": ["선택된 타입의 특성을 나타내는 5개 키워드"],
         "makeup_tips": ["실용적인 메이크업 팁 4개"],
         "detailed_analysis": "대화 내용을 반영한 개인화된 분석 (2-3문단, 구체적이고 실용적인 조언 포함)",
         "top_types": [
@@ -111,6 +112,7 @@ def generate_complete_diagnosis_data(conversation_text: str, season: str) -> dic
     }}
 
     중요 요구사항:
+    - 대화에서 명시적으로 언급된 퍼스널 컬러 타입이 있다면 반드시 그것을 선택하세요.
     - `result_name`과 `top_types` 배열의 각 항목 `name`은 반드시 위 11가지 세부 타입 중 하나여야 합니다.
     - `top_types[0].name`은 `result_name`과 동일한 값이어야 합니다.
     - `primary_tone`은 반드시 '웜' 또는 '쿨'로 표기하고, `sub_tone`은 '봄/여름/가을/겨울' 중 하나로 표기하세요.
