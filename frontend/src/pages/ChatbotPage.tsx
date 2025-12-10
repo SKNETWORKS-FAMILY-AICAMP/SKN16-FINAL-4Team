@@ -98,6 +98,7 @@ const ChatbotPage: React.FC = () => {
   const [pendingMakeupRequest, setPendingMakeupRequest] = useState(false);
   const [pendingMakeupTone, setPendingMakeupTone] = useState<string | null>(null);
   const [uploadedS3Key, setUploadedS3Key] = useState<string | null>(null);
+  const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
 
 
   // 가상 메이크업 생성이 완료되면 대기 중이던 요청 처리
@@ -113,14 +114,29 @@ const ChatbotPage: React.FC = () => {
         isUser: false,
         timestamp: new Date(),
         customContent: (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
-            <antd.Image
-              src={url}
-              alt="Virtual Makeup"
-              style={{ maxWidth: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
-            />
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              * 진단된 퍼스널컬러({pendingMakeupTone})를 기반으로 생성된 가상 메이크업 이미지입니다.
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', width: '100%' }}>
+            <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', width: '100%', overflow: 'auto' }}>
+              {originalImageUrl && (
+                <div style={{ flex: '0 0 auto', width: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <Text strong style={{ textAlign: 'center', fontSize: '14px' }}>📷 원본</Text>
+                  <antd.Image
+                    src={originalImageUrl}
+                    alt="Original"
+                    style={{ width: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+                  />
+                </div>
+              )}
+              <div style={{ flex: '0 0 auto', width: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <Text strong style={{ textAlign: 'center', fontSize: '14px' }}>💄 가상 메이크업</Text>
+                <antd.Image
+                  src={url}
+                  alt="Virtual Makeup"
+                  style={{ width: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+                />
+              </div>
+            </div>
+            <Text type="secondary" style={{ fontSize: '12px', textAlign: 'center' }}>
+              💡 진단된 퍼스널컬러({pendingMakeupTone})를 기반으로 생성된 가상 메이크업입니다.
             </Text>
           </div>
         )
@@ -1138,14 +1154,29 @@ const ChatbotPage: React.FC = () => {
                       isUser: false,
                       timestamp: new Date(),
                       customContent: (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
-                          <antd.Image
-                            src={url}
-                            alt="Virtual Makeup"
-                            style={{ maxWidth: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
-                          />
-                          <Text type="secondary" style={{ fontSize: '12px' }}>
-                            * 진단된 퍼스널컬러({resultName})를 기반으로 생성된 가상 메이크업 이미지입니다.
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', width: '100%' }}>
+                          <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', width: '100%', overflow: 'auto' }}>
+                            {originalImageUrl && (
+                              <div style={{ flex: '0 0 auto', width: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <Text strong style={{ textAlign: 'center', fontSize: '14px' }}>📷 원본</Text>
+                                <antd.Image
+                                  src={originalImageUrl}
+                                  alt="Original"
+                                  style={{ width: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+                                />
+                              </div>
+                            )}
+                            <div style={{ flex: '0 0 auto', width: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              <Text strong style={{ textAlign: 'center', fontSize: '14px' }}>💄 가상 메이크업</Text>
+                              <antd.Image
+                                src={url}
+                                alt="Virtual Makeup"
+                                style={{ width: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+                              />
+                            </div>
+                          </div>
+                          <Text type="secondary" style={{ fontSize: '12px', textAlign: 'center' }}>
+                            💡 진단된 퍼스널컬러({resultName})를 기반으로 생성된 가상 메이크업입니다.
                           </Text>
                         </div>
                       )
@@ -2161,6 +2192,9 @@ const ChatbotPage: React.FC = () => {
                   try {
                     // 1. 사용자 메시지 먼저 표시
                     const imageUrl = URL.createObjectURL(file);
+                    // 원본 이미지 URL 저장 (메이크업 비교용)
+                    setOriginalImageUrl(imageUrl);
+                    
                     const userMsg: ChatMessageData = {
                       id: `img-u-${Date.now()}`,
                       content: `이미지 업로드: ${file.name}`,

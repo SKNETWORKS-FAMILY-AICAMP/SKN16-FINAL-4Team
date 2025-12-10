@@ -304,7 +304,7 @@ def generate_welcome(db: Session, current_user: models.User, influencer_id: str 
         #     user_prompt_lines.append(f"이 사용자는 이전에 '{prev_summary}' 타입으로 진단된 기록이 있습니다. 환영 인사에서 '이전 진단 내역'이라는 단어를 포함하여 이를 언급하고, 이전 결과를 참고해 어떤 도움을 줄 수 있는지 알려주세요. 인플루언서의 말투로 작성하세요.")
         # else:
             # user_prompt_lines.append("이 사용자는 이전 진단 기록이 없습니다. 자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 안내하고, 인플루언서의 말투로 작성하세요.")
-        user_prompt_lines.append("이 사용자는 이전 진단 기록이 없습니다. 자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 안내하고, 인플루언서의 말투로 작성하세요.")
+        user_prompt_lines.append("자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 안내하고, 인플루언서의 말투로 작성하세요. 처음이라는 언급은 하지 마세요.")
 
         user_prompt_lines.append("응답은 2~4개의 짧은 문단(또는 문장들)으로 요약해주고, 추가 지시나 메타 정보는 출력하지 마세요. 오직 환영 텍스트만 출력하세요.")
 
