@@ -1074,6 +1074,11 @@ async def analyze(
 
             try:
                 persona_name = getattr(chat_history, 'influencer_name', None)
+                print(f"🤖 [CHATBOT] Orchestrator 호출 시작...")
+                print(f"   - question: {request.question[:100] if isinstance(request.question, str) else str(request.question)[:100]}...")
+                print(f"   - conversation_history: {len(convo_list)} messages")
+                print(f"   - use_color: True, use_emotion: True")
+                
                 orch_payload = orchestrator_service.OrchestratorRequest(
                     user_text=request.question,
                     conversation_history=convo_list,
@@ -1088,9 +1093,12 @@ async def analyze(
                     except Exception:
                         pass
                 orch_resp = await orchestrator_service.analyze(orch_payload)
+                print(f"✅ [CHATBOT] Orchestrator 응답 받음")
 
             except Exception as e:
                 print(f"❌ Orchestrator error: {e}")
+                import traceback
+                traceback.print_exc()
                 yield f"data: {json.dumps({'type': 'error', 'error': f'Orchestrator failed: {str(e)}'}, ensure_ascii=False)}\n\n"
                 return
 
