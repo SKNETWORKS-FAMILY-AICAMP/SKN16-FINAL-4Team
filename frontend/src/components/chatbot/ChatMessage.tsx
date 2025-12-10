@@ -11,7 +11,7 @@ const { Text } = Typography;
 export interface ChatMessageData {
     id: string;
     question?: string;
-    content: string;
+    content?: string;
     customContent?: React.ReactNode;
     isUser: boolean;
     timestamp: string | Date;

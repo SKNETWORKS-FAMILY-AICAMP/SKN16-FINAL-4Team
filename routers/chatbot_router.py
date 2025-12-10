@@ -1169,6 +1169,7 @@ async def analyze(
                     )
                     
                     full_text = ""
+                    # ✅ content 먼저 스트리밍 (메타데이터 없이!)
                     for chunk in response:
                         if chunk.choices[0].delta.content:
                             content = chunk.choices[0].delta.content
@@ -1185,7 +1186,7 @@ async def analyze(
                     yield f"data: {json.dumps({'type': 'content', 'content': fallback_text}, ensure_ascii=False)}\n\n"
                     influencer_info = {"styled_text": fallback_text}
             else:
-                # 기존 텍스트를 한 글자씩 스트리밍
+                # 기존 텍스트를 한 글자씩 스트리밍 (메타데이터 없이!)
                 text = influencer_info.get("styled_text", "")
                 print(f"[STREAM] Sending char-by-char: {len(text)} chars")
                 for i, char in enumerate(text):
@@ -1194,6 +1195,10 @@ async def analyze(
                         print(f"[STREAM] Sent char {i}/{len(text)}")
                     await asyncio.sleep(0.02)
 
+            # ========================================
+            # ✅ content 스트리밍 완료 후 메타데이터 준비
+            # ========================================
+            
             # 메타데이터 조합
             primary = None
             sub = None
@@ -1277,7 +1282,9 @@ async def analyze(
             user_emotion = to_canonical(user_emotion)
             emotion_lottie = lottie_filename(user_emotion)
 
-            # 메타데이터 이벤트 전송
+            # ========================================
+            # ✅ 메타데이터 이벤트 전송 (content 스트리밍 완료 후!)
+            # ========================================
             metadata = {
                 'type': 'metadata',
                 'emotion': user_emotion,
@@ -1287,6 +1294,7 @@ async def analyze(
                 'recommendations': flat,
                 'references': references
             }
+            print(f"[STREAM] Sending metadata after content completed")
             yield f"data: {json.dumps(metadata, ensure_ascii=False)}\n\n"
 
             # AI 메시지 DB 저장
@@ -1317,7 +1325,10 @@ async def analyze(
             except Exception:
                 pass
 
-            # 완료 신호
+            # ========================================
+            # ✅ 완료 신호 (모든 스트리밍 완료)
+            # ========================================
+            print(f"[STREAM] Sending done signal")
             yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
