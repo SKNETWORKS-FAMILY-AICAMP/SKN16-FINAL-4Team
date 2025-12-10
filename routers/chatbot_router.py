@@ -300,10 +300,11 @@ def generate_welcome(db: Session, current_user: models.User, influencer_id: str 
         # Mandatory instruction: Request image upload
         user_prompt_lines.append("필수 포함 내용: 정확한 퍼스널컬러 진단을 위해 사용자의 얼굴이 잘 나온 사진(이미지)을 업로드해달라고 요청하는 문장을 반드시 포함하세요.")
 
-        if has_prev and prev_summary:
-            user_prompt_lines.append(f"이 사용자는 이전에 '{prev_summary}' 타입으로 진단된 기록이 있습니다. 환영 인사에서 '이전 진단 내역'이라는 단어를 포함하여 이를 언급하고, 이전 결과를 참고해 어떤 도움을 줄 수 있는지 알려주세요. 인플루언서의 말투로 작성하세요.")
-        else:
-            user_prompt_lines.append("이 사용자는 이전 진단 기록이 없습니다. 자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 안내하고, 인플루언서의 말투로 작성하세요.")
+        # if has_prev and prev_summary:
+        #     user_prompt_lines.append(f"이 사용자는 이전에 '{prev_summary}' 타입으로 진단된 기록이 있습니다. 환영 인사에서 '이전 진단 내역'이라는 단어를 포함하여 이를 언급하고, 이전 결과를 참고해 어떤 도움을 줄 수 있는지 알려주세요. 인플루언서의 말투로 작성하세요.")
+        # else:
+            # user_prompt_lines.append("이 사용자는 이전 진단 기록이 없습니다. 자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 안내하고, 인플루언서의 말투로 작성하세요.")
+        user_prompt_lines.append("이 사용자는 이전 진단 기록이 없습니다. 자연스럽게 퍼스널컬러 진단을 시작할 수 있도록 안내하고, 인플루언서의 말투로 작성하세요.")
 
         user_prompt_lines.append("응답은 2~4개의 짧은 문단(또는 문장들)으로 요약해주고, 추가 지시나 메타 정보는 출력하지 마세요. 오직 환영 텍스트만 출력하세요.")
 
@@ -323,30 +324,24 @@ def generate_welcome(db: Session, current_user: models.User, influencer_id: str 
             ai_message = resp.choices[0].message.content.strip()
             message = ai_message
         except Exception as e:
-            # LLM failed — fall back to safe messages
+            # LLM failed — fall back to safe messages (이전 진단 내역 언급 제거)
             print(f"[welcome] LLM 호출 실패, 폴백 메시지 사용: {e}")
-            if has_prev and prev_summary:
-                if infl_name:
-                    message = f"안녕하세요, {user_nick}! 이전 진단은 \"{prev_summary}\" 타입입니다. {infl_name}님 스타일을 참고해 이전 결과를 바탕으로 도와드릴게요. 원하시면 바로 추천을 시작할게요."
-                else:
-                    message = f"안녕하세요, {user_nick}! 이전 진단은 \"{prev_summary}\" 타입입니다. 이전 결과를 참고해 도움을 드릴게요. 무엇을 먼저 도와드릴까요?"
-            else:
-                if infl_name:
-                    if infl_excerpt:
-                        message = (
-                            f"안녕하세요, {user_nick}! {infl_name}님 스타일로 퍼스널컬러를 도와드릴게요 — {infl_excerpt} 전문가입니다. "
-                            "먼저 몇 가지 질문 드릴게요: 평소 자주 입는 옷 색상은 무엇인가요? 피부톤은 밝은 편인가요, 어두운 편인가요? 평소 선호하는 메이크업 스타일은 어떤가요?"
-                        )
-                    else:
-                        message = (
-                            f"안녕하세요, {user_nick}! {infl_name}님 스타일로 퍼스널컬러 진단을 도와드릴게요. "
-                            "먼저 간단한 질문 몇 개만 드릴게요: 평소 자주 입는 색상은요? 피부톤은 밝은 편인가요, 어두운 편인가요? 메이크업이나 스타일 선호가 있으신가요?"
-                        )
+            if infl_name:
+                if infl_excerpt:
+                    message = (
+                        f"안녕하세요, {user_nick}! {infl_name}님 스타일로 퍼스널컬러를 도와드릴게요 — {infl_excerpt} 전문가입니다. "
+                        "먼저 몇 가지 질문 드릴게요: 평소 자주 입는 옷 색상은 무엇인가요? 피부톤은 밝은 편인가요, 어두운 편인가요? 평소 선호하는 메이크업 스타일은 어떤가요?"
+                    )
                 else:
                     message = (
-                        f"안녕하세요, {user_nick}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다. "
-                        "퍼스널컬러를 알아보려면 간단한 질문 몇 가지가 필요해요 — 평소 자주 입는 색상, 피부톤(밝음/어두움), 선호하는 메이크업 스타일을 알려주실래요?"
+                        f"안녕하세요, {user_nick}! {infl_name}님 스타일로 퍼스널컬러 진단을 도와드릴게요. "
+                        "먼저 간단한 질문 몇 개만 드릴게요: 평소 자주 입는 색상은요? 피부톤은 밝은 편인가요, 어두운 편인가요? 메이크업이나 스타일 선호가 있으신가요?"
                     )
+            else:
+                message = (
+                    f"안녕하세요, {user_nick}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다. "
+                    "퍼스널컬러를 알아보려면 간단한 질문 몇 가지가 필요해요 — 평소 자주 입는 색상, 피부톤(밝음/어두움), 선호하는 메이크업 스타일을 알려주실래요?"
+                )
     except Exception as e:
         print(f"[welcome] 메시지 생성 중 오류: {e}")
         message = f"안녕하세요, {user_nick}! 😊 퍼스널컬러 전문 AI 컨설턴트입니다! 무엇을 도와드릴까요?"
@@ -1161,11 +1156,13 @@ async def analyze(
                         "감정적인 공감은 짧게 하고, 뷰티/퍼스널컬러 조언 위주로 답변하세요."
                         " [주의] '봄 웜톤', '여름 쿨톤', '봄 라이트', '겨울 다크', '봄 웜', '여름 쿨' 등 구체적인 퍼스널컬러 진단명이나 타입 이름은 절대 직접적으로 언급하지 마세요. "
                         "대신 '따뜻한 분위기', '시원한 느낌', '화사한 톤' 등 분위기나 느낌으로 돌려서 표현하세요."
+                        f" [중요] 사용자의 닉네임은 '{user_display_name}'입니다. 반드시 '{user_display_name}님' 형태로 친근하게 호칭하세요."
                     )
 
                     user_msg_content = (
+                        f"사용자 닉네임: {user_display_name}\n"
                         f"사용자 상황: {emotion_summary}\n퍼스널 컬러 힌트: {color_summary}\n"
-                        "위 정보를 바탕으로 친근하고 전문적인 말투로 간단한 응답을 만들어주세요. 감정적 위로는 1문장으로 제한하세요."
+                        f"위 정보를 바탕으로 {user_display_name}님께 친근하고 전문적인 말투로 간단한 응답을 만들어주세요. 감정적 위로는 1문장으로 제한하세요."
                     )
 
                     response = client.chat.completions.create(
@@ -2112,10 +2109,11 @@ async def recommend_questions(
             .order_by(models.SurveyResult.created_at.desc())
             .first()
         )
-        if prev_diagnosis:
-            context_lines.append(f"사용자는 이전에 '{prev_diagnosis.result_name}'({prev_diagnosis.result_tone}) 진단을 받았습니다.")
-        else:
-            context_lines.append("사용자는 아직 퍼스널컬러 진단을 받지 않았습니다.")
+        # if prev_diagnosis:
+        #     context_lines.append(f"사용자는 이전에 '{prev_diagnosis.result_name}'({prev_diagnosis.result_tone}) 진단을 받았습니다.")
+        # else:
+        #     context_lines.append("사용자는 아직 퍼스널컬러 진단을 받지 않았습니다.")
+        context_lines.append("사용자는 아직 퍼스널컬러 진단을 받지 않았습니다.")
 
         # 2-2. 현재 대화 이력 확인 (history_id가 있는 경우)
         if request.history_id:
@@ -2140,7 +2138,7 @@ async def recommend_questions(
             "(예: '저에게 어울리는 옷 색상은 뭐에요?', '어떤 액세서리가 잘 어울릴까요?') "
             "질문은 간결하고 명확한 한국어 문장으로 작성하세요. "
             "각 질문은 줄바꿈으로 구분하여 출력하고, 번호나 기호는 붙이지 마세요."
-            "[봄 웜톤], [여름 쿨톤] 등 진단 결과를 직접 언급하지 마세요."
+            "[봄 웜톤], [여름 쿨톤] 등 진단 결과를 절대로 직접 언급하지 마세요."
         )
         
         user_prompt = "\n".join(context_lines)
