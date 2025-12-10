@@ -99,6 +99,7 @@ const ChatbotPage: React.FC = () => {
   const [pendingMakeupTone, setPendingMakeupTone] = useState<string | null>(null);
   const [uploadedS3Key, setUploadedS3Key] = useState<string | null>(null);
   const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(null);
+  const [unlockedMakeupImages, setUnlockedMakeupImages] = useState<Set<string>>(new Set());
 
 
   // 가상 메이크업 생성이 완료되면 대기 중이던 요청 처리
@@ -128,10 +129,10 @@ const ChatbotPage: React.FC = () => {
               )}
               <div style={{ flex: '0 0 auto', width: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <Text strong style={{ textAlign: 'center', fontSize: '14px' }}>💄 가상 메이크업</Text>
-                <antd.Image
-                  src={url}
-                  alt="Virtual Makeup"
-                  style={{ width: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+                <MakeupImageWithAd
+                  imageUrl={url}
+                  imageId={`makeup-${pendingMakeupTone}-${Date.now()}`}
+                  toneName={pendingMakeupTone}
                 />
               </div>
             </div>
@@ -1168,10 +1169,10 @@ const ChatbotPage: React.FC = () => {
                             )}
                             <div style={{ flex: '0 0 auto', width: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                               <Text strong style={{ textAlign: 'center', fontSize: '14px' }}>💄 가상 메이크업</Text>
-                              <antd.Image
-                                src={url}
-                                alt="Virtual Makeup"
-                                style={{ width: '100%', borderRadius: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+                              <MakeupImageWithAd
+                                imageUrl={url}
+                                imageId={`makeup-${resultName}-${Date.now()}`}
+                                toneName={resultName}
                               />
                             </div>
                           </div>
@@ -1603,6 +1604,177 @@ const ChatbotPage: React.FC = () => {
       </circle>
     </svg>
   );
+
+  // 광고를 시청한 후 가상 메이크업 이미지를 볼 수 있는 컴포넌트
+  const MakeupImageWithAd: React.FC<{ imageUrl: string; imageId: string; toneName: string }> = ({ imageUrl, imageId, toneName }) => {
+    const [isLocked, setIsLocked] = useState(!unlockedMakeupImages.has(imageId));
+    const [adModalOpen, setAdModalOpen] = useState(false);
+    const [adProgress, setAdProgress] = useState(0);
+    const [isWatchingAd, setIsWatchingAd] = useState(false);
+
+    const handleUnlockClick = () => {
+      setAdModalOpen(true);
+      setIsWatchingAd(true);
+      setAdProgress(0);
+
+      // 3초 광고 시뮬레이션
+      const interval = setInterval(() => {
+        setAdProgress(prev => {
+          if (prev >= 100) {
+            clearInterval(interval);
+            setIsWatchingAd(false);
+            return 100;
+          }
+          return prev + 3.33; // 30 steps for 3 seconds
+        });
+      }, 100);
+    };
+
+    const handleAdComplete = () => {
+      setUnlockedMakeupImages(prev => new Set(prev).add(imageId));
+      setIsLocked(false);
+      setAdModalOpen(false);
+      setAdProgress(0);
+      antd.message.success('잠금이 해제되었습니다! 가상 메이크업 결과를 확인하세요.');
+    };
+
+    return (
+      <>
+        <div style={{ position: 'relative' }}>
+          <antd.Image
+            src={imageUrl}
+            alt="Virtual Makeup"
+            style={{
+              width: '100%',
+              borderRadius: '8px',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+              filter: isLocked ? 'blur(20px)' : 'none',
+              transition: 'filter 0.3s ease'
+            }}
+            preview={!isLocked}
+          />
+          {isLocked && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'rgba(0,0,0,0.3)',
+                borderRadius: '8px',
+                cursor: 'pointer'
+              }}
+              onClick={handleUnlockClick}
+            >
+              <antd.Button
+                type="primary"
+                size="large"
+                icon={<antd.Typography.Text style={{ fontSize: '24px' }}>🔒</antd.Typography.Text>}
+                style={{
+                  height: '60px',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  border: 'none'
+                }}
+              >
+                광고 보고 결과 확인하기
+              </antd.Button>
+            </div>
+          )}
+        </div>
+
+        <antd.Modal
+          open={adModalOpen}
+          title={null}
+          footer={null}
+          closable={!isWatchingAd}
+          onCancel={() => {
+            if (!isWatchingAd) {
+              setAdModalOpen(false);
+              setAdProgress(0);
+            }
+          }}
+          width={600}
+          centered
+        >
+          <div style={{ padding: '24px', textAlign: 'center' }}>
+            <Title level={3} style={{ marginBottom: '16px' }}>📺 광고 시청 중...</Title>
+            <Text type="secondary" style={{ fontSize: '14px', display: 'block', marginBottom: '24px' }}>
+              광고를 시청하시면 {toneName} 가상 메이크업 결과를 확인하실 수 있습니다.
+            </Text>
+
+            {/* 광고 콘텐츠 영역 */}
+            <div
+              style={{
+                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                borderRadius: '12px',
+                padding: '48px 24px',
+                marginBottom: '24px',
+                color: 'white'
+              }}
+            >
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎓</div>
+              <Title level={2} style={{ color: 'white', marginBottom: '8px' }}>SKN16기 화이팅! 💪</Title>
+              <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: '16px', display: 'block', marginBottom: '16px' }}>
+                AI가 분석한 맞춤형 메이크업을 만나보세요
+              </Text>
+              <div style={{
+                marginTop: '20px',
+                padding: '12px 20px',
+                background: 'rgba(255,255,255,0.15)',
+                borderRadius: '8px',
+                backdropFilter: 'blur(10px)'
+              }}>
+                <Text style={{ color: 'white', fontSize: '18px', fontWeight: 'bold' }}>
+                  💄 당신만의 퍼스널컬러
+                </Text>
+              </div>
+            </div>
+
+            {/* 진행률 표시 */}
+            <antd.Progress
+              percent={adProgress}
+              status={adProgress === 100 ? 'success' : 'active'}
+              strokeColor={{
+                '0%': '#667eea',
+                '100%': '#764ba2'
+              }}
+              style={{ marginBottom: '16px' }}
+            />
+
+            {adProgress === 100 && (
+              <antd.Button
+                type="primary"
+                size="large"
+                onClick={handleAdComplete}
+                style={{
+                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                  border: 'none',
+                  height: '48px',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                ✨ 결과 확인하기
+              </antd.Button>
+            )}
+
+            {adProgress < 100 && (
+              <Text type="secondary" style={{ fontSize: '12px' }}>
+                {Math.ceil((100 - adProgress) / 20)}초 후 확인 가능
+              </Text>
+            )}
+          </div>
+        </antd.Modal>
+      </>
+    );
+  };
 
   const renderMessage = (msg: ChatMessageData) => {
     return (
