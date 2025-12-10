@@ -1739,7 +1739,7 @@ const ChatbotPage: React.FC = () => {
 
             {/* 진행률 표시 */}
             <antd.Progress
-              percent={adProgress}
+              percent={Math.round(adProgress)}
               status={adProgress === 100 ? 'success' : 'active'}
               strokeColor={{
                 '0%': '#667eea',
@@ -1767,7 +1767,7 @@ const ChatbotPage: React.FC = () => {
 
             {adProgress < 100 && (
               <Text type="secondary" style={{ fontSize: '12px' }}>
-                {Math.ceil((100 - adProgress) / 20)}초 후 확인 가능
+                {Math.ceil((100 - adProgress) / 3.33)}초 후 확인 가능
               </Text>
             )}
           </div>
