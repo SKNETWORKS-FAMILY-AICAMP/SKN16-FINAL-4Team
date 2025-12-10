@@ -1370,58 +1370,66 @@ def start_chat_session(
     # creating duplicate open sessions. Locking the user row is lightweight and
     # avoids requiring DB schema changes (partial unique indexes) here.
     try:
-        # optional influencer_name from request body
+        # optional influencer_id and influencer_name from request body
+        influencer_id = None
         influencer_name = None
         try:
             if payload and isinstance(payload, dict):
-                influencer_name = payload.get('influencer_name') or payload.get('influencer')
+                influencer_id = payload.get('influencer_id') or payload.get('influencer')
+                influencer_name = payload.get('influencer_name')
+                # Fallback: if only one is provided, use it for both
+                if influencer_id and not influencer_name:
+                    influencer_name = influencer_id
+                elif influencer_name and not influencer_id:
+                    influencer_id = influencer_name
         except Exception:
+            influencer_id = None
             influencer_name = None
 
         # Lock the user row for this transaction
         db.query(models.User).filter(models.User.id == current_user.id).with_for_update().first()
 
         # Now check again for an existing open session while holding the lock
-        # If an influencer_name was requested, prefer reusing an open session for that influencer
+        # If an influencer was requested, ONLY reuse an open session for that specific influencer
         existing = None
-        if influencer_name:
+        if influencer_id or influencer_name:
             try:
                 existing = db.query(models.ChatHistory).filter(
                     models.ChatHistory.user_id == current_user.id,
                     models.ChatHistory.ended_at == None,
-                    models.ChatHistory.influencer_name == influencer_name,
+                ).filter(
+                    (models.ChatHistory.influencer_id == influencer_id) |
+                    (models.ChatHistory.influencer_name == influencer_name)
+                ).order_by(models.ChatHistory.created_at.desc()).first()
+            except Exception:
+                existing = None
+        else:
+            # Only use fallback (any open session) when NO influencer is specified
+            try:
+                existing = db.query(models.ChatHistory).filter(
+                    models.ChatHistory.user_id == current_user.id,
+                    models.ChatHistory.ended_at == None,
                 ).order_by(models.ChatHistory.created_at.desc()).first()
             except Exception:
                 existing = None
 
-        # fallback: any existing open session
-        if not existing:
-            existing = db.query(models.ChatHistory).filter(
-                models.ChatHistory.user_id == current_user.id,
-                models.ChatHistory.ended_at == None,
-            ).order_by(models.ChatHistory.created_at.desc()).first()
-
         if existing:
             user_turns = db.query(models.ChatMessage).filter_by(history_id=existing.id, role='user').count()
-            print(f"🔁 기존 열린 세션 재사용: user_id={current_user.id}, history_id={existing.id}, user_turns={user_turns}")
+            print(f"🔁 기존 열린 세션 재사용: user_id={current_user.id}, history_id={existing.id}, influencer_id={existing.influencer_id}, user_turns={user_turns}")
             return {"history_id": existing.id, "reused": True, "user_turns": user_turns}
 
         # No existing open session found while holding the lock: create one
         chat_history = models.ChatHistory(user_id=current_user.id)
         # persist both influencer id and name when available
-        try:
-            if influencer_name:
-                # if influencer_name is actually an id (slug), store in influencer_id
-                if isinstance(influencer_name, str) and '_' in influencer_name:
-                    chat_history.influencer_id = influencer_name
-                else:
-                    chat_history.influencer_name = influencer_name
-        except Exception:
-            pass
+        if influencer_id:
+            chat_history.influencer_id = influencer_id
+        if influencer_name:
+            chat_history.influencer_name = influencer_name
+        
         db.add(chat_history)
         db.commit()
         db.refresh(chat_history)
-        print(f"➕ 새 채팅 세션 생성: user_id={current_user.id}, history_id={chat_history.id}")
+        print(f"➕ 새 채팅 세션 생성: user_id={current_user.id}, history_id={chat_history.id}, influencer_id={influencer_id}, influencer_name={influencer_name}")
         return {"history_id": chat_history.id, "reused": False, "user_turns": 0}
     except Exception as e:
         # Roll back on error and return a 500 so clients can retry safely
@@ -1764,9 +1772,13 @@ def get_messages_for_influencer(influencer_id: str, current_user: models.User = 
         if not user_id:
             raise HTTPException(status_code=401, detail="로그인 필요")
 
-        # find histories that match influencer_id (exact match on influencer_id OR name-like match)
-        histories = db.query(models.ChatHistory).filter(models.ChatHistory.user_id==user_id).filter(
-            (models.ChatHistory.influencer_id == influencer_id) | (models.ChatHistory.influencer_name.like(f"%{influencer_id}%"))
+        # find histories that match influencer_id (exact match only on influencer_id OR influencer_name)
+        # Use exact match to prevent mixing different influencers
+        histories = db.query(models.ChatHistory).filter(
+            models.ChatHistory.user_id == user_id
+        ).filter(
+            (models.ChatHistory.influencer_id == influencer_id) | 
+            (models.ChatHistory.influencer_name == influencer_id)
         ).order_by(models.ChatHistory.created_at.asc()).all()
 
         if not histories:

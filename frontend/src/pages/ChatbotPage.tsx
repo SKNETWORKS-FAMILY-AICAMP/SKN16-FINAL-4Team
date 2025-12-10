@@ -251,8 +251,9 @@ const ChatbotPage: React.FC = () => {
       try {
         const params = new URLSearchParams((location as any).search || window.location.search);
         const inflIdFromQuery = params.get('infl_id');
-        const inflNameFromState = (location as any).state?.influencerProfile?.influencer_name || activeInfluencerProfile?.influencer_name;
-        const startWith = inflIdFromQuery || inflNameFromState;
+        // Prefer influencer_id over influencer_name for accurate session creation
+        const inflIdFromState = (location as any).state?.influencerProfile?.influencer_id || activeInfluencerProfile?.influencer_id;
+        const startWith = inflIdFromQuery || inflIdFromState;
 
         const res = await startSession(startWith as any);
         if (!mounted) return;
@@ -1463,7 +1464,7 @@ const ChatbotPage: React.FC = () => {
     if (hasNewConversation) {
       setIsFeedbackModalOpen(true);
     } else {
-      navigate('/');
+      navigate('/mypage');
     }
   };
 
@@ -1512,7 +1513,7 @@ const ChatbotPage: React.FC = () => {
       if (blocker.state === "blocked") {
         blocker.proceed();
       } else {
-        setTimeout(() => navigate('/'), 500);
+        setTimeout(() => navigate('/mypage'), 500);
       }
     } catch (error) {
       console.error('피드백 제출 중 오류:', error);
@@ -1525,7 +1526,7 @@ const ChatbotPage: React.FC = () => {
       if (blocker.state === "blocked") {
         blocker.proceed();
       } else {
-        setTimeout(() => navigate('/'), 500);
+        setTimeout(() => navigate('/mypage'), 500);
       }
     }
   };
@@ -1549,7 +1550,7 @@ const ChatbotPage: React.FC = () => {
     if (blocker.state === "blocked") {
       blocker.proceed();
     } else {
-      navigate('/');
+      navigate('/mypage');
     }
   };
 
