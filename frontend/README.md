@@ -25,7 +25,7 @@ cp .env.example .env
 npm run dev
 ```
 
-## � 기술 스택
+## ⚙️ 기술 스택
 
 ### 핵심 프레임워크
 
@@ -264,7 +264,7 @@ VITE_API_BASE_URL=https://api.yourproject.com
 npm run lint && npm run type-check && npm run format:check
 ```
 
-## � 추가 리소스
+## 📄 추가 리소스
 
 - **React 18 문서**: https://react.dev/
 - **Ant Design 컴포넌트**: https://ant.design/components/
